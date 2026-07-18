@@ -129,7 +129,7 @@ def build_sifrarnik_text(sheet) -> str:
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
-                                model="claude-sonnet-5", _dopusti_dijeljenje=True, log=None):
+                                model="claude-sonnet-5", _preostala_dubina=2, log=None):
     client = anthropic.Anthropic(api_key=anthropic_api_key)
     user_content = f"""ŠIFRARNIK (koristi isključivo ove kategorije/cjeline, doslovno):
 {sifrarnik_text}
@@ -148,20 +148,21 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     )
 
     if response.stop_reason == "max_tokens":
-        if _dopusti_dijeljenje and len(ispit_md) > 500:
+        if _preostala_dubina > 0 and len(ispit_md) > 1000:
             if log:
-                log("⚠️ Odgovor odrezan (max_tokens) - dijelim ispit na dva dijela i ponovno pokušavam...")
+                log(f"⚠️ Odgovor odrezan (max_tokens) - dijelim ispit na dva dijela "
+                    f"(preostalo dubina: {_preostala_dubina}) i ponovno pokušavam...")
             polovica = len(ispit_md) // 2
             prijelom = ispit_md.rfind("\n", 0, polovica)
             if prijelom == -1:
                 prijelom = polovica
             dio1 = extract_zadaci_with_claude(ispit_md[:prijelom], rjesenja_md, sifrarnik_text,
-                                               anthropic_api_key, model, False, log)
+                                               anthropic_api_key, model, _preostala_dubina - 1, log)
             dio2 = extract_zadaci_with_claude(ispit_md[prijelom:], rjesenja_md, sifrarnik_text,
-                                               anthropic_api_key, model, False, log)
+                                               anthropic_api_key, model, _preostala_dubina - 1, log)
             return dio1 + dio2
         elif log:
-            log("⚠️ UPOZORENJE: odgovor odrezan čak i nakon dijeljenja - rezultat je vjerojatno nepotpun.")
+            log("⚠️ UPOZORENJE: odgovor odrezan čak i nakon maksimalnog dijeljenja - rezultat je vjerojatno nepotpun.")
 
     raw_text = "".join(b.text for b in response.content if b.type == "text").strip()
     raw_text = re.sub(r"^```(json)?", "", raw_text).strip()
