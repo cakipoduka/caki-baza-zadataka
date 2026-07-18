@@ -259,6 +259,10 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 ws_zadaci.update(range_name=f"P{najbolji_redak}", values=[[z.get("slika_putanja", "")]])
             if z.get("max_bodovi", ""):
                 ws_zadaci.update(range_name=f"V{najbolji_redak}", values=[[z.get("max_bodovi", "")]])
+            if z.get("tip_zadatka", ""):
+                ws_zadaci.update(range_name=f"AA{najbolji_redak}", values=[[z.get("tip_zadatka", "")]])
+            if z.get("slika_zadana", ""):
+                ws_zadaci.update(range_name=f"AB{najbolji_redak}", values=[[z.get("slika_zadana", "")]])
             if log:
                 znak = "📄" if isti_naziv else "🔤"
                 log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
