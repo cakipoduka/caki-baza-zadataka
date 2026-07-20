@@ -34,7 +34,7 @@ ZADACI_HEADERS = [
     "vizualni_potencijal", "geogebra_komande", "geogebra_material_id",
     "tezina", "max_bodovi", "slicni_zadaci",
     "status_provjere", "skenirano", "pretext_permalink",
-    "tip_zadatka", "slika_zadana",
+    "tip_zadatka", "slika_zadana", "ponudjeni_odgovori", "konacan_odgovor",
 ]
 
 EXTRACTION_SYSTEM_PROMPT = """Ti si asistent koji strukturira zadatke iz hrvatske državne mature i drugih matematičkih materijala.
@@ -42,7 +42,7 @@ Dobit ćeš OCR tekst (Mathpix Markdown) ispita, i po mogućnosti tekst s rješe
 
 Tvoj zadatak:
 1. Razdvoji ispit na pojedinačne zadatke (zadrži izvorni redni broj u polju privremeni_broj).
-2. Za svaki zadatak izvuci čist tekst u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, retci unutar zadatka odvojeni s \\\\ kao LaTeX prijelom retka, bez naredbi za formatiranje cijelog dokumenta).
+2. Za svaki zadatak izvuci ČIST TEKST PITANJA u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, bez naredbi za formatiranje cijelog dokumenta). VAŽNO: NE uključuj ponuđene odgovore A/B/C/D u ovo polje - oni idu zasebno, vidi točku 13.
 3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
 4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
 5. Procijeni težinu: "lako", "srednje" ili "tesko".
@@ -54,9 +54,11 @@ Tvoj zadatak:
 11. tip_zadatka: "visestruki_izbor" (ima ponuđene odgovore A/B/C/D), "kratki_odgovor" (traži se kratak numerički/simbolički odgovor, npr. "Odgovor: ____"), ili "prosireni_odgovor" (traži se prikaz cijelog postupka rješavanja).
 12. slika_zadana: "da" ako je u tekstu ispita (Mathpix Markdown) uz ovaj zadatak priložena slika/graf/dijagram koji je DIO zadatka (student mora pročitati podatke sa slike da riješi zadatak) - PREPOZNAJ TO PO MARKDOWN REFERENCI NA SLIKU (oblika ![](url) ili slično) koja se nalazi neposredno uz tekst tog zadatka. Ako je slika_zadana="da", OBAVEZNO u polje slika_url upiši TOČAN URL te slike, prekopiran iz Mathpix Markdown teksta (ne izmišljaj URL). Ako nema takve slike, slika_zadana="ne" i slika_url prazan.
 VAŽNO: slika_zadana i vizualni_potencijal se međusobno isključuju - zadatak sa zadanom slikom NIKAD ne dobiva vizualni_potencijal="da" (ne rekonstruiramo zadanu sliku preko GeoGebre, samo je izrežemo iz originala).
+13. ponudjeni_odgovori: SAMO za tip_zadatka="visestruki_izbor" - JSON lista ponuđenih odgovora BEZ oznaka A/B/C/D, redoslijedom kako se pojavljuju (npr. ["5", "4.6", "4.58", "4.573"]). Za sve ostale tipove zadataka, prazna lista [].
+14. konacan_odgovor: KRATAK, čist finalni odgovor, odvojen od punog postupka u polju rjesenje. Za visestruki_izbor: samo slovo točnog odgovora (npr. "C"). Za kratki_odgovor/prosireni_odgovor: kratka vrijednost (npr. "3", "1/2", "x=5"). Ako rjesenje nije dano (vidi točku 3), ostavi prazno.
 
 VAŽNO: Odgovori ISKLJUČIVO JSON listom objekata, bez ikakvog teksta prije/poslije, bez markdown ograda (bez ```). Svaki objekt neka ima točno ova polja:
-privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url
+privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor
 """
 
 
@@ -216,6 +218,30 @@ def _normalize_za_usporedbu(text):
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
+    """
+    Napravi potpunu, vremenski označenu kopiju cijelog Google Sheeta u
+    zaseban backup folder. Poziva se nakon svake uspješne obrade - dodatna
+    zaštita uz Google Sheetsov ugrađeni "Version history" (koji štiti
+    unutar iste datoteke, ali ne i od brisanja same datoteke).
+    """
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    try:
+        original = drive_service.files().get(fileId=sheet_id, fields="name", supportsAllDrives=True).execute()
+        naziv_backupa = f"{original['name']}_backup_{timestamp}"
+        drive_service.files().copy(
+            fileId=sheet_id,
+            body={"name": naziv_backupa, "parents": [backup_folder_id]},
+            supportsAllDrives=True,
+        ).execute()
+        if log:
+            log(f"💾 Backup baze spremljen: {naziv_backupa}")
+    except Exception as e:
+        if log:
+            log(f"⚠️ Backup nije uspio (baza je i dalje sigurna, samo bez dodatne kopije): {e}")
+
+
 def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza,
                                 skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None):
     all_values = ws_zadaci.get_all_values()
@@ -263,6 +289,10 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 ws_zadaci.update(range_name=f"AA{najbolji_redak}", values=[[z.get("tip_zadatka", "")]])
             if z.get("slika_zadana", ""):
                 ws_zadaci.update(range_name=f"AB{najbolji_redak}", values=[[z.get("slika_zadana", "")]])
+            if z.get("ponudjeni_odgovori"):
+                ws_zadaci.update(range_name=f"AC{najbolji_redak}", values=[[" || ".join(z.get("ponudjeni_odgovori", []))]])
+            if z.get("konacan_odgovor", ""):
+                ws_zadaci.update(range_name=f"AD{najbolji_redak}", values=[[z.get("konacan_odgovor", "")]])
             if log:
                 znak = "📄" if isti_naziv else "🔤"
                 log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
@@ -286,6 +316,7 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 z.get("status_provjere", ""), skenirano,
                 "",
                 z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
+                " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
             ]
             novi_redovi.append(row)
             broj_dodanih += 1
