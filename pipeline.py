@@ -27,15 +27,28 @@ SCOPES = [
 
 ZADACI_HEADERS = [
     "id", "izvor_tip", "izvor_naziv", "godina", "broj_pdf_ulaza",
-    "razina", "razred", "kategorija", "cjelina", "kljucne_rijeci",
+    "razina", "razred", "kategorija", "cjelina", "potpoglavlje", "kljucne_rijeci",
     "tekst_zadatka_latex", "tekst_zadatka_mathjax",
     "rjesenje", "rjesenje_status", "tip_rjesenja_izvor",
     "slika_putanja", "video_url",
     "vizualni_potencijal", "geogebra_komande", "geogebra_material_id",
     "tezina", "max_bodovi", "slicni_zadaci",
     "status_provjere", "skenirano", "pretext_permalink",
-    "tip_zadatka", "slika_zadana", "ponudjeni_odgovori", "konacan_odgovor", "potpoglavlje",
+    "tip_zadatka", "slika_zadana", "ponudjeni_odgovori", "konacan_odgovor",
 ]
+
+
+def _col_letter(field_name: str, headers=ZADACI_HEADERS) -> str:
+    """Pretvori naziv polja u slovo(a) Sheet stupca (0-indeksirano -> A, B, ... Z, AA, AB, ...).
+    Računa se dinamički iz ZADACI_HEADERS, umjesto hardkodiranih slova - tako da
+    dodavanje/premještanje kolone (npr. `potpoglavlje`) ne pomakne sve nakon nje neopaženo."""
+    idx = headers.index(field_name)
+    letters = ""
+    idx += 1  # 1-indeksirano za standardni algoritam pretvorbe
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
 
 EXTRACTION_SYSTEM_PROMPT = """Ti si asistent koji strukturira zadatke iz hrvatske državne mature i drugih matematičkih materijala.
 Dobit ćeš OCR tekst (Mathpix Markdown) ispita, i po mogućnosti tekst s rješenjima/bodovanjem.
@@ -44,7 +57,8 @@ Tvoj zadatak:
 1. Razdvoji ispit na pojedinačne zadatke (zadrži izvorni redni broj u polju privremeni_broj).
 2. Za svaki zadatak izvuci ČIST TEKST PITANJA u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, bez naredbi za formatiranje cijelog dokumenta). VAŽNO: NE uključuj ponuđene odgovore A/B/C/D u ovo polje - oni idu zasebno, vidi točku 13.
 3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
-4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno. Uz cjelinu, dodijeli i JEDNO potpoglavlje IZ POPISA POTPOGLAVLJA te cjeline (naveden u šifrarniku uz svaku cjelinu) — ako nijedno potpoglavlje ne odgovara dobro, odaberi ono najbliže po sadržaju, ne izmišljaj novo.
+4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
+4b. Dodijeli TOČNO JEDNO potpoglavlje IZ DANOG ŠIFRARNIKA POTPOGLAVLJA, isključivo od onih navedenih za dodijeljenu cjelinu — ne izmišljaj nove nazive. Ako niti jedno ponuđeno potpoglavlje za tu cjelinu ne odgovara (rijetko), ostavi polje potpoglavlje prazno ("") umjesto nagađanja.
 5. Procijeni težinu: "lako", "srednje" ili "tesko".
 6. Predloži 3-6 ključnih riječi/pojmova (kljucne_rijeci, odvojene zarezom).
 7. vizualni_potencijal: "da" SAMO ako zadatak NEMA zadanu sliku ali bi GeoGebra vizualizacija pomogla razumijevanju (npr. tekstualni zadatak o funkciji bez priloženog grafa), inače "ne".
@@ -123,31 +137,51 @@ def mathpix_wait_and_get(pdf_id, app_id, app_key, poll_seconds=3, timeout_second
 # --- Šifrarnik ---
 
 def build_sifrarnik_text(sheet) -> str:
-    ws_cjelina = sheet.worksheet("Sifrarnik_cjelina")
-    ws_potpoglavlja = sheet.worksheet("Sifrarnik_potpoglavlja")
-    cjelina_rows = ws_cjelina.get_all_values()[1:]
-    potpoglavlja_rows = ws_potpoglavlja.get_all_values()[1:]
-    potpoglavlja_by_cjelina = {}
-    for r in potpoglavlja_rows:
-        if len(r) >= 2 and r[0]:
-            potpoglavlja_by_cjelina.setdefault(r[0], []).append(r[1])
+    ws = sheet.worksheet("Sifrarnik_cjelina")
+    rows = ws.get_all_values()[1:]
+    return "\n".join(f"- Kategorija: {r[0]} | Cjelina: {r[1]}" for r in rows if len(r) >= 2 and r[0])
+
+
+def get_potpoglavlja_po_cjelini(sheet) -> dict:
+    """Vraća {cjelina: [(potpoglavlje, redoslijed), ...]} sortirano po redoslijedu,
+    čitano iz taba 'Sifrarnik_potpoglavlja' (stupci: cjelina, potpoglavlje, redoslijed)."""
+    ws = sheet.worksheet("Sifrarnik_potpoglavlja")
+    rows = ws.get_all_values()[1:]
+    po_cjelini = {}
+    for r in rows:
+        if len(r) < 2 or not r[0] or not r[1]:
+            continue
+        cjelina, potpoglavlje = r[0].strip(), r[1].strip()
+        try:
+            redoslijed = float(r[2]) if len(r) > 2 and r[2] else 999
+        except ValueError:
+            redoslijed = 999
+        po_cjelini.setdefault(cjelina, []).append((potpoglavlje, redoslijed))
+    for cjelina in po_cjelini:
+        po_cjelini[cjelina].sort(key=lambda t: t[1])
+    return po_cjelini
+
+
+def build_sifrarnik_potpoglavlja_text(sheet) -> str:
+    po_cjelini = get_potpoglavlja_po_cjelini(sheet)
     lines = []
-    for r in cjelina_rows:
-        if len(r) >= 2 and r[0]:
-            kategorija, cjelina = r[0], r[1]
-            potp = potpoglavlja_by_cjelina.get(cjelina, [])
-            potp_text = ", ".join(potp) if potp else "(nema definiranih potpoglavlja)"
-            lines.append(f"- Kategorija: {kategorija} | Cjelina: {cjelina} | Potpoglavlja: {potp_text}")
+    for cjelina, stavke in po_cjelini.items():
+        popis = ", ".join(p for p, _ in stavke)
+        lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {popis}")
     return "\n".join(lines)
 
 
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
-                                model="claude-sonnet-5", _preostala_dubina=2, log=None):
+                                sifrarnik_potpoglavlja_text="", model="claude-sonnet-5",
+                                _preostala_dubina=2, log=None):
     client = anthropic.Anthropic(api_key=anthropic_api_key)
     user_content = f"""ŠIFRARNIK (koristi isključivo ove kategorije/cjeline, doslovno):
 {sifrarnik_text}
+
+ŠIFRARNIK POTPOGLAVLJA (za svaku cjelinu, koristi isključivo navedena potpoglavlja, doslovno):
+{sifrarnik_potpoglavlja_text}
 
 === TEKST ISPITA (Mathpix Markdown) ===
 {ispit_md}
@@ -172,9 +206,11 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
             if prijelom == -1:
                 prijelom = polovica
             dio1 = extract_zadaci_with_claude(ispit_md[:prijelom], rjesenja_md, sifrarnik_text,
-                                               anthropic_api_key, model, _preostala_dubina - 1, log)
+                                               anthropic_api_key, sifrarnik_potpoglavlja_text,
+                                               model, _preostala_dubina - 1, log)
             dio2 = extract_zadaci_with_claude(ispit_md[prijelom:], rjesenja_md, sifrarnik_text,
-                                               anthropic_api_key, model, _preostala_dubina - 1, log)
+                                               anthropic_api_key, sifrarnik_potpoglavlja_text,
+                                               model, _preostala_dubina - 1, log)
             return dio1 + dio2
         elif log:
             log("⚠️ UPOZORENJE: odgovor odrezan čak i nakon maksimalnog dijeljenja - rezultat je vjerojatno nepotpun.")
@@ -203,6 +239,14 @@ def upload_image_to_drive(drive_service, folder_id: str, filename: str, image_by
 
 def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
                             drive_service, slike_folder_id, log=None):
+    """
+    Preuzima slike i sprema ih u 02_SLIKE folder na Driveu (isti folder koji je u
+    Colabu mountan na LATEX_BAZA_ROOT/02_SLIKE). U `slika_putanja` upisuje SAMO
+    naziv datoteke (npr. "A2010_ljetni_zad17.png") - IZRAVNU, prenosivu referencu,
+    a ne Drive "view" link (koji je krhak i beskoristan za PreTeXt build, koji
+    slike čita izravno s diska). Puna putanja se sastavlja pri PreTeXt buildu kao
+    os.path.join(LATEX_BAZA_ROOT, "02_SLIKE", slika_putanja).
+    """
     broj_preuzetih = 0
     for z in zadaci:
         if z.get("slika_zadana") == "da" and z.get("slika_url"):
@@ -211,8 +255,8 @@ def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
                 resp = requests.get(z["slika_url"], headers=headers, timeout=30)
                 resp.raise_for_status()
                 naziv = f"{izvor_naziv}_zad{z.get('privremeni_broj', '0')}.png".replace(" ", "_")
-                file_id, link = upload_image_to_drive(drive_service, slike_folder_id, naziv, resp.content)
-                z["slika_putanja"] = link or file_id
+                upload_image_to_drive(drive_service, slike_folder_id, naziv, resp.content)
+                z["slika_putanja"] = naziv
                 broj_preuzetih += 1
                 if log:
                     log(f"🖼️ Slika spremljena za zadatak #{z.get('privremeni_broj')}: {naziv}")
@@ -260,8 +304,11 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
     all_values = ws_zadaci.get_all_values()
     data_rows = all_values[1:]
 
+    _idx_naziv = ZADACI_HEADERS.index("izvor_naziv")
+    _idx_latex = ZADACI_HEADERS.index("tekst_zadatka_latex")
     existing_lookup = [
-        (i + 2, row[2] if len(row) > 2 else "", row[10] if len(row) > 10 else "")
+        (i + 2, row[_idx_naziv] if len(row) > _idx_naziv else "",
+         row[_idx_latex] if len(row) > _idx_latex else "")
         for i, row in enumerate(data_rows)
     ]
 
@@ -289,25 +336,36 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
         prag = prag_slicnosti_isti_naziv if isti_naziv else prag_slicnosti
 
         if najbolji_redak and najbolja_slicnost >= prag:
+            # Slova stupaca računamo DINAMIČKI iz ZADACI_HEADERS (_col_letter) umjesto
+            # hardkodiranih slova - dodavanje/premještanje kolone (npr. `potpoglavlje`)
+            # više neće tiho pomaknuti ova ažuriranja na pogrešan stupac.
             rjesenje_novo = z.get("rjesenje", "")
             if rjesenje_novo:
-                ws_zadaci.update(range_name=f"M{najbolji_redak}:O{najbolji_redak}", values=[[
+                c1, c2 = _col_letter("rjesenje"), _col_letter("tip_rjesenja_izvor")
+                ws_zadaci.update(range_name=f"{c1}{najbolji_redak}:{c2}{najbolji_redak}", values=[[
                     rjesenje_novo, "sluzbeno", z.get("tip_rjesenja_izvor", ""),
                 ]])
-            if z.get("slika_putanja", ""):
-                ws_zadaci.update(range_name=f"P{najbolji_redak}", values=[[z.get("slika_putanja", "")]])
-            if z.get("max_bodovi", ""):
-                ws_zadaci.update(range_name=f"V{najbolji_redak}", values=[[z.get("max_bodovi", "")]])
-            if z.get("tip_zadatka", ""):
-                ws_zadaci.update(range_name=f"AA{najbolji_redak}", values=[[z.get("tip_zadatka", "")]])
-            if z.get("slika_zadana", ""):
-                ws_zadaci.update(range_name=f"AB{najbolji_redak}", values=[[z.get("slika_zadana", "")]])
-            if z.get("ponudjeni_odgovori"):
-                ws_zadaci.update(range_name=f"AC{najbolji_redak}", values=[[" || ".join(z.get("ponudjeni_odgovori", []))]])
-            if z.get("konacan_odgovor", ""):
-                ws_zadaci.update(range_name=f"AD{najbolji_redak}", values=[[z.get("konacan_odgovor", "")]])
             if z.get("potpoglavlje", ""):
-                ws_zadaci.update(range_name=f"AE{najbolji_redak}", values=[[z.get("potpoglavlje", "")]])
+                c = _col_letter("potpoglavlje")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("potpoglavlje", "")]])
+            if z.get("slika_putanja", ""):
+                c = _col_letter("slika_putanja")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("slika_putanja", "")]])
+            if z.get("max_bodovi", ""):
+                c = _col_letter("max_bodovi")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("max_bodovi", "")]])
+            if z.get("tip_zadatka", ""):
+                c = _col_letter("tip_zadatka")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("tip_zadatka", "")]])
+            if z.get("slika_zadana", ""):
+                c = _col_letter("slika_zadana")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("slika_zadana", "")]])
+            if z.get("ponudjeni_odgovori"):
+                c = _col_letter("ponudjeni_odgovori")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[" || ".join(z.get("ponudjeni_odgovori", []))]])
+            if z.get("konacan_odgovor", ""):
+                c = _col_letter("konacan_odgovor")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("konacan_odgovor", "")]])
             if log:
                 znak = "📄" if isti_naziv else "🔤"
                 log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
@@ -318,7 +376,7 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
             row = [
                 zid, izvor_tip, izvor_naziv, godina, broj_pdf_ulaza,
                 razina, "",
-                z.get("kategorija", ""), z.get("cjelina", ""), z.get("kljucne_rijeci", ""),
+                z.get("kategorija", ""), z.get("cjelina", ""), z.get("potpoglavlje", ""), z.get("kljucne_rijeci", ""),
                 z.get("tekst_zadatka_latex", ""), z.get("tekst_zadatka_mathjax", ""),
                 z.get("rjesenje", ""),
                 "sluzbeno" if z.get("rjesenje") else "nedostaje",
@@ -332,7 +390,6 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 "",
                 z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
                 " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
-                z.get("potpoglavlje", ""),
             ]
             novi_redovi.append(row)
             broj_dodanih += 1
