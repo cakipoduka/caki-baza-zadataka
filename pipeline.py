@@ -34,7 +34,7 @@ ZADACI_HEADERS = [
     "vizualni_potencijal", "geogebra_komande", "geogebra_material_id",
     "tezina", "max_bodovi", "slicni_zadaci",
     "status_provjere", "skenirano", "pretext_permalink",
-    "tip_zadatka", "slika_zadana", "ponudjeni_odgovori", "konacan_odgovor",
+    "tip_zadatka", "slika_zadana", "ponudjeni_odgovori", "konacan_odgovor", "potpoglavlje",
 ]
 
 EXTRACTION_SYSTEM_PROMPT = """Ti si asistent koji strukturira zadatke iz hrvatske državne mature i drugih matematičkih materijala.
@@ -44,7 +44,7 @@ Tvoj zadatak:
 1. Razdvoji ispit na pojedinačne zadatke (zadrži izvorni redni broj u polju privremeni_broj).
 2. Za svaki zadatak izvuci ČIST TEKST PITANJA u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, bez naredbi za formatiranje cijelog dokumenta). VAŽNO: NE uključuj ponuđene odgovore A/B/C/D u ovo polje - oni idu zasebno, vidi točku 13.
 3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
-4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
+4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno. Uz cjelinu, dodijeli i JEDNO potpoglavlje IZ POPISA POTPOGLAVLJA te cjeline (naveden u šifrarniku uz svaku cjelinu) — ako nijedno potpoglavlje ne odgovara dobro, odaberi ono najbliže po sadržaju, ne izmišljaj novo.
 5. Procijeni težinu: "lako", "srednje" ili "tesko".
 6. Predloži 3-6 ključnih riječi/pojmova (kljucne_rijeci, odvojene zarezom).
 7. vizualni_potencijal: "da" SAMO ako zadatak NEMA zadanu sliku ali bi GeoGebra vizualizacija pomogla razumijevanju (npr. tekstualni zadatak o funkciji bez priloženog grafa), inače "ne".
@@ -58,7 +58,7 @@ VAŽNO: slika_zadana i vizualni_potencijal se međusobno isključuju - zadatak s
 14. konacan_odgovor: KRATAK, čist finalni odgovor, odvojen od punog postupka u polju rjesenje. Za visestruki_izbor: samo slovo točnog odgovora (npr. "C"). Za kratki_odgovor/prosireni_odgovor: kratka vrijednost (npr. "3", "1/2", "x=5"). Ako rjesenje nije dano (vidi točku 3), ostavi prazno.
 
 VAŽNO: Odgovori ISKLJUČIVO JSON listom objekata, bez ikakvog teksta prije/poslije, bez markdown ograda (bez ```). Svaki objekt neka ima točno ova polja:
-privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor
+privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor
 """
 
 
@@ -123,9 +123,22 @@ def mathpix_wait_and_get(pdf_id, app_id, app_key, poll_seconds=3, timeout_second
 # --- Šifrarnik ---
 
 def build_sifrarnik_text(sheet) -> str:
-    ws = sheet.worksheet("Sifrarnik_cjelina")
-    rows = ws.get_all_values()[1:]
-    return "\n".join(f"- Kategorija: {r[0]} | Cjelina: {r[1]}" for r in rows if len(r) >= 2 and r[0])
+    ws_cjelina = sheet.worksheet("Sifrarnik_cjelina")
+    ws_potpoglavlja = sheet.worksheet("Sifrarnik_potpoglavlja")
+    cjelina_rows = ws_cjelina.get_all_values()[1:]
+    potpoglavlja_rows = ws_potpoglavlja.get_all_values()[1:]
+    potpoglavlja_by_cjelina = {}
+    for r in potpoglavlja_rows:
+        if len(r) >= 2 and r[0]:
+            potpoglavlja_by_cjelina.setdefault(r[0], []).append(r[1])
+    lines = []
+    for r in cjelina_rows:
+        if len(r) >= 2 and r[0]:
+            kategorija, cjelina = r[0], r[1]
+            potp = potpoglavlja_by_cjelina.get(cjelina, [])
+            potp_text = ", ".join(potp) if potp else "(nema definiranih potpoglavlja)"
+            lines.append(f"- Kategorija: {kategorija} | Cjelina: {cjelina} | Potpoglavlja: {potp_text}")
+    return "\n".join(lines)
 
 
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
@@ -293,6 +306,8 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 ws_zadaci.update(range_name=f"AC{najbolji_redak}", values=[[" || ".join(z.get("ponudjeni_odgovori", []))]])
             if z.get("konacan_odgovor", ""):
                 ws_zadaci.update(range_name=f"AD{najbolji_redak}", values=[[z.get("konacan_odgovor", "")]])
+            if z.get("potpoglavlje", ""):
+                ws_zadaci.update(range_name=f"AE{najbolji_redak}", values=[[z.get("potpoglavlje", "")]])
             if log:
                 znak = "📄" if isti_naziv else "🔤"
                 log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
@@ -317,6 +332,7 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 "",
                 z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
                 " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
+                z.get("potpoglavlje", ""),
             ]
             novi_redovi.append(row)
             broj_dodanih += 1
