@@ -183,31 +183,50 @@ def _ucitaj_zadatke_za_pretragu():
     return headers, all_values[1:]
 
 
+def _get_polje(row, idx, col):
+    i = idx.get(col)
+    return row[i] if i is not None and i < len(row) else ""
+
+
+def _pretrazi_zadatke(headers, redovi, upit, max_rezultata=30):
+    """Traži podudaranja po ID-u ili tekstu zadatka - koristi ga i stranica za slike
+    i stranica za uređivanje teksta, da ne dupliciramo istu logiku pretrage."""
+    idx = {h: i for i, h in enumerate(headers)}
+    upit_lower = upit.strip().lower()
+    podudaranja = [
+        (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
+        if upit_lower in _get_polje(row, idx, "id").lower()
+        or upit_lower in _get_polje(row, idx, "tekst_zadatka_latex").lower()
+    ][:max_rezultata]
+    return idx, podudaranja
+
+
+def _oznaci_zadatak(par, idx):
+    _, row = par
+    ima_sliku = "🖼️ " if _get_polje(row, idx, "slika_putanja").strip() else "　 "
+    fragment = _get_polje(row, idx, "tekst_zadatka_latex")[:70]
+    return f"{ima_sliku}#{_get_polje(row, idx, 'id')} ({_get_polje(row, idx, 'cjelina')}) — {fragment}..."
+
+
 def stranica_upload_slike():
     st.title("🖼️ Dodaj/zamijeni sliku zadatka")
     st.caption("Pronađi zadatak pretragom, pogledaj postojeću sliku (ako je ima), i uploadaj novu - bez ručnog rada na Driveu.")
 
-    if st.button("🔄 Osvježi popis zadataka"):
+    if st.button("🔄 Osvježi popis zadataka", key="osvjezi_slike"):
         _ucitaj_zadatke_za_pretragu.clear()
 
     headers, redovi = _ucitaj_zadatke_za_pretragu()
-    idx = {h: i for i, h in enumerate(headers)}
 
-    def get(row, col):
-        i = idx.get(col)
-        return row[i] if i is not None and i < len(row) else ""
-
-    upit = st.text_input("🔍 Pretraži po ID-u ili tekstu zadatka (npr. 'A2019' ili 'kvadratna jednadžba')", "")
+    upit = st.text_input("🔍 Pretraži po ID-u ili tekstu zadatka (npr. 'A2019' ili 'kvadratna jednadžba')", "", key="upit_slike")
 
     if not upit.strip():
         st.info("Upiši dio ID-a ili dio teksta zadatka da pronađeš zadatak kojem želiš dodati/zamijeniti sliku.")
         return
 
-    upit_lower = upit.strip().lower()
-    podudaranja = [
-        (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
-        if upit_lower in get(row, "id").lower() or upit_lower in get(row, "tekst_zadatka_latex").lower()
-    ][:30]
+    idx, podudaranja = _pretrazi_zadatke(headers, redovi, upit)
+
+    def get(row, col):
+        return _get_polje(row, idx, col)
 
     if not podudaranja:
         st.warning("Nema podudaranja. Pokušaj drugi pojam za pretragu.")
@@ -216,13 +235,9 @@ def stranica_upload_slike():
     if len(podudaranja) == 30:
         st.caption("Prikazano prvih 30 podudaranja - suzi pretragu ako ne vidiš traženi zadatak.")
 
-    def oznaci(par):
-        _, row = par
-        ima_sliku = "🖼️ " if get(row, "slika_putanja").strip() else "　 "
-        fragment = get(row, "tekst_zadatka_latex")[:70]
-        return f"{ima_sliku}#{get(row, 'id')} ({get(row, 'cjelina')}) — {fragment}..."
-
-    broj_retka, row = st.selectbox("Odaberi zadatak", podudaranja, format_func=oznaci)
+    broj_retka, row = st.selectbox(
+        "Odaberi zadatak", podudaranja, format_func=lambda par: _oznaci_zadatak(par, idx), key="odabir_slike"
+    )
 
     with st.expander("📄 Puni tekst zadatka", expanded=False):
         st.write(get(row, "tekst_zadatka_latex"))
@@ -283,15 +298,109 @@ def stranica_upload_slike():
 
 
 # ============================================================
+# Stranica 3: Uredi tekst/rješenje/uputu zadatka
+# ============================================================
+
+def stranica_uredi_tekst():
+    st.title("📝 Uredi tekst / rješenje / uputu zadatka")
+    st.caption("Pronađi zadatak i izravno ispravi tekst pitanja, rješenje, kratki odgovor ili uputu (hint) - bez pisanja posebnih skripti za rubne slučajeve.")
+
+    if st.button("🔄 Osvježi popis zadataka", key="osvjezi_tekst"):
+        _ucitaj_zadatke_za_pretragu.clear()
+
+    headers, redovi = _ucitaj_zadatke_za_pretragu()
+
+    upit = st.text_input("🔍 Pretraži po ID-u ili tekstu zadatka", "", key="upit_tekst")
+
+    if not upit.strip():
+        st.info("Upiši dio ID-a ili dio teksta zadatka da pronađeš zadatak koji želiš urediti.")
+        return
+
+    idx, podudaranja = _pretrazi_zadatke(headers, redovi, upit)
+
+    def get(row, col):
+        return _get_polje(row, idx, col)
+
+    if not podudaranja:
+        st.warning("Nema podudaranja. Pokušaj drugi pojam za pretragu.")
+        return
+
+    if len(podudaranja) == 30:
+        st.caption("Prikazano prvih 30 podudaranja - suzi pretragu ako ne vidiš traženi zadatak.")
+
+    broj_retka, row = st.selectbox(
+        "Odaberi zadatak", podudaranja, format_func=lambda par: _oznaci_zadatak(par, idx), key="odabir_tekst"
+    )
+
+    st.caption(
+        f"Cjelina: {get(row, 'cjelina') or '—'} · Potpoglavlje: {get(row, 'potpoglavlje') or '—'} · "
+        f"Tip: {get(row, 'tip_zadatka') or '—'}"
+    )
+
+    # key=f"..._{broj_retka}" - kad se promijeni odabrani zadatak, Streamlit tretira polja kao
+    # NOVA (drugi key), pa se ispravno ponovno pune trenutnim vrijednostima iz Sheeta umjesto
+    # da zadrže tekst ostavljen u polju za PRETHODNO odabrani zadatak.
+    novi_tekst = st.text_area(
+        "Tekst zadatka (tekst_zadatka_latex)", value=get(row, "tekst_zadatka_latex"),
+        height=150, key=f"tekst_{broj_retka}",
+    )
+    novo_rjesenje = st.text_area(
+        "Rješenje - puni postupak (rjesenje)", value=get(row, "rjesenje"),
+        height=150, key=f"rjesenje_{broj_retka}",
+    )
+    novi_konacan_odgovor = st.text_input(
+        "Konačan odgovor - kratka vrijednost (konacan_odgovor)", value=get(row, "konacan_odgovor"),
+        key=f"konacan_{broj_retka}",
+    )
+    nova_uputa = st.text_area(
+        "Uputa / naznaka za rješavanje (uputa - PreTeXt <hint>)", value=get(row, "uputa"),
+        height=100, key=f"uputa_{broj_retka}",
+        help="Prikazuje se kao poseban 'hint' blok u PreTeXt izlazu, odvojeno od punog rješenja.",
+    )
+
+    if st.button("💾 Spremi izmjene", type="primary", key=f"spremi_tekst_{broj_retka}"):
+        novi_mathjax = novi_tekst.replace("\\\\", "<br>")
+        c_tekst = _col_letter("tekst_zadatka_latex")
+        c_mathjax = _col_letter("tekst_zadatka_mathjax")
+        c_rjesenje = _col_letter("rjesenje")
+        c_konacan = _col_letter("konacan_odgovor")
+        c_uputa = _col_letter("uputa")
+        c_status = _col_letter("rjesenje_status")
+
+        azuriranja = [
+            {"range": f"{c_tekst}{broj_retka}", "values": [[novi_tekst]]},
+            {"range": f"{c_mathjax}{broj_retka}", "values": [[novi_mathjax]]},
+            {"range": f"{c_rjesenje}{broj_retka}", "values": [[novo_rjesenje]]},
+            {"range": f"{c_konacan}{broj_retka}", "values": [[novi_konacan_odgovor]]},
+            {"range": f"{c_uputa}{broj_retka}", "values": [[nova_uputa]]},
+        ]
+        if novo_rjesenje.strip() and get(row, "rjesenje_status") != "sluzbeno":
+            azuriranja.append({"range": f"{c_status}{broj_retka}", "values": [["sluzbeno"]]})
+
+        with st.spinner("Spremam izmjene..."):
+            try:
+                ws_zadaci.batch_update(azuriranja)
+            except Exception as e:
+                st.error(f"Greška: {e}")
+                st.stop()
+
+        st.success(f"✅ Izmjene spremljene za zadatak #{get(row, 'id')}.")
+        _ucitaj_zadatke_za_pretragu.clear()
+        st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
+
+
+# ============================================================
 # Navigacija
 # ============================================================
 
 stranica = st.sidebar.radio(
     "Stranica",
-    ["📄 Obradi novi ispit", "🖼️ Dodaj/zamijeni sliku zadatka"],
+    ["📄 Obradi novi ispit", "🖼️ Dodaj/zamijeni sliku zadatka", "📝 Uredi tekst/rješenje/uputu zadatka"],
 )
 
 if stranica == "📄 Obradi novi ispit":
     stranica_obradi_ispit()
-else:
+elif stranica == "🖼️ Dodaj/zamijeni sliku zadatka":
     stranica_upload_slike()
+else:
+    stranica_uredi_tekst()

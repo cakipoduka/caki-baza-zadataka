@@ -35,6 +35,7 @@ ZADACI_HEADERS = [
     "tezina", "max_bodovi", "slicni_zadaci",
     "status_provjere", "skenirano", "pretext_permalink",
     "tip_zadatka", "slika_zadana", "ponudjeni_odgovori", "konacan_odgovor",
+    "uputa",
 ]
 
 
@@ -68,6 +69,7 @@ polje rjesenje ostaje prazno za tu varijantu (vidi točku 3).
 3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
 4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
 4b. Dodijeli TOČNO JEDNO potpoglavlje IZ DANOG ŠIFRARNIKA POTPOGLAVLJA, isključivo od onih navedenih za dodijeljenu cjelinu — ne izmišljaj nove nazive. Ako niti jedno ponuđeno potpoglavlje za tu cjelinu ne odgovara (rijetko), ostavi polje potpoglavlje prazno ("") umjesto nagađanja.
+4c. Ako izvorni materijal sadrži EKSPLICITNU uputu/naznaku za rješavanje odvojenu od punog rješenja (npr. "Uputa: ..." ili "Naznaka: ..." prije samog rješenja), izvuci je doslovno u polje uputa. NIKAD ne izmišljaj uputu koje nema u izvoru - ako je nema, polje uputa ostaje prazno ("").
 5. Procijeni težinu: "lako", "srednje" ili "tesko".
 6. Predloži 3-6 ključnih riječi/pojmova (kljucne_rijeci, odvojene zarezom).
 7. vizualni_potencijal: "da" SAMO ako zadatak NEMA zadanu sliku ali bi GeoGebra vizualizacija pomogla razumijevanju (npr. tekstualni zadatak o funkciji bez priloženog grafa), inače "ne".
@@ -81,7 +83,7 @@ VAŽNO: slika_zadana i vizualni_potencijal se međusobno isključuju - zadatak s
 14. konacan_odgovor: KRATAK, čist finalni odgovor, odvojen od punog postupka u polju rjesenje. Za visestruki_izbor: samo slovo točnog odgovora (npr. "C"). Za kratki_odgovor/prosireni_odgovor: kratka vrijednost (npr. "3", "1/2", "x=5"). Ako rjesenje nije dano (vidi točku 3), ostavi prazno.
 
 VAŽNO: Odgovori ISKLJUČIVO JSON listom objekata, bez ikakvog teksta prije/poslije, bez markdown ograda (bez ```). Svaki objekt neka ima točno ova polja:
-privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor
+privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor, uputa
 """
 
 
@@ -375,6 +377,9 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
             if z.get("konacan_odgovor", ""):
                 c = _col_letter("konacan_odgovor")
                 ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("konacan_odgovor", "")]])
+            if z.get("uputa", ""):
+                c = _col_letter("uputa")
+                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("uputa", "")]])
             if log:
                 znak = "📄" if isti_naziv else "🔤"
                 log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
@@ -399,6 +404,7 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 "",
                 z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
                 " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
+                z.get("uputa", ""),
             ]
             novi_redovi.append(row)
             broj_dodanih += 1
