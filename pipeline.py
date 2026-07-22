@@ -55,6 +55,15 @@ Dobit ćeš OCR tekst (Mathpix Markdown) ispita, i po mogućnosti tekst s rješe
 
 Tvoj zadatak:
 1. Razdvoji ispit na pojedinačne zadatke (zadrži izvorni redni broj u polju privremeni_broj).
+1b. AKO jedan zadatak sadrži VIŠE NUMERIRANIH VARIJANTI istog problema s različitim ulaznim
+vrijednostima (čest slučaj u zbirkama, npr. 'Riješi pravokutni trokut ako je: 1) a=3, b=4  2) c=5, b=3
+3) c=21, a=2'), NE ostavljaj ih spojene u jednom zadatku - RAZDVOJI SVAKU VARIJANTU U POTPUNO
+SAMOSTALAN ZADATAK: ponovi zajednički uvodni tekst uz svaku varijantu tako da svaki proizvedeni
+zadatak ima cjelovit, samostojeći tekst_zadatka_latex (npr. 'Riješi pravokutni trokut ako je a=3, b=4.',
+zatim zaseban zadatak 'Riješi pravokutni trokut ako je c=5, b=3.', itd). Svaki takav pod-zadatak dobiva
+svoj privremeni_broj nastavkom slovom (npr. '5a', '5b', '5c') da se zna da dijele isti izvorni broj.
+Ako rješenja za pojedine varijante postoje odvojeno u tekstu rješenja, pridijeli svakoj svoje; ako ne,
+polje rjesenje ostaje prazno za tu varijantu (vidi točku 3).
 2. Za svaki zadatak izvuci ČIST TEKST PITANJA u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, bez naredbi za formatiranje cijelog dokumenta). VAŽNO: NE uključuj ponuđene odgovore A/B/C/D u ovo polje - oni idu zasebno, vidi točku 13.
 3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
 4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
