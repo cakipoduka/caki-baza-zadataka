@@ -237,8 +237,8 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
 
 # --- Slike (preuzimanje s Mathpixa, upload na Drive) ---
 
-def upload_image_to_drive(drive_service, folder_id: str, filename: str, image_bytes: bytes):
-    media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype="image/png", resumable=False)
+def upload_image_to_drive(drive_service, folder_id: str, filename: str, image_bytes: bytes, mimetype: str = "image/png"):
+    media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype=mimetype, resumable=False)
     file_metadata = {"name": filename, "parents": [folder_id]}
     created = drive_service.files().create(
         body=file_metadata, media_body=media, fields="id,webViewLink", supportsAllDrives=True
