@@ -324,7 +324,17 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
     ]
 
     id_prefix = izvor_naziv.replace(" ", "_")
-    existing_count = sum(1 for r in data_rows if r and r[0].startswith(id_prefix))
+    # Sljedeći broj ID-a računamo iz STVARNO postojećih brojeva (max + 1), NE brojanjem redaka -
+    # brojanje je krhko: ako se redci obrišu (npr. deduplikacija), broj se pomakne i može
+    # generirati ID koji se poklapa s nekim postojećim, preživjelim retkom (PreTeXt xml:id sudar).
+    _broj_id_re = re.compile(rf"^{re.escape(id_prefix)}_(\d+)$")
+    _postojeci_brojevi = []
+    for r in data_rows:
+        if r and r[0]:
+            m = _broj_id_re.match(r[0])
+            if m:
+                _postojeci_brojevi.append(int(m.group(1)))
+    _sljedeci_broj = (max(_postojeci_brojevi) + 1) if _postojeci_brojevi else 1
 
     novi_redovi = []
     broj_azuriranih = 0
@@ -386,7 +396,8 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                     f"({znak}{najbolja_slicnost:.0%}, prag {prag:.0%}) - nadopunjen.")
             broj_azuriranih += 1
         else:
-            zid = f"{id_prefix}_{existing_count + broj_dodanih + 1:03d}"
+            zid = f"{id_prefix}_{_sljedeci_broj:03d}"
+            _sljedeci_broj += 1
             row = [
                 zid, izvor_tip, izvor_naziv, godina, broj_pdf_ulaza,
                 razina, "",
