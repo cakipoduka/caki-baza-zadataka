@@ -225,11 +225,6 @@ def _odaberi_zadatak_pretragom(headers, redovi, kljuc_sufiks):
     return idx, broj_retka, row
 
 
-_POLJA_ZA_USPOREDBU = [
-    "id", "izvor_naziv", "cjelina", "potpoglavlje", "tip_zadatka",
-    "tekst_zadatka_latex", "rjesenje", "konacan_odgovor", "uputa", "slika_putanja",
-]
-
 _POLJA_ZA_KOPIRANJE = [
     "tekst_zadatka_latex", "tekst_zadatka_mathjax", "rjesenje", "rjesenje_status",
     "tip_rjesenja_izvor", "konacan_odgovor", "uputa", "slika_putanja", "slika_zadana",
@@ -237,14 +232,15 @@ _POLJA_ZA_KOPIRANJE = [
 ]
 
 
-def _kopiraj_podatke(idx, izvor_row, cilj_broj_retka):
-    """Prepisuje SADRŽAJNA polja (tekst, rješenje, slika, uputa...) iz izvor_row u cilj redak -
-    NE dira id/izvor_naziv/godina/cjelinu cilja, samo njegov sadržaj."""
-    azuriranja = [
-        {"range": f"{_col_letter(polje)}{cilj_broj_retka}", "values": [[_get_polje(izvor_row, idx, polje)]]}
-        for polje in _POLJA_ZA_KOPIRANJE
-    ]
-    ws_zadaci.batch_update(azuriranja)
+def _kopiraj_jedno_polje(polje, vrijednost, cilj_broj_retka):
+    """Kopira SAMO JEDNO polje u ciljani redak. Za tekst_zadatka_latex usput uskladi i
+    tekst_zadatka_mathjax (isti obrazac kao kod ostalih skripti za čišćenje)."""
+    c = _col_letter(polje)
+    ws_zadaci.update(range_name=f"{c}{cilj_broj_retka}", values=[[vrijednost]])
+    if polje == "tekst_zadatka_latex":
+        c_mj = _col_letter("tekst_zadatka_mathjax")
+        novi_mathjax = vrijednost.replace("\\\\", "<br>")
+        ws_zadaci.update(range_name=f"{c_mj}{cilj_broj_retka}", values=[[novi_mathjax]])
 
 
 def _prikazi_usporedbu(headers, redovi):
@@ -266,31 +262,45 @@ def _prikazi_usporedbu(headers, redovi):
         st.warning("Odabrao si isti zadatak na obje strane.")
         return
 
-    st.divider()
-    col_a, col_b = st.columns(2)
-    for col, row in [(col_a, row_a), (col_b, row_b)]:
-        with col:
-            for polje in _POLJA_ZA_USPOREDBU:
-                vrijednost = _get_polje(row, idx, polje)
-                if vrijednost:
-                    st.markdown(f"**{polje}**")
-                    st.write(vrijednost)
+    def get(row, col):
+        return _get_polje(row, idx, col)
 
     st.divider()
-    st.subheader("Akcije")
+    st.caption(
+        f"**A:** #{get(row_a, 'id')} ({get(row_a, 'cjelina')} / {get(row_a, 'potpoglavlje') or '—'})  "
+        f"·  **B:** #{get(row_b, 'id')} ({get(row_b, 'cjelina')} / {get(row_b, 'potpoglavlje') or '—'})"
+    )
 
-    c1, c2 = st.columns(2)
-    if c1.button("📋 Kopiraj A → B (prepiši sadržaj B-a podacima iz A)", key="kopiraj_ab"):
-        _kopiraj_podatke(idx, row_a, broj_b)
-        st.success("✅ Sadržaj kopiran iz A u B.")
-        _ucitaj_zadatke_za_pretragu.clear()
-        st.rerun()
-    if c2.button("📋 Kopiraj B → A (prepiši sadržaj A-a podacima iz B)", key="kopiraj_ba"):
-        _kopiraj_podatke(idx, row_b, broj_a)
-        st.success("✅ Sadržaj kopiran iz B u A.")
-        _ucitaj_zadatke_za_pretragu.clear()
-        st.rerun()
+    st.divider()
+    st.subheader("Sadržajna polja — kopiraj pojedinačno strelicom")
+    st.caption("Polja koja su prazna na obje strane se ne prikazuju. Klik na strelicu odmah upisuje u Sheet.")
 
+    for polje in _POLJA_ZA_KOPIRANJE:
+        vrijednost_a = get(row_a, polje)
+        vrijednost_b = get(row_b, polje)
+        if not vrijednost_a and not vrijednost_b:
+            continue
+
+        st.markdown(f"**{polje}**")
+        c1, c2, c3 = st.columns([5, 1, 5])
+        with c1:
+            st.write(vrijednost_a if vrijednost_a else "—")
+        with c2:
+            if st.button("→", key=f"copy_ab_{polje}", help=f"Kopiraj {polje} iz A u B"):
+                _kopiraj_jedno_polje(polje, vrijednost_a, broj_b)
+                st.success(f"✅ {polje}: A → B")
+                _ucitaj_zadatke_za_pretragu.clear()
+                st.rerun()
+            if st.button("←", key=f"copy_ba_{polje}", help=f"Kopiraj {polje} iz B u A"):
+                _kopiraj_jedno_polje(polje, vrijednost_b, broj_a)
+                st.success(f"✅ {polje}: B → A")
+                _ucitaj_zadatke_za_pretragu.clear()
+                st.rerun()
+        with c3:
+            st.write(vrijednost_b if vrijednost_b else "—")
+        st.divider()
+
+    st.subheader("Brisanje")
     c3, c4 = st.columns(2)
     if c3.button("🗑️ Obriši Zadatak A", key="obrisi_a"):
         st.session_state["potvrdi_brisanje"] = ("A", broj_a)
