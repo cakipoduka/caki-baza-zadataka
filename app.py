@@ -208,6 +208,113 @@ def _oznaci_zadatak(par, idx):
     return f"{ima_sliku}#{_get_polje(row, idx, 'id')} ({_get_polje(row, idx, 'cjelina')}) — {fragment}..."
 
 
+def _odaberi_zadatak_pretragom(headers, redovi, kljuc_sufiks):
+    """Pretraga + selectbox s jedinstvenim key-jevima (kljuc_sufiks) - koristi se kad na istoj
+    stranici trebamo DVA neovisna birača zadatka (npr. usporedba A/B)."""
+    upit = st.text_input("🔍 Pretraga", "", key=f"upit_{kljuc_sufiks}")
+    if not upit.strip():
+        return None, None, None
+    idx, podudaranja = _pretrazi_zadatke(headers, redovi, upit)
+    if not podudaranja:
+        st.warning("Nema podudaranja.")
+        return idx, None, None
+    par = st.selectbox(
+        "Odaberi", podudaranja, format_func=lambda p: _oznaci_zadatak(p, idx), key=f"odabir_{kljuc_sufiks}"
+    )
+    broj_retka, row = par
+    return idx, broj_retka, row
+
+
+_POLJA_ZA_USPOREDBU = [
+    "id", "izvor_naziv", "cjelina", "potpoglavlje", "tip_zadatka",
+    "tekst_zadatka_latex", "rjesenje", "konacan_odgovor", "uputa", "slika_putanja",
+]
+
+_POLJA_ZA_KOPIRANJE = [
+    "tekst_zadatka_latex", "tekst_zadatka_mathjax", "rjesenje", "rjesenje_status",
+    "tip_rjesenja_izvor", "konacan_odgovor", "uputa", "slika_putanja", "slika_zadana",
+    "ponudjeni_odgovori", "tip_zadatka", "video_url",
+]
+
+
+def _kopiraj_podatke(idx, izvor_row, cilj_broj_retka):
+    """Prepisuje SADRŽAJNA polja (tekst, rješenje, slika, uputa...) iz izvor_row u cilj redak -
+    NE dira id/izvor_naziv/godina/cjelinu cilja, samo njegov sadržaj."""
+    azuriranja = [
+        {"range": f"{_col_letter(polje)}{cilj_broj_retka}", "values": [[_get_polje(izvor_row, idx, polje)]]}
+        for polje in _POLJA_ZA_KOPIRANJE
+    ]
+    ws_zadaci.batch_update(azuriranja)
+
+
+def _prikazi_usporedbu(headers, redovi):
+    st.caption("Odaberi dva zadatka za vizualnu usporedbu - korisno za pronađene duplikate.")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Zadatak A")
+        idx, broj_a, row_a = _odaberi_zadatak_pretragom(headers, redovi, "usporedi_a")
+    with col_b:
+        st.subheader("Zadatak B")
+        idx, broj_b, row_b = _odaberi_zadatak_pretragom(headers, redovi, "usporedi_b")
+
+    if not (broj_a and broj_b):
+        st.info("Odaberi oba zadatka (A i B) da vidiš usporedbu.")
+        return
+
+    if broj_a == broj_b:
+        st.warning("Odabrao si isti zadatak na obje strane.")
+        return
+
+    st.divider()
+    col_a, col_b = st.columns(2)
+    for col, row in [(col_a, row_a), (col_b, row_b)]:
+        with col:
+            for polje in _POLJA_ZA_USPOREDBU:
+                vrijednost = _get_polje(row, idx, polje)
+                if vrijednost:
+                    st.markdown(f"**{polje}**")
+                    st.write(vrijednost)
+
+    st.divider()
+    st.subheader("Akcije")
+
+    c1, c2 = st.columns(2)
+    if c1.button("📋 Kopiraj A → B (prepiši sadržaj B-a podacima iz A)", key="kopiraj_ab"):
+        _kopiraj_podatke(idx, row_a, broj_b)
+        st.success("✅ Sadržaj kopiran iz A u B.")
+        _ucitaj_zadatke_za_pretragu.clear()
+        st.rerun()
+    if c2.button("📋 Kopiraj B → A (prepiši sadržaj A-a podacima iz B)", key="kopiraj_ba"):
+        _kopiraj_podatke(idx, row_b, broj_a)
+        st.success("✅ Sadržaj kopiran iz B u A.")
+        _ucitaj_zadatke_za_pretragu.clear()
+        st.rerun()
+
+    c3, c4 = st.columns(2)
+    if c3.button("🗑️ Obriši Zadatak A", key="obrisi_a"):
+        st.session_state["potvrdi_brisanje"] = ("A", broj_a)
+    if c4.button("🗑️ Obriši Zadatak B", key="obrisi_b"):
+        st.session_state["potvrdi_brisanje"] = ("B", broj_b)
+
+    if st.session_state.get("potvrdi_brisanje"):
+        oznaka, broj_retka = st.session_state["potvrdi_brisanje"]
+        st.warning(
+            f"⚠️ Sigurno trajno obrisati Zadatak {oznaka} (redak {broj_retka})? "
+            "Ova radnja se ne može poništiti iz aplikacije (Sheet ima Version History kao zadnju liniju obrane)."
+        )
+        cc1, cc2 = st.columns(2)
+        if cc1.button("✅ Da, obriši", key="potvrdi_obrisi", type="primary"):
+            ws_zadaci.delete_rows(broj_retka)
+            st.success(f"✅ Redak {broj_retka} obrisan.")
+            st.session_state["potvrdi_brisanje"] = None
+            _ucitaj_zadatke_za_pretragu.clear()
+            st.rerun()
+        if cc2.button("❌ Odustani", key="odustani_obrisi"):
+            st.session_state["potvrdi_brisanje"] = None
+            st.rerun()
+
+
 def stranica_upload_slike():
     st.title("🖼️ Dodaj/zamijeni sliku zadatka")
     st.caption("Pronađi zadatak pretragom, pogledaj postojeću sliku (ako je ima), i uploadaj novu - bez ručnog rada na Driveu.")
@@ -309,6 +416,11 @@ def stranica_uredi_tekst():
         _ucitaj_zadatke_za_pretragu.clear()
 
     headers, redovi = _ucitaj_zadatke_za_pretragu()
+
+    usporedi = st.checkbox("🔀 Usporedi dva zadatka (npr. za pronalazak/spajanje duplikata)")
+    if usporedi:
+        _prikazi_usporedbu(headers, redovi)
+        return
 
     upit = st.text_input("🔍 Pretraži po ID-u ili tekstu zadatka", "", key="upit_tekst")
 
