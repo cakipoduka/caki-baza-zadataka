@@ -459,6 +459,17 @@ def stranica_uredi_tekst():
         f"Tip: {get(row, 'tip_zadatka') or '—'}"
     )
 
+    with st.expander("👁️ Puni tekst zadatka (renderirano, ne sirovi LaTeX)", expanded=True):
+        st.write(get(row, "tekst_zadatka_latex") or "*(prazno)*")
+        if get(row, "rjesenje"):
+            st.markdown("**Rješenje:**")
+            st.write(get(row, "rjesenje"))
+        if get(row, "konacan_odgovor"):
+            st.markdown(f"**Konačan odgovor:** {get(row, 'konacan_odgovor')}")
+        if get(row, "uputa"):
+            st.markdown("**Uputa:**")
+            st.write(get(row, "uputa"))
+
     # key=f"..._{broj_retka}" - kad se promijeni odabrani zadatak, Streamlit tretira polja kao
     # NOVA (drugi key), pa se ispravno ponovno pune trenutnim vrijednostima iz Sheeta umjesto
     # da zadrže tekst ostavljen u polju za PRETHODNO odabrani zadatak.
