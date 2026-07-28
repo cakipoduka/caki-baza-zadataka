@@ -22,12 +22,16 @@ from pipeline import (
     extract_zadaci_with_claude,
     get_drive_service,
     get_gspread_client,
-    mathpix_process_pdf,
-    mathpix_wait_and_get,
+    mathpix_ocr_vise_datoteka,
     nadopuni_ili_dodaj_zadatke,
     preuzmi_i_spremi_slike,
     upload_image_to_drive,
 )
+
+# Tipovi datoteka koje uploaderi za OCR ulaz prihvaćaju - PDF i uobičajeni formati slika
+# (npr. screenshot zaslona zadataka/rješenja). Mathpix OCR grana se automatski po ekstenziji
+# u pipeline.mathpix_ocr_datoteka() - ovdje samo dopuštamo oba u Streamlit file_upload widgetu.
+OCR_TIPOVI_DATOTEKA = ["pdf", "png", "jpg", "jpeg", "gif", "webp"]
 
 st.set_page_config(page_title="CAKI Matematika — Obrada ispita", page_icon="📚", layout="centered")
 
@@ -80,9 +84,20 @@ def stranica_obradi_ispit():
 
     with st.form("obrada_form", clear_on_submit=False):
         st.subheader("1. Datoteke")
-        ispit_datoteka = st.file_uploader("Ispit (PDF) — obavezno", type="pdf")
-        rjesenja_datoteka_1 = st.file_uploader("Rješenja — kratki ključ (opcionalno)", type="pdf")
-        rjesenja_datoteka_2 = st.file_uploader("Rješenja — bodovanje (opcionalno)", type="pdf")
+        st.caption(
+            "Prihvaćeni su PDF-ovi i slike (npr. screenshotovi zaslona). Može se priložiti "
+            "više datoteka odjednom u svakom polju - sve se OCR-aju zasebno i spoje u jedan tekst, "
+            "istim redoslijedom kojim su dodane. Za screenshotove: veća rezolucija = bolji OCR "
+            "(izbjegavaj jako komprimirane JPEG-ove sitnih formula)."
+        )
+        ispit_datoteke = st.file_uploader(
+            "Zadatci (PDF i/ili slike) — obavezno",
+            type=OCR_TIPOVI_DATOTEKA, accept_multiple_files=True,
+        )
+        rjesenja_datoteke = st.file_uploader(
+            "Rješenja (PDF i/ili slike) — opcionalno",
+            type=OCR_TIPOVI_DATOTEKA, accept_multiple_files=True,
+        )
 
         st.subheader("2. Metapodaci")
         col1, col2, col3 = st.columns(3)
@@ -95,8 +110,8 @@ def stranica_obradi_ispit():
     if not posalji:
         return
 
-    if not ispit_datoteka:
-        st.error("Moraš priložiti barem PDF ispita.")
+    if not ispit_datoteke:
+        st.error("Moraš priložiti barem jednu datoteku sa zadatcima (PDF ili slika).")
         st.stop()
 
     log_prostor = st.empty()
@@ -111,27 +126,20 @@ def stranica_obradi_ispit():
     anthropic_key = st.secrets["ANTHROPIC_API_KEY"]
     slike_folder_id = st.secrets["SLIKE_FOLDER_ID"]
 
-    izvor_naziv = os.path.splitext(ispit_datoteka.name)[0]
-    prilozi_rjesenja = [f for f in [rjesenja_datoteka_1, rjesenja_datoteka_2] if f]
-    broj_pdf_ulaza = 1 + len(prilozi_rjesenja)
+    izvor_naziv = os.path.splitext(ispit_datoteke[0].name)[0]
+    broj_pdf_ulaza = len(ispit_datoteke) + len(rjesenja_datoteke)
 
     with st.spinner("Obrada u tijeku — ovo može potrajati 1-3 minute..."):
         log(f"📄 Obrađujem: {izvor_naziv} ({broj_pdf_ulaza} datoteka)")
 
         try:
-            # 1. Mathpix OCR ispita
-            pdf_id = mathpix_process_pdf(ispit_datoteka.getvalue(), ispit_datoteka.name, mathpix_id, mathpix_key)
-            ispit_md = mathpix_wait_and_get(pdf_id, mathpix_id, mathpix_key, log=log)
-            log(f"✅ Ispit OCR gotov ({len(ispit_md)} znakova)")
+            # 1. Mathpix OCR zadataka (PDF i/ili slike, spojeno u jedan tekst)
+            ispit_md = mathpix_ocr_vise_datoteka(ispit_datoteke, mathpix_id, mathpix_key, log=log)
+            log(f"✅ OCR zadataka gotov (ukupno {len(ispit_md)} znakova)")
 
-            # 2. Mathpix OCR rješenja (ako postoje)
-            rjesenja_md_parts = []
-            for f in prilozi_rjesenja:
-                pid = mathpix_process_pdf(f.getvalue(), f.name, mathpix_id, mathpix_key)
-                md_dio = mathpix_wait_and_get(pid, mathpix_id, mathpix_key, log=log)
-                rjesenja_md_parts.append(md_dio)
-                log(f"✅ Rješenja OCR gotov ({f.name}, {len(md_dio)} znakova)")
-            rjesenja_md = "\n\n---\n\n".join(rjesenja_md_parts) if rjesenja_md_parts else None
+            # 2. Mathpix OCR rješenja (ako postoje, PDF i/ili slike)
+            rjesenja_md = mathpix_ocr_vise_datoteka(rjesenja_datoteke, mathpix_id, mathpix_key, log=log) \
+                if rjesenja_datoteke else None
 
             # 3. Claude strukturiranje (uključujući klasifikaciju potpoglavlja iz šifrarnika)
             log("🤖 Claude strukturira zadatke...")

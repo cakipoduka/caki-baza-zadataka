@@ -145,6 +145,57 @@ def mathpix_wait_and_get(pdf_id, app_id, app_key, poll_seconds=3, timeout_second
     raise TimeoutError("Mathpix obrada nije završila u zadanom vremenu.")
 
 
+SLIKA_EKSTENZIJE = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+def je_slika(filename: str) -> bool:
+    return os.path.splitext(filename)[1].lower() in SLIKA_EKSTENZIJE
+
+
+def mathpix_process_image(image_bytes: bytes, filename: str, app_id: str, app_key: str) -> str:
+    """OCR JEDNE slike preko Mathpixovog /v3/text endpointa. Za razliku od /v3/pdf,
+    ovo je SINKRONI poziv - odgovor (Mathpix Markdown) stiže odmah u istom pozivu,
+    bez pdf_id-a i bez pollinga (mathpix_wait_and_get ovdje nije potreban)."""
+    headers = {"app_id": app_id, "app_key": app_key}
+    response = requests.post(
+        "https://api.mathpix.com/v3/text",
+        headers=headers,
+        files={"file": (filename, image_bytes)},
+        data={"options_json": '{"math_inline_delimiters": ["$", "$"], "rm_spaces": true}'},
+    )
+    response.raise_for_status()
+    return response.json().get("text", "")
+
+
+def mathpix_ocr_datoteka(file_bytes: bytes, filename: str, app_id: str, app_key: str, log=None) -> str:
+    """Jedinstvena ulazna točka za OCR JEDNE datoteke, PDF ILI slika - grana se
+    automatski po ekstenziji imena datoteke. PDF ide na asinkroni /v3/pdf (pošalji
+    pa čekaj), slika na sinkroni /v3/text (gotovo u istom pozivu)."""
+    if je_slika(filename):
+        if log:
+            log(f"🖼️ Šaljem sliku na Mathpix ({filename})...")
+        return mathpix_process_image(file_bytes, filename, app_id, app_key)
+    if log:
+        log(f"📄 Šaljem PDF na Mathpix ({filename})...")
+    pdf_id = mathpix_process_pdf(file_bytes, filename, app_id, app_key)
+    return mathpix_wait_and_get(pdf_id, app_id, app_key, log=log)
+
+
+def mathpix_ocr_vise_datoteka(datoteke, app_id, app_key, log=None):
+    """OCR liste uploadanih datoteka (bilo koja kombinacija PDF-ova i slika) i
+    spajanje rezultata u jedan Mathpix Markdown tekst, razdvojen s '---' (isti
+    obrazac kao dosadašnje spajanje rjesenja_pdf_1/rjesenja_pdf_2). Svaki element
+    liste mora imati .getvalue() i .name (Streamlit UploadedFile objekti).
+    Vraća None za praznu listu, da pozivatelj ne mora provjeravati posebno."""
+    dijelovi = []
+    for f in datoteke:
+        tekst = mathpix_ocr_datoteka(f.getvalue(), f.name, app_id, app_key, log=log)
+        dijelovi.append(tekst)
+        if log:
+            log(f"✅ OCR gotov ({f.name}, {len(tekst)} znakova)")
+    return "\n\n---\n\n".join(dijelovi) if dijelovi else None
+
+
 # --- Šifrarnik ---
 
 def build_sifrarnik_text(sheet) -> str:
