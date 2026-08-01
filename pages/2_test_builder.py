@@ -19,7 +19,7 @@ import tempfile
 
 import streamlit as st
 
-from baza_zadataka_pipeline import get_gspread_client
+from pipeline import get_gspread_client
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
 
@@ -109,6 +109,12 @@ def dodaj_zadatak(row, bodovi_default=""):
         "video_url": row.get("video_url", ""),
         "bodovi": str(row.get("max_bodovi") or bodovi_default or ""),
         "izvor": "baza",
+        "tip_zadatka": row.get("tip_zadatka", ""),
+        # U bazi je spremljeno kao " || " odvojen string (vidi nadopuni_ili_dodaj_zadatke
+        # u pipeline.py) - ovdje ga odmah pretvaramo u listu radi lakšeg rada dalje.
+        "ponudjeni_odgovori": [
+            o.strip() for o in str(row.get("ponudjeni_odgovori", "")).split("||") if o.strip()
+        ],
     })
 
 
@@ -177,11 +183,22 @@ with col_pretraga:
         rucni_tekst = st.text_area("Tekst zadatka (LaTeX matematika unutar $...$)", key="rucni_tekst")
         rucni_video = st.text_input("Video URL (opcionalno)", key="rucni_video")
         rucni_bodovi = st.text_input("Bodovi (opcionalno)", key="rucni_bodovi")
+        rucni_je_mc = st.checkbox("Višestruki izbor (A/B/C/D...)", key="rucni_je_mc")
+        rucni_odgovori_raw = ""
+        if rucni_je_mc:
+            rucni_odgovori_raw = st.text_input(
+                "Ponuđeni odgovori, odvojeni s ';' (npr. $x=1$; $x=2$; $x=4$; $x=6$)",
+                key="rucni_odgovori",
+            )
         if st.button("➕ Dodaj ručni zadatak"):
             if rucni_tekst.strip():
                 st.session_state.odabrani.append({
                     "id": None, "tekst": rucni_tekst, "video_url": rucni_video,
                     "bodovi": rucni_bodovi, "izvor": "ad_hoc",
+                    "tip_zadatka": "visestruki_izbor" if rucni_je_mc else "",
+                    "ponudjeni_odgovori": [
+                        o.strip() for o in rucni_odgovori_raw.split(";") if o.strip()
+                    ] if rucni_je_mc else [],
                 })
                 st.rerun()
             else:
@@ -238,6 +255,27 @@ if je_test:
 prikazi_rjesenja = st.checkbox("Uključi rješenja na kraju dokumenta", value=True)
 
 
+def izgradi_opcije_blok(ponudjeni_odgovori):
+    """Gradi LaTeX za prikaz ponuđenih odgovora (A/B/C/D...) ispod teksta zadatka.
+    Koristi postojeće \\mcFourOptions/\\mcFiveOptions naredbe iz caki-style.sty za
+    4 ili 5 opcija (najčešći slučaj); za bilo koji drugi broj opcija koristi
+    jednostavan A)/B)/C)... popis (\\begin{itemize}) da ne pukne na rubnim slučajevima.
+    VAŽNO: ovaj blok se NE smije propuštati kroz escape_outside_math - dodaje se
+    NAKON escapiranja teksta zadatka, jer sadrži prave LaTeX naredbe (\\mcFourOptions...),
+    a ne slobodni tekst profesora."""
+    opcije = [escape_outside_math(o.strip()) for o in ponudjeni_odgovori if o.strip()]
+    if not opcije:
+        return ""
+    slova = ["A", "B", "C", "D", "E", "F"]
+    if len(opcije) == 4:
+        return "\n\\mcFourOptions{" + "}{".join(opcije) + "}"
+    if len(opcije) == 5:
+        return "\n\\mcFiveOptions{" + "}{".join(opcije) + "}"
+    # Fallback za 2, 3, 6+ opcija - jednostavan popis, i dalje unutar taskbox okvira
+    stavke = "\n".join(f"\\item[{slova[j]})] {opc}" for j, opc in enumerate(opcije))
+    return "\n\\begin{itemize}\n" + stavke + "\n\\end{itemize}"
+
+
 def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja):
     zad_lines = []
     rjes_lines = []
@@ -245,6 +283,10 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja):
         tekst = escape_outside_math(z["tekst"].strip())
         video = (z["video_url"] or "").strip()
         bodovi = (z["bodovi"] or "").strip() if je_test else ""
+
+        if z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
+            tekst += izgradi_opcije_blok(z["ponudjeni_odgovori"])
+
         zad_lines.append(f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}")
         zad_lines.append("")
         if ukljuci_rjesenja:
