@@ -125,28 +125,19 @@
     \par\vspace{0.3em}
 }
 
-% Popis za višestruki izbor - jedna opcija po retku (izbjegava preljev kod
-% dugih izraza koje 2-stupčana tablica ne bi mogla ispravno prelomiti, jer se
-% matematika u LaTeX-u ne lomi automatski preko više redaka).
+% Opcije za višestruki izbor kao PRIRODAN tok teksta (ne fiksna tablica ni
+% fiksan popis) - LaTeX sam odlučuje hoće li sve stati u jedan redak (kompaktno,
+% štedi papir) ili će se prelomiti na više redaka (kad su izrazi dugi). Ovo je
+% robusnije od bilo kojeg fiksnog Python-pravila, jer se stvarna širina teksta
+% zna tek kad LaTeX stvarno složi stranicu - ne unaprijed.
 \newcommand{\mcFourOptions}[4]{%
     \vspace{3mm}
-    \begin{itemize}[leftmargin=1.8em, itemsep=0.4em, topsep=0pt, label=]
-        \item \textbf{A)} #1
-        \item \textbf{B)} #2
-        \item \textbf{C)} #3
-        \item \textbf{D)} #4
-    \end{itemize}
+    \noindent\textbf{A)}~#1\quad\textbf{B)}~#2\quad\textbf{C)}~#3\quad\textbf{D)}~#4\par
 }
 
 \newcommand{\mcFiveOptions}[5]{%
     \vspace{3mm}
-    \begin{itemize}[leftmargin=1.8em, itemsep=0.4em, topsep=0pt, label=]
-        \item \textbf{A)} #1
-        \item \textbf{B)} #2
-        \item \textbf{C)} #3
-        \item \textbf{D)} #4
-        \item \textbf{E)} #5
-    \end{itemize}
+    \noindent\textbf{A)}~#1\quad\textbf{B)}~#2\quad\textbf{C)}~#3\quad\textbf{D)}~#4\quad\textbf{E)}~#5\par
 }
 
 % ============================================================
