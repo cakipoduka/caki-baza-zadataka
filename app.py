@@ -15,7 +15,7 @@ import os
 
 import streamlit as st
 
-from pipeline import (
+from baza_zadataka_pipeline import (
     _col_letter,
     build_sifrarnik_potpoglavlja_text,
     build_sifrarnik_text,
