@@ -167,6 +167,8 @@ def dodaj_zadatak(row, bodovi_default=""):
         # odgovori" gdje se isti zadatak koristi bez ponuđenih A/B/C/D).
         "prikazi_opcije": True,
         "slika_putanja": row.get("slika_putanja", "").strip() if row.get("slika_zadana") == "da" else "",
+        "rjesenje": row.get("rjesenje", ""),
+        "konacan_odgovor": row.get("konacan_odgovor", ""),
     })
 
 
@@ -253,6 +255,8 @@ with col_pretraga:
                 "Ponuđeni odgovori, odvojeni s ';' (npr. $x=1$; $x=2$; $x=4$; $x=6$)",
                 key="rucni_odgovori",
             )
+        rucni_rjesenje = st.text_area("Rješenje - puni postupak (opcionalno)", key="rucni_rjesenje")
+        rucni_konacan = st.text_input("Konačan odgovor (opcionalno)", key="rucni_konacan")
         if st.button("➕ Dodaj ručni zadatak"):
             if rucni_tekst.strip():
                 st.session_state.odabrani.append({
@@ -264,6 +268,8 @@ with col_pretraga:
                     ] if rucni_je_mc else [],
                     "prikazi_opcije": True,
                     "slika_putanja": "",
+                    "rjesenje": rucni_rjesenje,
+                    "konacan_odgovor": rucni_konacan,
                 })
                 st.rerun()
             else:
@@ -335,6 +341,14 @@ st.caption(
     "**po zadatku** — vidi checkbox uz svaki takav zadatak u koloni '2. Odabrani zadaci' gore."
 )
 
+dodaj_mamac = st.checkbox(
+    "➕ Dodaj mamac opciju svim zadacima višestrukog izbora "
+    "(npr. \"Ništa od navedenog\") — primjenjuje se na sve odjednom",
+)
+mamac_tekst = "Ništa od navedenog"
+if dodaj_mamac:
+    mamac_tekst = st.text_input("Tekst mamac opcije", value=mamac_tekst)
+
 
 def formatiraj_opciju(opcija):
     """Baza sprema ponudjeni_odgovori kao ČIST LaTeX BEZ $...$ omotača kad je
@@ -361,28 +375,25 @@ def formatiraj_opciju(opcija):
 
 
 def izgradi_opcije_blok(ponudjeni_odgovori):
-    """Gradi LaTeX za prikaz ponuđenih odgovora (A/B/C/D...) ispod teksta zadatka.
-    Koristi postojeće \\mcFourOptions/\\mcFiveOptions naredbe iz caki-style.sty za
-    4 ili 5 opcija (najčešći slučaj); za bilo koji drugi broj opcija koristi
-    jednostavan A)/B)/C)... popis (\\begin{itemize}) da ne pukne na rubnim slučajevima.
+    """Gradi LaTeX za prikaz ponuđenih odgovora (A/B/C/D...) ispod teksta zadatka,
+    kao PRIRODAN tok teksta (ne fiksna tablica/popis) - LaTeX sam odlučuje hoće
+    li sve stati u jedan redak (kompaktno, štedi papir) ili prelomiti na više
+    redaka. Radi za BILO KOJI broj opcija (2, 3, 4, 5, 6+) - važno jer dodatak
+    "Ništa od navedenog" (vidi dodaj_nista_od_navedenog niže) može gurnuti
+    zadatak koji je već imao 5 opcija na 6.
     VAŽNO: ovaj blok se NE smije propuštati kroz escape_outside_math kao cjelina -
     dodaje se NAKON escapiranja teksta zadatka, jer sadrži prave LaTeX naredbe
-    (\\mcFourOptions...), a ne slobodni tekst profesora. Svaka POJEDINA opcija se
-    obrađuje zasebno preko formatiraj_opciju() (vidi gore)."""
+    (\\textbf, \\quad...), a ne slobodni tekst profesora. Svaka POJEDINA opcija
+    se obrađuje zasebno preko formatiraj_opciju() (vidi gore)."""
+    slova = ["A", "B", "C", "D", "E", "F", "G", "H"]
     opcije = [formatiraj_opciju(o) for o in ponudjeni_odgovori if o.strip()]
     if not opcije:
         return ""
-    slova = ["A", "B", "C", "D", "E", "F"]
-    if len(opcije) == 4:
-        return "\n\\mcFourOptions{" + "}{".join(opcije) + "}"
-    if len(opcije) == 5:
-        return "\n\\mcFiveOptions{" + "}{".join(opcije) + "}"
-    # Fallback za 2, 3, 6+ opcija - jednostavan popis, i dalje unutar taskbox okvira
-    stavke = "\n".join(f"\\item \\textbf{{{slova[j]})}} {opc}" for j, opc in enumerate(opcije))
-    return "\n\\vspace{3mm}\n\\begin{itemize}[leftmargin=1.8em, itemsep=0.4em, topsep=0pt, label=]\n" + stavke + "\n\\end{itemize}"
+    dijelovi = [f"\\textbf{{{slova[j]})}}~{opc}" for j, opc in enumerate(opcije)]
+    return "\n\\vspace{3mm}\n\\noindent " + "\\quad ".join(dijelovi) + "\\par"
 
 
-def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None):
+def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac=False, mamac_tekst=""):
     slike_bytes = slike_bytes or {}
     zad_lines = []
     rjes_lines = []
@@ -392,14 +403,28 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None):
         bodovi = (z["bodovi"] or "").strip() if je_test else ""
 
         if z.get("prikazi_opcije", True) and z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
-            tekst += izgradi_opcije_blok(z["ponudjeni_odgovori"])
+            # Lokalna kopija (ne diramo spremljeni z["ponudjeni_odgovori"]) - mamac
+            # se dodaje samo za OVO generiranje, profesor ga može uključiti/isključiti
+            # za sljedeći test bez da je "zapečen" u odabranom zadatku.
+            opcije_za_prikaz = list(z["ponudjeni_odgovori"])
+            if dodaj_mamac and mamac_tekst.strip():
+                opcije_za_prikaz.append(mamac_tekst.strip())
+            tekst += izgradi_opcije_blok(opcije_za_prikaz)
 
         putanja = z.get("slika_putanja")
         slika_rel = f"images/{putanja}" if putanja and slike_bytes.get(putanja) else ""
         zad_lines.append(f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}{{{slika_rel}}}")
         zad_lines.append("")
         if ukljuci_rjesenja:
-            rjes_lines.append(f"\\rjesenje{{{i}}}{{\\textit{{Rješenje se dodaje naknadno.}}}}{{}}")
+            rjesenje_raw = (z.get("rjesenje") or "").strip()
+            konacan_raw = (z.get("konacan_odgovor") or "").strip()
+            if rjesenje_raw or konacan_raw:
+                rjesenje_tex = escape_outside_math(rjesenje_raw) if rjesenje_raw else "\\textit{Puni postupak nije unesen u bazu.}"
+                konacan_tex = escape_outside_math(konacan_raw)
+            else:
+                rjesenje_tex = "\\textit{Rješenje se dodaje naknadno.}"
+                konacan_tex = ""
+            rjes_lines.append(f"\\rjesenje{{{i}}}{{{rjesenje_tex}}}{{{konacan_tex}}}")
             rjes_lines.append("")
     return "\n".join(zad_lines), "\n".join(rjes_lines)
 
@@ -411,12 +436,23 @@ def broj_dolara(text):
 
 
 def pronadji_neuparene_dolare(zadaci_odabrani):
-    """Vraća listu (index, opis, tekst) za zadatke gdje tekst ili rješenje ima
+    """Vraća listu (index, opis, polje, tekst) za zadatke gdje BILO KOJE polje
+    koje ide u LaTeX (tekst, rješenje, konačan odgovor, ponuđene opcije) ima
     neparan broj $ znakova - najčešći uzrok pucanja kompajliranja."""
     problemi = []
     for i, z in enumerate(zadaci_odabrani, start=1):
-        if broj_dolara(z["tekst"]) % 2 != 0:
-            problemi.append((i, z.get("id") or "ručni zadatak", z["tekst"]))
+        zid = z.get("id") or "ručni zadatak"
+        polja_za_provjeru = [
+            ("tekst zadatka", z.get("tekst", "")),
+            ("rješenje", z.get("rjesenje", "")),
+            ("konačan odgovor", z.get("konacan_odgovor", "")),
+        ]
+        for j, opcija in enumerate(z.get("ponudjeni_odgovori") or []):
+            slovo = ["A", "B", "C", "D", "E", "F", "G", "H"][j] if j < 8 else str(j + 1)
+            polja_za_provjeru.append((f"opcija {slovo}", opcija))
+        for naziv_polja, sadrzaj in polja_za_provjeru:
+            if broj_dolara(sadrzaj) % 2 != 0:
+                problemi.append((i, zid, naziv_polja, sadrzaj))
     return problemi
 
 
@@ -428,8 +464,8 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
             f"to sigurno razbija kompajliranje. Ispravi ih (ovdje ili izravno u bazi) "
             f"i pokušaj ponovno:"
         )
-        for idx, zid, tekst in problemi:
-            st.markdown(f"**Zadatak {idx}** (`{zid}`):")
+        for idx, zid, polje, tekst in problemi:
+            st.markdown(f"**Zadatak {idx}** (`{zid}`) — polje *{polje}*:")
             st.code(tekst, language="text")
         st.stop()
 
@@ -452,7 +488,9 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
             + ", ".join(nedostaju_slike)
         )
 
-    zadaci_tex, rjesenja_tex = izgradi_tex(st.session_state.odabrani, prikazi_rjesenja, slike_bytes)
+    zadaci_tex, rjesenja_tex = izgradi_tex(
+        st.session_state.odabrani, prikazi_rjesenja, slike_bytes, dodaj_mamac, mamac_tekst
+    )
 
     rjesenja_sekcija = ""
     if prikazi_rjesenja:
