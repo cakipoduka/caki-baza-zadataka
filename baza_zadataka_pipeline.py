@@ -1,5 +1,5 @@
 """
-CAKI Matematika - pipeline.py
+CAKI Matematika - baza_zadataka_pipeline.py
 
 Jezgra pipelinea (Mathpix OCR, Claude strukturiranje, Google Sheets upis s
 detekcijom duplikata, upload slika na Drive). Logika je identična onoj u
