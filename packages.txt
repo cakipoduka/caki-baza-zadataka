@@ -1,5 +1,5 @@
 texlive-latex-base
-   texlive-latex-recommended
-   texlive-latex-extra
-   texlive-pictures
-   texlive-fonts-recommended
+texlive-latex-recommended
+texlive-latex-extra
+texlive-pictures
+texlive-fonts-recommended
