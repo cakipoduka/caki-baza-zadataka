@@ -255,15 +255,30 @@ if je_test:
 prikazi_rjesenja = st.checkbox("Uključi rješenja na kraju dokumenta", value=True)
 
 
+def formatiraj_opciju(opcija):
+    """Baza sprema ponudjeni_odgovori kao ČIST LaTeX BEZ $...$ omotača
+    (npr. "\\frac{1}{(2 a-1)^{3}}") - PreTeXt build ih sam omata u matematiku.
+    Ako opcija NEMA $ uopće, tretiramo je kao čistu matematiku: omatamo u $...$
+    BEZ escapiranja (escapiranje bi razbilo \\frac{...}, ^{...} i sl.).
+    Ako opcija VEĆ ima $ (npr. profesor ručno upisao "$x=1$" u ad-hoc polje,
+    po uputi u sučelju), tretiramo je kao slobodan tekst s ugrađenom matematikom
+    - ide kroz escape_outside_math kao i tekst zadatka."""
+    opcija = opcija.strip()
+    if "$" in opcija:
+        return escape_outside_math(opcija)
+    return f"${opcija}$"
+
+
 def izgradi_opcije_blok(ponudjeni_odgovori):
     """Gradi LaTeX za prikaz ponuđenih odgovora (A/B/C/D...) ispod teksta zadatka.
     Koristi postojeće \\mcFourOptions/\\mcFiveOptions naredbe iz caki-style.sty za
     4 ili 5 opcija (najčešći slučaj); za bilo koji drugi broj opcija koristi
     jednostavan A)/B)/C)... popis (\\begin{itemize}) da ne pukne na rubnim slučajevima.
-    VAŽNO: ovaj blok se NE smije propuštati kroz escape_outside_math - dodaje se
-    NAKON escapiranja teksta zadatka, jer sadrži prave LaTeX naredbe (\\mcFourOptions...),
-    a ne slobodni tekst profesora."""
-    opcije = [escape_outside_math(o.strip()) for o in ponudjeni_odgovori if o.strip()]
+    VAŽNO: ovaj blok se NE smije propuštati kroz escape_outside_math kao cjelina -
+    dodaje se NAKON escapiranja teksta zadatka, jer sadrži prave LaTeX naredbe
+    (\\mcFourOptions...), a ne slobodni tekst profesora. Svaka POJEDINA opcija se
+    obrađuje zasebno preko formatiraj_opciju() (vidi gore)."""
+    opcije = [formatiraj_opciju(o) for o in ponudjeni_odgovori if o.strip()]
     if not opcije:
         return ""
     slova = ["A", "B", "C", "D", "E", "F"]
@@ -295,7 +310,35 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja):
     return "\n".join(zad_lines), "\n".join(rjes_lines)
 
 
+def broj_dolara(text):
+    """Broji '$' znakove koji NISU escapirani (\\$) - koristi se za provjeru
+    parnosti prije slanja u LaTeX. Neparan broj = zadatak će razbiti kompajliranje."""
+    return len(re.findall(r"(?<!\\)\$", text or ""))
+
+
+def pronadji_neuparene_dolare(zadaci_odabrani):
+    """Vraća listu (index, opis, tekst) za zadatke gdje tekst ili rješenje ima
+    neparan broj $ znakova - najčešći uzrok pucanja kompajliranja."""
+    problemi = []
+    for i, z in enumerate(zadaci_odabrani, start=1):
+        if broj_dolara(z["tekst"]) % 2 != 0:
+            problemi.append((i, z.get("id") or "ručni zadatak", z["tekst"]))
+    return problemi
+
+
 if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_state.odabrani):
+    problemi = pronadji_neuparene_dolare(st.session_state.odabrani)
+    if problemi:
+        st.error(
+            f"❌ {len(problemi)} zadatak(a) ima neparan broj `$` znakova u tekstu — "
+            f"to sigurno razbija kompajliranje. Ispravi ih (ovdje ili izravno u bazi) "
+            f"i pokušaj ponovno:"
+        )
+        for idx, zid, tekst in problemi:
+            st.markdown(f"**Zadatak {idx}** (`{zid}`):")
+            st.code(tekst, language="text")
+        st.stop()
+
     zadaci_tex, rjesenja_tex = izgradi_tex(st.session_state.odabrani, prikazi_rjesenja)
 
     rjesenja_sekcija = ""
