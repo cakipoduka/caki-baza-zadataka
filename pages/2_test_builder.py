@@ -19,7 +19,7 @@ import tempfile
 
 import streamlit as st
 
-from pipeline import get_gspread_client
+from baza_zadataka_pipeline import get_gspread_client
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
 
