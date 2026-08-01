@@ -536,17 +536,88 @@ def stranica_uredi_tekst():
 
 
 # ============================================================
+# Stranica 4: Zadaci za provjeru (status_provjere nije prazan)
+# ============================================================
+
+def stranica_zadaci_za_provjeru():
+    st.title("🔍 Zadaci za provjeru")
+    st.caption(
+        "Zadaci koje je Claude označio za ručnu provjeru tijekom OCR-a/strukturiranja "
+        "(npr. nesiguran simbol, nečitko napisan broj). Nakon što provjeriš i po potrebi "
+        "ispraviš zadatak (na stranici 'Uredi tekst'), klikni '✅ Provjereno' da skineš oznaku."
+    )
+
+    if st.button("🔄 Osvježi popis", key="osvjezi_provjera"):
+        _ucitaj_zadatke_za_pretragu.clear()
+
+    headers, redovi = _ucitaj_zadatke_za_pretragu()
+    idx = {h: i for i, h in enumerate(headers)}
+
+    def get(row, col):
+        return _get_polje(row, idx, col)
+
+    za_provjeru = [
+        (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
+        if get(row, "status_provjere").strip()
+    ]
+
+    if not za_provjeru:
+        st.success("🎉 Trenutno nema zadataka za provjeru.")
+        return
+
+    st.info(f"Pronađeno **{len(za_provjeru)}** zadataka za provjeru.")
+
+    for broj_retka, row in za_provjeru:
+        naslov = f"⚠️ {get(row, 'id') or f'redak {broj_retka}'} — {get(row, 'status_provjere')}"
+        with st.expander(naslov):
+            st.caption(
+                f"Cjelina: {get(row, 'cjelina') or '—'} · Potpoglavlje: {get(row, 'potpoglavlje') or '—'} · "
+                f"Tip: {get(row, 'tip_zadatka') or '—'}"
+            )
+            st.write(get(row, "tekst_zadatka_latex") or "*(prazno)*")
+            if get(row, "rjesenje"):
+                st.markdown("**Rješenje:**")
+                st.write(get(row, "rjesenje"))
+            if get(row, "konacan_odgovor"):
+                st.markdown(f"**Konačan odgovor:** {get(row, 'konacan_odgovor')}")
+
+            st.caption(
+                f"Za ispravak teksta/rješenja: kopiraj ID `{get(row, 'id')}` i pretraži ga "
+                "na stranici '📝 Uredi tekst/rješenje/uputu zadatka'."
+            )
+
+            if st.button("✅ Provjereno", type="primary", key=f"provjereno_{broj_retka}"):
+                c_status = _col_letter("status_provjere")
+                with st.spinner("Ažuriram..."):
+                    try:
+                        ws_zadaci.update(range_name=f"{c_status}{broj_retka}", values=[[""]])
+                    except Exception as e:
+                        st.error(f"Greška: {e}")
+                        st.stop()
+                st.success(f"✅ Označeno kao provjereno: {get(row, 'id')}")
+                _ucitaj_zadatke_za_pretragu.clear()
+                st.rerun()
+
+
+# ============================================================
 # Navigacija
 # ============================================================
 
 stranica = st.sidebar.radio(
     "Stranica",
-    ["📄 Obradi novi ispit", "🖼️ Dodaj/zamijeni sliku zadatka", "📝 Uredi tekst/rješenje/uputu zadatka"],
+    [
+        "📄 Obradi novi ispit",
+        "🖼️ Dodaj/zamijeni sliku zadatka",
+        "📝 Uredi tekst/rješenje/uputu zadatka",
+        "🔍 Zadaci za provjeru",
+    ],
 )
 
 if stranica == "📄 Obradi novi ispit":
     stranica_obradi_ispit()
 elif stranica == "🖼️ Dodaj/zamijeni sliku zadatka":
     stranica_upload_slike()
-else:
+elif stranica == "📝 Uredi tekst/rješenje/uputu zadatka":
     stranica_uredi_tekst()
+else:
+    stranica_zadaci_za_provjeru()
