@@ -1,0 +1,19 @@
+% ============================================================
+%  CAKI TEST BUILDER — generirani dokument
+%  Ovu datoteku Streamlit test_builder.py generira automatski
+%  (placeholderi {{NASLOV}}, {{DATUM}}, {{TIP}}, {{UKUPNO_BODOVA}}
+%  zamjenjuju se pravim vrijednostima prije kompajliranja).
+% ============================================================
+
+\documentclass[11pt, a4paper]{article}
+\usepackage{caki-style}
+
+\begin{document}
+
+\cakiispithead{ {{NASLOV}} }{ {{DATUM}} }{ {{TIP}} }{ {{UKUPNO_BODOVA}} }
+
+\input{generated/zadaci_body}
+
+{{RJESENJA_SEKCIJA}}
+
+\end{document}

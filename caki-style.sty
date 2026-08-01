@@ -1,0 +1,297 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{caki-style}[2026/07/21 Modern Math Textbook Style]
+
+% --- 1. GEOMETRIJA I MARGINE (Maksimalna iskoristivost prostora) ---
+\RequirePackage[
+    a4paper,
+    top=1.8cm,
+    bottom=2.0cm,
+    left=1.5cm,
+    right=1.5cm,
+    headheight=24pt,
+    headsep=12pt,
+    footskip=20pt
+]{geometry}
+
+% --- 2. JEZIK I FONTOVI ---
+\RequirePackage[croatian,provide=*]{babel}
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{lmodern}
+\RequirePackage{microtype} % Bolje poravnanje i tipografija
+
+% --- 3. MATEMATIKA I SIMBOLI ---
+\RequirePackage{amsmath, amsfonts, amssymb}
+\RequirePackage{mathtools}
+
+% --- 4. PALETA BOJA (Moderna, profesionalna i dinamična) ---
+\RequirePackage[table, xcdraw]{xcolor}
+\definecolor{MathPrimary}{HTML}{0F172A}    % Tamno plava / Slate (Glavni tekst i naslovi)
+\definecolor{MathAccent}{HTML}{2563EB}     % Kraljevsko plava (Akcenti, brojevi zadataka)
+\definecolor{MathSecondary}{HTML}{0D9488}  % Tirkizna / Teal (Rješenja, potkategorije)
+\definecolor{MathBgLight}{HTML}{F8FAFC}    % Svijetlo siva za pozadine okvira
+\definecolor{MathBorder}{HTML}{E2E8F0}     % Suptilna siva za rubove
+\definecolor{MathWarning}{HTML}{D97706}    % Jantarna/Narančasta za ugradbene napomene
+\definecolor{TextDark}{HTML}{334155}       % Čitljivi tamno sivi tekst
+
+% --- 5. CRTANJE I OKVIRI (TikZ & tcolorbox) ---
+\RequirePackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, shadows.blur}
+\RequirePackage[many]{tcolorbox}
+
+% --- Custom tcolorbox za Zadatke ---
+\newtcolorbox{taskbox}[2][]{
+    enhanced,
+    colback=MathBgLight,
+    colframe=MathAccent,
+    arc=4pt,
+    boxrule=1pt,
+    left=12pt,
+    right=12pt,
+    top=8pt,
+    bottom=8pt,
+    fonttitle=\bfseries\sffamily\color{white},
+    coltitle=white,
+    title={Zadatak #2},
+    attach boxed title to top left={xshift=10pt, yshift=-10pt},
+    boxed title style={
+        colback=MathAccent,
+        arc=3pt,
+        outer arc=3pt,
+        boxrule=0pt,
+        left=8pt,
+        right=8pt,
+        top=3pt,
+        bottom=3pt
+    },
+    drop fuzzy shadow=MathBorder,
+    #1
+}
+
+% --- Custom tcolorbox za Rješenja / Savjete ---
+\newtcolorbox{solutionbox}[1][Rješenje]{
+    enhanced,
+    colback=white,
+    colframe=MathSecondary,
+    arc=3pt,
+    boxrule=0.8pt,
+    left=10pt, right=10pt, top=6pt, bottom=6pt,
+    fonttitle=\bfseries\sffamily\small,
+    coltitle=MathSecondary,
+    title={#1},
+    attach boxed title to top left={xshift=8pt, yshift=-8pt},
+    boxed title style={
+        colback=white,
+        colframe=white,
+        left=4pt, right=4pt
+    }
+}
+
+% --- 6. GRAPHICS, QR CODES & TABLES ---
+\RequirePackage{graphicx}
+\RequirePackage{qrcode}
+\RequirePackage{booktabs}
+\RequirePackage{enumitem}
+
+% Podešavanje popisnih listi za kompaktnost
+\setlist[enumerate]{topsep=2pt, itemsep=2pt, parsep=0pt, partopsep=0pt}
+\setlist[itemize]{topsep=2pt, itemsep=2pt, parsep=0pt, partopsep=0pt}
+
+% --- 7. ZAGLAVLJA I PODNOŽJA (Fancyhdr) ---
+\RequirePackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+
+% Linije u zaglavlju/podnožju
+\renewcommand{\headrulewidth}{1pt}
+\renewcommand{\headrule}{\color{MathAccent}\hrule width\headwidth height \headrulewidth \vskip-\headrulewidth}
+\renewcommand{\footrulewidth}{0.4pt}
+\renewcommand{\footrule}{\color{MathBorder}\hrule width\headwidth height \footrulewidth \vskip-\footrulewidth}
+
+\fancyhead[L]{\small\sffamily\bfseries\color{MathPrimary} MATEMATIKA \ \textcolor{MathAccent}{$\mathbf{\cdot}$}\ \ ZBIRKA ZADATAKA}
+\fancyhead[R]{\small\sffamily\color{MathAccent}\leftmark}
+\fancyfoot[L]{\tiny\sffamily\color{gray} Generirano pomoću Čaki Test Builder systema}
+\fancyfoot[R]{\small\sffamily\bfseries\color{MathPrimary} Stranica \thepage}
+
+% --- 8. KOMANDE ZA ZADATKE I VIŠESTRUKI IZBOR ---
+\newcommand{\zadatakHeader}[3]{%
+    \par\addvspace{0.8em}
+    \noindent
+    \begin{tikzpicture}[baseline=(char.base)]
+        \node[fill=MathAccent, text=white, font=\bfseries\sffamily\small, inner sep=4pt, rounded corners=2pt] (char) {#1};
+    \end{tikzpicture}
+    {\sffamily\bfseries\color{MathPrimary} #2} \hfill {\tiny\sffamily\color{gray} [#3]}
+    \par\vspace{0.3em}
+}
+
+% Grid/Mreža za višekratni izbor (2x2 ili inline)
+\newcommand{\mcFourOptions}[4]{%
+    \vspace{0.2em}
+    \begin{tabular}{p{0.45\linewidth} p{0.45\linewidth}}
+        \textbf{A)} #1 & \textbf{B)} #2 \\[0.2em]
+        \textbf{C)} #3 & \textbf{D)} #4
+    \end{tabular}
+    \vspace{0.2em}
+}
+
+\newcommand{\mcFiveOptions}[5]{%
+    \vspace{0.2em}
+    \begin{tabular}{p{0.45\linewidth} p{0.45\linewidth}}
+        \textbf{A)} #1 & \textbf{B)} #2 \\[0.2em]
+        \textbf{C)} #3 & \textbf{D)} #4 \\[0.2em]
+        \multicolumn{2}{l}{\textbf{E)} #5}
+    \end{tabular}
+    \vspace{0.2em}
+}
+
+% ============================================================
+% 8b. MODERNA BANNER NASLOVNICA — parametrizirana verzija
+%     (ista vizualna ideja kao u priloženom main.tex, samo kao
+%     naredba za ponovnu upotrebu — Matura A/Matura B/druge zbirke)
+% ============================================================
+\newcommand{\cakibanner}[6]{%
+    % #1 nadnaslov (npr. "Zbirka zadataka i ispiti")
+    % #2 glavni naslov (npr. "DRŽAVNA MATURA --- MATEMATIKA")
+    % #3 podnaslov (npr. "Priprema, razina A")
+    % #4 naslov info-boxa (npr. "Priprema za maturu")
+    % #5 opis tekst u info-boxu
+    % #6 URL za QR kod (digitalna/video rješenja, repozitorij i sl.)
+    \thispagestyle{empty}
+    \begin{tikzpicture}[remember picture, overlay]
+        \fill[MathPrimary] (current page.north west) rectangle ([yshift=-4.5cm]current page.north east);
+        \fill[MathAccent] ([yshift=-4.3cm]current page.north west) rectangle ([yshift=-4.5cm]current page.north east);
+        \node[opacity=0.05, color=white] at ([xshift=-3cm, yshift=-2cm]current page.north east) {\fontsize{120}{120}\selectfont $\sum_{i=0}^n x_i$};
+        \node[opacity=0.08, color=white] at ([xshift=4cm, yshift=-2.5cm]current page.north west) {\fontsize{90}{90}\selectfont $\int f(x)dx$};
+    \end{tikzpicture}
+    \vspace*{-0.8cm}
+    \begin{color}{white}
+        \noindent {\Large\sffamily\scshape\bfseries #1} \\[0.3cm]
+        \noindent {\fontsize{26}{30}\sffamily\bfseries #2} \\[0.2cm]
+        \noindent {\small\sffamily\color{MathBorder} #3}
+    \end{color}
+    \vspace{2.2cm}
+    \begin{tcolorbox}[
+        enhanced, colback=white, colframe=MathBorder,
+        boxrule=1pt, arc=5pt, drop fuzzy shadow=gray!20,
+        left=15pt, right=15pt, top=10pt, bottom=10pt
+    ]
+        \begin{minipage}{0.68\linewidth}
+            \sffamily
+            \textcolor{MathPrimary}{\textbf{\Large #4}} \\[0.2cm]
+            \small\color{TextDark} #5
+        \end{minipage}
+        \hfill
+        \begin{minipage}{0.28\linewidth}
+            \centering
+            \qrcode[height=1.8cm]{#6} \\[0.1cm]
+            {\tiny\sffamily\color{gray} Skeniraj za digitalna rješenja}
+        \end{minipage}
+    \end{tcolorbox}
+    \vspace{0.5cm}
+}
+
+% ============================================================
+% 9. SLOJ KOMPATIBILNOSTI s generate_tex.py (CSV -> LaTeX skripta)
+%    generate_tex.py generira \cjelinaslov{..}, \zadatak{tekst}{video_url}
+%    i \rjesenje{broj}{tekst}{odgovor} — ove naredbe MORAJU postojati
+%    ovdje, jer generirani sadržaj ne zna ništa o taskbox/solutionbox
+%    dizajnu. Ako se dizajn zadatka mijenja, mijenja se SAMO ovdje.
+% ============================================================
+\RequirePackage{etoolbox}
+\newcounter{cakizadatak}
+
+% Naslov cjeline unutar popisa zadataka
+\newcommand{\cjelinaslov}[1]{%
+    \par\addvspace{1.2em}
+    {\color{MathPrimary}\sffamily\bfseries\Large #1}\par
+    \vspace{2mm}\hrule height 1pt \color{MathAccent}
+    \vspace{3mm}
+}
+
+% \zadatak{tekst}{video_url ili prazno} — broj se generira automatski
+% (globalni brojač), koristi taskbox dizajn; QR kod prikazan samo
+% ako je video_url zadan.
+\newcommand{\zadatak}[2]{%
+    \stepcounter{cakizadatak}%
+    \begin{taskbox}{\thecakizadatak}
+        \ifblank{#2}{%
+            #1%
+        }{%
+            \begin{minipage}[t]{0.76\linewidth}
+                #1
+            \end{minipage}%
+            \hfill
+            \begin{minipage}[t]{0.18\linewidth}
+                \centering
+                \qrcode[height=1.5cm]{#2}\\[1mm]
+                {\tiny\sffamily\color{gray} video rješenje}
+            \end{minipage}%
+        }%
+    \end{taskbox}
+}
+
+% \rjesenje{broj}{tekst}{konačan odgovor ili prazno} — koristi se u
+% odjeljku "Rješenja" na kraju cijele skripte; broj MORA odgovarati
+% brojevima dodijeljenim u \zadatak (generate_tex.py ih generira
+% istim redoslijedom, pa se uvijek poklapaju).
+\newcommand{\rjesenje}[3]{%
+    \begin{solutionbox}[Zadatak \##1]
+        #2%
+        \ifblank{#3}{}{\par\textbf{Konačan odgovor:} #3}%
+    \end{solutionbox}
+    \vspace{2mm}
+}
+
+% ============================================================
+% 10. TEST BUILDER — jednostavno zaglavlje + zadatak s bodovima
+%     (koristi Streamlit "Test Builder" alat; profesor unosi
+%     naslov/datum/bodove, redoslijed slaže sam)
+% ============================================================
+
+% \cakiispihead{naslov}{datum}{tip dokumenta}{ukupno bodova ili prazno}
+% Jednostavno, brzo zaglavlje (bez velikog bannera) — prikladno za
+% testove/radne listiće koji se generiraju ad hoc, često i bez branda.
+\newcommand{\cakiispithead}[4]{%
+    \thispagestyle{empty}
+    {\color{MathPrimary}\sffamily\bfseries\Large #1}\par
+    \vspace{1mm}
+    {\small\sffamily\color{TextDark} #3 \quad\textbullet\quad #2}\par
+    \vspace{4mm}
+    \noindent\textbf{Ime i prezime:} \makebox[5.5cm]{\hrulefill} \quad
+    \textbf{Razred:} \makebox[2.5cm]{\hrulefill}
+    \ifblank{#4}{}{%
+        \par\vspace{2mm}
+        \noindent\textbf{Ukupno bodova:} #4 \quad
+        \textbf{Ostvareno:} \makebox[2cm]{\hrulefill} \quad
+        \textbf{Ocjena:} \makebox[2cm]{\hrulefill}
+    }%
+    \par\vspace{3mm}\hrule height 1pt \color{MathAccent}
+    \vspace{4mm}
+    % Isto zaglavlje (naslov + datum) ponavlja se i na sljedećim str.
+    \fancyhead[L]{\small\sffamily\bfseries\color{MathPrimary} #1}
+    \fancyhead[R]{\small\sffamily\color{MathAccent} #2}
+}
+
+% \zadatakbod{tekst}{video_url ili prazno}{bodovi ili prazno}
+% Isto kao \zadatak, ali s brojem bodova u naslovu okvira ako je zadan
+% (npr. "Zadatak 3 (5 bod.)"). Koristi se u Test Builder izlazu.
+\newcommand{\zadatakbod}[3]{%
+    \stepcounter{cakizadatak}%
+    \def\cakiTitle{\thecakizadatak}%
+    \ifblank{#3}{}{\edef\cakiTitle{\thecakizadatak\space (#3\space bod.)}}%
+    \begin{taskbox}{\cakiTitle}
+        \ifblank{#2}{%
+            #1%
+        }{%
+            \begin{minipage}[t]{0.76\linewidth}
+                #1
+            \end{minipage}%
+            \hfill
+            \begin{minipage}[t]{0.18\linewidth}
+                \centering
+                \qrcode[height=1.5cm]{#2}\\[1mm]
+                {\tiny\sffamily\color{gray} video rješenje}
+            \end{minipage}%
+        }%
+    \end{taskbox}
+}
