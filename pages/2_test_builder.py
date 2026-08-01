@@ -19,7 +19,7 @@ import tempfile
 
 import streamlit as st
 
-from baza_zadataka_pipeline import get_gspread_client
+from baza_zadataka_pipeline import get_drive_service, get_gspread_client
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
 
@@ -62,6 +62,36 @@ def init_sheet():
     gc = get_gspread_client(sa_info)
     sheet = gc.open_by_key(st.secrets["SHEET_ID"])
     return sheet.worksheet("Zadaci")
+
+
+@st.cache_resource
+def init_drive():
+    import json
+    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    return get_drive_service(sa_info)
+
+
+@st.cache_data(ttl=600)
+def dohvati_sliku_bytes(naziv_datoteke):
+    """Dohvaća bajtove slike iz istog 02_SLIKE Drive foldera koji koristi i
+    app.py (stranica 'Dodaj/zamijeni sliku'). Vraća None ako nije pronađena
+    (npr. slika_putanja u bazi nije više valjana) umjesto da baci grešku -
+    poziv koji koristi ovo mora sam odlučiti kako to prikazati/prijaviti."""
+    if not naziv_datoteke:
+        return None
+    drive_service = init_drive()
+    slike_folder_id = st.secrets["SLIKE_FOLDER_ID"]
+    try:
+        rezultat = drive_service.files().list(
+            q=f"name='{naziv_datoteke}' and '{slike_folder_id}' in parents and trashed=false",
+            fields="files(id,name)", supportsAllDrives=True, includeItemsFromAllDrives=True,
+        ).execute()
+        datoteke = rezultat.get("files", [])
+        if not datoteke:
+            return None
+        return drive_service.files().get_media(fileId=datoteke[0]["id"], supportsAllDrives=True).execute()
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=300)
@@ -136,6 +166,7 @@ def dodaj_zadatak(row, bodovi_default=""):
         # u jednom dijelu testa prikazati s opcijama, a u drugom bez (npr. dio "kratki
         # odgovori" gdje se isti zadatak koristi bez ponuđenih A/B/C/D).
         "prikazi_opcije": True,
+        "slika_putanja": row.get("slika_putanja", "").strip() if row.get("slika_zadana") == "da" else "",
     })
 
 
@@ -200,6 +231,13 @@ with col_pretraga:
                 _opc_raw = [o.strip() for o in str(row.get("ponudjeni_odgovori", "")).split("||") if o.strip()]
                 if _opc_raw:
                     st.markdown(prikazi_opcije_markdown(_opc_raw))
+            if row.get("slika_zadana") == "da" and row.get("slika_putanja", "").strip():
+                if st.button("🖼️ Prikaži sliku", key=f"slika_{row.get('id')}"):
+                    _slika_bytes = dohvati_sliku_bytes(row["slika_putanja"].strip())
+                    if _slika_bytes:
+                        st.image(_slika_bytes, width=300)
+                    else:
+                        st.warning("Slika nije pronađena na Driveu (možda stari/neispravan zapis).")
             if st.button("➕ Dodaj", key=f"add_{row.get('id')}"):
                 dodaj_zadatak(row)
                 st.rerun()
@@ -225,6 +263,7 @@ with col_pretraga:
                         o.strip() for o in rucni_odgovori_raw.split(";") if o.strip()
                     ] if rucni_je_mc else [],
                     "prikazi_opcije": True,
+                    "slika_putanja": "",
                 })
                 st.rerun()
             else:
@@ -250,6 +289,12 @@ with col_odabrano:
                         "Prikaži ponuđene odgovore (A/B/C/D) za ovaj zadatak",
                         value=z.get("prikazi_opcije", True), key=f"mc_prikazi_{idx}",
                     )
+                if z.get("slika_putanja"):
+                    _slika_bytes = dohvati_sliku_bytes(z["slika_putanja"])
+                    if _slika_bytes:
+                        st.image(_slika_bytes, width=220)
+                    else:
+                        st.warning(f"⚠️ Slika '{z['slika_putanja']}' nije pronađena na Driveu.")
                 z["bodovi"] = st.text_input("Bodovi", value=z["bodovi"], key=f"bod_{idx}")
             with c2:
                 if st.button("⬆️", key=f"up_{idx}", disabled=(idx == 0)):
@@ -292,17 +337,27 @@ st.caption(
 
 
 def formatiraj_opciju(opcija):
-    """Baza sprema ponudjeni_odgovori kao ČIST LaTeX BEZ $...$ omotača
-    (npr. "\\frac{1}{(2 a-1)^{3}}") - PreTeXt build ih sam omata u matematiku.
-    Ako opcija NEMA $ uopće, tretiramo je kao čistu matematiku: omatamo u $...$
-    BEZ escapiranja (escapiranje bi razbilo \\frac{...}, ^{...} i sl.).
-    Ako opcija VEĆ ima $ (npr. profesor ručno upisao "$x=1$" u ad-hoc polje,
-    po uputi u sučelju), tretiramo je kao slobodan tekst s ugrađenom matematikom
-    - ide kroz escape_outside_math kao i tekst zadatka."""
+    """Baza sprema ponudjeni_odgovori kao ČIST LaTeX BEZ $...$ omotača kad je
+    opcija matematika (npr. "\\frac{1}{(2 a-1)^{3}}") - PreTeXt build ih sam
+    omata. Ali OPREZ: neke opcije su čist tekst bez ikakve matematike (npr.
+    "trostrana piramida" kod zadataka o geometrijskim tijelima) - te NE SMIJU
+    u $...$, jer LaTeX matematički način rada IGNORIRA razmake među riječima
+    (postalo bi "trostranapiramida", bez razmaka - stvarni bug koji smo vidjeli).
+
+    Razlikovanje: ako opcija sadrži LaTeX naredbu ili math-specifičan znak
+    (\\, ^, _) → tretiramo kao čistu matematiku, omatamo u $...$ BEZ escapiranja
+    (escapiranje bi razbilo \\frac{...}). Inače → čist tekst, ide kroz
+    escape_outside_math (čuva razmake, escapira posebne znakove poput %/&)."""
     opcija = opcija.strip()
     if "$" in opcija:
+        # Već ima $ (npr. profesor ručno upisao "$x=1$" u ad-hoc polje po
+        # uputi u sučelju) - slobodan tekst s ugrađenom matematikom.
         return escape_outside_math(opcija)
-    return f"${opcija}$"
+    if re.search(r"[\\^_]", opcija):
+        # Sadrži LaTeX naredbu (\frac, \sqrt...) ili ^ / _ - čista matematika.
+        return f"${opcija}$"
+    # Obični tekst bez ikakve matematike - NE omatati u $...$.
+    return escape_outside_math(opcija)
 
 
 def izgradi_opcije_blok(ponudjeni_odgovori):
@@ -323,11 +378,12 @@ def izgradi_opcije_blok(ponudjeni_odgovori):
     if len(opcije) == 5:
         return "\n\\mcFiveOptions{" + "}{".join(opcije) + "}"
     # Fallback za 2, 3, 6+ opcija - jednostavan popis, i dalje unutar taskbox okvira
-    stavke = "\n".join(f"\\item[{slova[j]})] {opc}" for j, opc in enumerate(opcije))
-    return "\n\\begin{itemize}\n" + stavke + "\n\\end{itemize}"
+    stavke = "\n".join(f"\\item \\textbf{{{slova[j]})}} {opc}" for j, opc in enumerate(opcije))
+    return "\n\\vspace{3mm}\n\\begin{itemize}[leftmargin=1.8em, itemsep=0.4em, topsep=0pt, label=]\n" + stavke + "\n\\end{itemize}"
 
 
-def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja):
+def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None):
+    slike_bytes = slike_bytes or {}
     zad_lines = []
     rjes_lines = []
     for i, z in enumerate(zadaci_odabrani, start=1):
@@ -338,7 +394,9 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja):
         if z.get("prikazi_opcije", True) and z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
             tekst += izgradi_opcije_blok(z["ponudjeni_odgovori"])
 
-        zad_lines.append(f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}")
+        putanja = z.get("slika_putanja")
+        slika_rel = f"images/{putanja}" if putanja and slike_bytes.get(putanja) else ""
+        zad_lines.append(f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}{{{slika_rel}}}")
         zad_lines.append("")
         if ukljuci_rjesenja:
             rjes_lines.append(f"\\rjesenje{{{i}}}{{\\textit{{Rješenje se dodaje naknadno.}}}}{{}}")
@@ -375,7 +433,26 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
             st.code(tekst, language="text")
         st.stop()
 
-    zadaci_tex, rjesenja_tex = izgradi_tex(st.session_state.odabrani, prikazi_rjesenja)
+    # Prvo dohvati slike (bajtove) za sve zadatke koji ih trebaju - MORA biti
+    # prije izgradi_tex(), da znamo koje slike stvarno postoje na Driveu i ne
+    # referenciramo u LaTeX-u datoteku koje neće biti u temp folderu (što bi
+    # bacilo "File not found" i srušilo cijelo kompajliranje).
+    slike_bytes = {}
+    nedostaju_slike = []
+    for z in st.session_state.odabrani:
+        putanja = z.get("slika_putanja")
+        if putanja and putanja not in slike_bytes:
+            _bytes = dohvati_sliku_bytes(putanja)
+            slike_bytes[putanja] = _bytes
+            if not _bytes:
+                nedostaju_slike.append(putanja)
+    if nedostaju_slike:
+        st.warning(
+            f"⚠️ {len(nedostaju_slike)} slika nije pronađena na Driveu (nastavljam bez njih): "
+            + ", ".join(nedostaju_slike)
+        )
+
+    zadaci_tex, rjesenja_tex = izgradi_tex(st.session_state.odabrani, prikazi_rjesenja, slike_bytes)
 
     rjesenja_sekcija = ""
     if prikazi_rjesenja:
@@ -399,6 +476,7 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
 
     with tempfile.TemporaryDirectory() as tmpdir:
         os.makedirs(os.path.join(tmpdir, "generated"), exist_ok=True)
+        os.makedirs(os.path.join(tmpdir, "images"), exist_ok=True)
         with open(os.path.join(tmpdir, "main.tex"), "w", encoding="utf-8") as f:
             f.write(main_tex)
         with open(os.path.join(tmpdir, "generated", "zadaci_body.tex"), "w", encoding="utf-8") as f:
@@ -409,6 +487,13 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
             style_content = f.read()
         with open(os.path.join(tmpdir, "caki-style.sty"), "w", encoding="utf-8") as f:
             f.write(style_content)
+
+        # Slike su već dohvaćene gore (prije izgradi_tex) - ovdje ih samo pišemo
+        # na disk za pdflatex, bez ponovnog Drive API poziva.
+        for putanja, _bytes in slike_bytes.items():
+            if _bytes:
+                with open(os.path.join(tmpdir, "images", putanja), "wb") as f:
+                    f.write(_bytes)
 
         with st.spinner("Kompajliram PDF..."):
             ok = True
