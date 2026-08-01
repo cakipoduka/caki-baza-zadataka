@@ -1,5 +1,5 @@
 """
-CAKI Matematika - app.py
+CAKI Matematika - baza_zadataka_app.py
 Streamlit sučelje za obradu PDF ispita: upload -> Mathpix OCR -> Claude
 strukturiranje -> upis u centralnu Google Sheets bazu (s detekcijom
 duplikata). Zamišljeno za suradnike koji ne trebaju koristiti Colab.
