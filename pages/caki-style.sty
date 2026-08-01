@@ -65,6 +65,7 @@
         bottom=3pt
     },
     drop fuzzy shadow=MathBorder,
+    before upper={\raggedright},
     #1
 }
 
@@ -124,24 +125,28 @@
     \par\vspace{0.3em}
 }
 
-% Grid/Mreža za višekratni izbor (2x2 ili inline)
+% Popis za višestruki izbor - jedna opcija po retku (izbjegava preljev kod
+% dugih izraza koje 2-stupčana tablica ne bi mogla ispravno prelomiti, jer se
+% matematika u LaTeX-u ne lomi automatski preko više redaka).
 \newcommand{\mcFourOptions}[4]{%
-    \vspace{0.2em}
-    \begin{tabular}{p{0.45\linewidth} p{0.45\linewidth}}
-        \textbf{A)} #1 & \textbf{B)} #2 \\[0.2em]
-        \textbf{C)} #3 & \textbf{D)} #4
-    \end{tabular}
-    \vspace{0.2em}
+    \vspace{3mm}
+    \begin{itemize}[leftmargin=1.8em, itemsep=0.4em, topsep=0pt, label=]
+        \item \textbf{A)} #1
+        \item \textbf{B)} #2
+        \item \textbf{C)} #3
+        \item \textbf{D)} #4
+    \end{itemize}
 }
 
 \newcommand{\mcFiveOptions}[5]{%
-    \vspace{0.2em}
-    \begin{tabular}{p{0.45\linewidth} p{0.45\linewidth}}
-        \textbf{A)} #1 & \textbf{B)} #2 \\[0.2em]
-        \textbf{C)} #3 & \textbf{D)} #4 \\[0.2em]
-        \multicolumn{2}{l}{\textbf{E)} #5}
-    \end{tabular}
-    \vspace{0.2em}
+    \vspace{3mm}
+    \begin{itemize}[leftmargin=1.8em, itemsep=0.4em, topsep=0pt, label=]
+        \item \textbf{A)} #1
+        \item \textbf{B)} #2
+        \item \textbf{C)} #3
+        \item \textbf{D)} #4
+        \item \textbf{E)} #5
+    \end{itemize}
 }
 
 % ============================================================
@@ -272,10 +277,14 @@
     \fancyhead[R]{\small\sffamily\color{MathAccent} #2}
 }
 
-% \zadatakbod{tekst}{video_url ili prazno}{bodovi ili prazno}
+% \zadatakbod{tekst}{video_url ili prazno}{bodovi ili prazno}{slika (relativna
+% putanja unutar kompajlacijskog foldera) ili prazno}
 % Isto kao \zadatak, ali s brojem bodova u naslovu okvira ako je zadan
-% (npr. "Zadatak 3 (5 bod.)"). Koristi se u Test Builder izlazu.
-\newcommand{\zadatakbod}[3]{%
+% (npr. "Zadatak 3 (5 bod.)"), i opcionalnom slikom ispod teksta zadatka
+% (za zadatke gdje je slika_zadana=da u bazi - graf, dijagram i sl. koji
+% je DIO zadatka, student mora pročitati podatke sa slike). Koristi se u
+% Test Builder izlazu.
+\newcommand{\zadatakbod}[4]{%
     \stepcounter{cakizadatak}%
     \def\cakiTitle{\thecakizadatak}%
     \ifblank{#3}{}{\edef\cakiTitle{\thecakizadatak\space (#3\space bod.)}}%
@@ -292,6 +301,12 @@
                 \qrcode[height=1.5cm]{#2}\\[1mm]
                 {\tiny\sffamily\color{gray} video rješenje}
             \end{minipage}%
+        }%
+        \ifblank{#4}{}{%
+            \par\vspace{2mm}
+            \centering
+            \includegraphics[width=0.55\linewidth]{#4}
+            \par
         }%
     \end{taskbox}
 }
