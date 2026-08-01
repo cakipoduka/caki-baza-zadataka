@@ -94,6 +94,23 @@ def escape_outside_math(text: str) -> str:
     return "".join(out)
 
 
+def prikazi_opcije_markdown(ponudjeni_odgovori):
+    """Vraća Markdown string za PREGLED ponuđenih odgovora u Streamlit sučelju
+    (ne za LaTeX!) - Streamlitov st.markdown zna renderirati $...$ preko KaTeX-a.
+    Baza sprema opcije BEZ $ omotača (čist LaTeX), pa ih ovdje samo omatamo
+    radi prikaza - isto načelo kao formatiraj_opciju() niže, ali za Streamlit."""
+    slova = ["A", "B", "C", "D", "E", "F"]
+    dijelovi = []
+    for i, opcija in enumerate(ponudjeni_odgovori):
+        opcija = opcija.strip()
+        if not opcija:
+            continue
+        prikaz = opcija if "$" in opcija else f"${opcija}$"
+        slovo = slova[i] if i < len(slova) else str(i + 1)
+        dijelovi.append(f"**{slovo})** {prikaz}")
+    return "  ".join(dijelovi)
+
+
 # ---------------------------------------------------------------
 # Session state — odabrani zadaci (redoslijed = redoslijed u listi)
 # ---------------------------------------------------------------
@@ -115,6 +132,10 @@ def dodaj_zadatak(row, bodovi_default=""):
         "ponudjeni_odgovori": [
             o.strip() for o in str(row.get("ponudjeni_odgovori", "")).split("||") if o.strip()
         ],
+        # Po zadatku, ne globalno - profesor može isti tip zadatka (visestruki_izbor)
+        # u jednom dijelu testa prikazati s opcijama, a u drugom bez (npr. dio "kratki
+        # odgovori" gdje se isti zadatak koristi bez ponuđenih A/B/C/D).
+        "prikazi_opcije": True,
     })
 
 
@@ -175,6 +196,10 @@ with col_pretraga:
                 f"{row.get('tezina','')} · {row.get('max_bodovi','') or '?'} bod."
             )
             st.markdown(row.get("tekst_zadatka_latex", ""))
+            if row.get("tip_zadatka") == "visestruki_izbor":
+                _opc_raw = [o.strip() for o in str(row.get("ponudjeni_odgovori", "")).split("||") if o.strip()]
+                if _opc_raw:
+                    st.markdown(prikazi_opcije_markdown(_opc_raw))
             if st.button("➕ Dodaj", key=f"add_{row.get('id')}"):
                 dodaj_zadatak(row)
                 st.rerun()
@@ -199,6 +224,7 @@ with col_pretraga:
                     "ponudjeni_odgovori": [
                         o.strip() for o in rucni_odgovori_raw.split(";") if o.strip()
                     ] if rucni_je_mc else [],
+                    "prikazi_opcije": True,
                 })
                 st.rerun()
             else:
@@ -218,6 +244,12 @@ with col_odabrano:
                 st.markdown(
                     (z["tekst"][:220] + "…") if len(z["tekst"]) > 220 else z["tekst"]
                 )
+                if z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
+                    st.markdown(prikazi_opcije_markdown(z["ponudjeni_odgovori"]))
+                    z["prikazi_opcije"] = st.checkbox(
+                        "Prikaži ponuđene odgovore (A/B/C/D) za ovaj zadatak",
+                        value=z.get("prikazi_opcije", True), key=f"mc_prikazi_{idx}",
+                    )
                 z["bodovi"] = st.text_input("Bodovi", value=z["bodovi"], key=f"bod_{idx}")
             with c2:
                 if st.button("⬆️", key=f"up_{idx}", disabled=(idx == 0)):
@@ -253,6 +285,10 @@ if je_test:
     st.caption(f"Ukupno bodova (automatski zbroj): **{ukupno_bodova or '—'}**")
 
 prikazi_rjesenja = st.checkbox("Uključi rješenja na kraju dokumenta", value=True)
+st.caption(
+    "💡 Prikaz ponuđenih odgovora (A/B/C/D) za višestruki izbor uređuje se "
+    "**po zadatku** — vidi checkbox uz svaki takav zadatak u koloni '2. Odabrani zadaci' gore."
+)
 
 
 def formatiraj_opciju(opcija):
@@ -299,7 +335,7 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja):
         video = (z["video_url"] or "").strip()
         bodovi = (z["bodovi"] or "").strip() if je_test else ""
 
-        if z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
+        if z.get("prikazi_opcije", True) and z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
             tekst += izgradi_opcije_blok(z["ponudjeni_odgovori"])
 
         zad_lines.append(f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}")
@@ -381,6 +417,7 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
                 result = subprocess.run(
                     ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
                     cwd=tmpdir, capture_output=True, text=True, timeout=60,
+                    encoding="utf-8", errors="replace",
                 )
                 if result.returncode != 0:
                     ok = False
