@@ -1,8 +1,17 @@
 % ============================================================
 %  CAKI TEST BUILDER — generirani dokument
-%  Ovu datoteku Streamlit test_builder.py generira automatski
-%  (placeholderi {{NASLOV}}, {{DATUM}}, {{TIP}}, {{UKUPNO_BODOVA}}
-%  zamjenjuju se pravim vrijednostima prije kompajliranja).
+%  Ovu datoteku Streamlit 2_test_builder.py generira automatski, obicnim
+%  string-replace-om placeholdera prije kompajliranja: NASLOV, DATUM, TIP,
+%  UKUPNO_BODOVA, KATEGORIJE_REDOVI, KRAJ_OZNAKA, RJESENJA_SEKCIJA.
+%
+%  VAZNO za buduce izmjene ove datoteke: placeholderi u kodu ispod NIKAD
+%  se ne pisu doslovno (s dvostrukim vitickim zagradama) igdje drugdje u
+%  ovom fileu, ni u komentaru ni u tekstu - Python .replace() je "slijep"
+%  i zamijenio bi SVAKU pojavu tog tocnog niza znakova, ukljucujuci i u
+%  ovom opisu. Neki placeholderi (npr. KATEGORIJE_REDOVI) mogu sadrzavati
+%  prave novo-redove u svojoj vrijednosti - ako bi takva zamjena upala
+%  usred ovog % komentara, slomila bi cijeli preambulu (stvarno se
+%  dogodilo 25.8.2026., otud ova napomena).
 % ============================================================
 
 \documentclass[11pt, a4paper]{article}
@@ -10,9 +19,11 @@
 
 \begin{document}
 
-\cakiispithead{ {{NASLOV}} }{ {{DATUM}} }{ {{TIP}} }{ {{UKUPNO_BODOVA}} }
+\cakiispithead{ {{NASLOV}} }{ {{DATUM}} }{ {{TIP}} }{ {{UKUPNO_BODOVA}} }{ {{KATEGORIJE_REDOVI}} }
 
 \input{generated/zadaci_body}
+
+\krajtesta{ {{KRAJ_OZNAKA}} }
 
 {{RJESENJA_SEKCIJA}}
 
