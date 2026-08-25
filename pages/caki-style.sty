@@ -4,13 +4,13 @@
 % --- 1. GEOMETRIJA I MARGINE (Maksimalna iskoristivost prostora) ---
 \RequirePackage[
     a4paper,
-    top=1.8cm,
-    bottom=2.0cm,
+    top=1.6cm,
+    bottom=1.7cm,
     left=1.5cm,
     right=1.5cm,
     headheight=24pt,
-    headsep=12pt,
-    footskip=20pt
+    headsep=10pt,
+    footskip=16pt
 ]{geometry}
 
 % --- 2. JEZIK I FONTOVI ---
@@ -40,6 +40,10 @@
 \RequirePackage[many]{tcolorbox}
 
 % --- Custom tcolorbox za Zadatke ---
+% before/after skip stisnuti na 2mm/2.2mm (kompaktnost - cilj je da tipičan
+% test od desetak zadataka stane na 2 stranice A4, uz odvojeni list za
+% koncept/postupak koji NIJE dio ovog PDF-a) - default tcolorbox razmak
+% (~\baselineskip) trošio je vidljivo više prostora bez stvarne dobiti.
 \newtcolorbox{taskbox}[2][]{
     enhanced,
     colback=MathBgLight,
@@ -48,8 +52,10 @@
     boxrule=1pt,
     left=12pt,
     right=12pt,
-    top=8pt,
-    bottom=8pt,
+    top=6pt,
+    bottom=6pt,
+    before skip=2mm,
+    after skip=2.2mm,
     fonttitle=\bfseries\sffamily\color{white},
     coltitle=white,
     title={Zadatak #2},
@@ -245,41 +251,61 @@
 % ============================================================
 
 % \cakiispihead{naslov}{datum}{tip dokumenta}{ukupno bodova ili prazno}
+%              {redovi po kategoriji - već formatiran LaTeX blok ili prazno}
 % Jednostavno, brzo zaglavlje (bez velikog bannera) — prikladno za
 % testove/radne listiće koji se generiraju ad hoc, često i bez branda.
-\newcommand{\cakiispithead}[4]{%
+% #5 (kategorije): ako profesor u Test Builderu dodijeli bodove po
+% kategorijama vrednovanja (UZV/RP/MK), zaglavlje umjesto JEDNOG retka
+% "Ukupno bodova/Ostvareno/Ocjena" (#4) prikazuje PO JEDAN redak za
+% SVAKU kategoriju koja se stvarno koristi u testu, svaki sa svojim
+% "Ostvareno"/"Ocjena" - test se tada ocjenjuje po kategoriji, ne
+% jednom cjelokupnom ocjenom. Ako #5 prazno (nijedan zadatak nema
+% dodijeljenu kategoriju), zaglavlje se ponaša kao prije (#4).
+\newcommand{\cakiispithead}[5]{%
     \thispagestyle{empty}
     {\color{MathPrimary}\sffamily\bfseries\Large #1}\par
     \vspace{1mm}
     {\small\sffamily\color{TextDark} #3 \quad\textbullet\quad #2}\par
-    \vspace{4mm}
+    \vspace{3mm}
     \noindent\textbf{Ime i prezime:} \makebox[5.5cm]{\hrulefill} \quad
     \textbf{Razred:} \makebox[2.5cm]{\hrulefill}
-    \ifblank{#4}{}{%
-        \par\vspace{2mm}
-        \noindent\textbf{Ukupno bodova:} #4 \quad
-        \textbf{Ostvareno:} \makebox[2cm]{\hrulefill} \quad
-        \textbf{Ocjena:} \makebox[2cm]{\hrulefill}
+    \ifblank{#5}{%
+        \ifblank{#4}{}{%
+            \par\vspace{2mm}
+            \noindent\textbf{Ukupno bodova:} #4 \quad
+            \textbf{Ostvareno:} \makebox[2cm]{\hrulefill} \quad
+            \textbf{Ocjena:} \makebox[2cm]{\hrulefill}
+        }%
+    }{%
+        #5%
     }%
-    \par\vspace{3mm}\hrule height 1pt \color{MathAccent}
-    \vspace{4mm}
+    \par\vspace{2mm}\hrule height 1pt \color{MathAccent}
+    \vspace{3mm}
     % Isto zaglavlje (naslov + datum) ponavlja se i na sljedećim str.
     \fancyhead[L]{\small\sffamily\bfseries\color{MathPrimary} #1}
     \fancyhead[R]{\small\sffamily\color{MathAccent} #2}
 }
 
 % \zadatakbod{tekst}{video_url ili prazno}{bodovi ili prazno}{slika (relativna
-% putanja unutar kompajlacijskog foldera) ili prazno}
+% putanja unutar kompajlacijskog foldera) ili prazno}{tip_zadatka ili prazno}
+% {kategorije vrednovanja - već formatiran LaTeX tekst ili prazno}
 % Isto kao \zadatak, ali s brojem bodova u naslovu okvira ako je zadan
-% (npr. "Zadatak 3 (5 bod.)"), i opcionalnom slikom ispod teksta zadatka
-% (za zadatke gdje je slika_zadana=da u bazi - graf, dijagram i sl. koji
-% je DIO zadatka, student mora pročitati podatke sa slike). Koristi se u
-% Test Builder izlazu.
-\newcommand{\zadatakbod}[4]{%
+% (npr. "Zadatak 3 (5 bod.)"), opcionalnom slikom ispod teksta zadatka
+% (za zadatke gdje je slika_zadana=da u bazi), opcionalnom malom oznakom
+% kategorija vrednovanja (UZV/RP/MK - zadatak može nositi bodove u više
+% kategorija odjednom, npr. "RP: 1 bod.  MK: 2 bod.") i - SAMO za
+% tip_zadatka="kratki_odgovor" - kratkom crtom za upis konačnog odgovora
+% (višestruki izbor odgovara zaokruživanjem ponuđene opcije, ne treba
+% dodatnu crtu; prošireni odgovor/puni postupak piše se na odvojenom
+% listu za koncept, ne u ovaj PDF). Koristi se u Test Builder izlazu.
+\newcommand{\zadatakbod}[6]{%
     \stepcounter{cakizadatak}%
     \def\cakiTitle{\thecakizadatak}%
     \ifblank{#3}{}{\edef\cakiTitle{\thecakizadatak\space (#3\space bod.)}}%
     \begin{taskbox}{\cakiTitle}
+        \ifblank{#6}{}{%
+            \noindent{\scriptsize\sffamily\bfseries\color{MathSecondary} #6}\par\vspace{1mm}%
+        }%
         \ifblank{#2}{%
             #1%
         }{%
@@ -299,5 +325,21 @@
             \includegraphics[width=0.55\linewidth]{#4}
             \par
         }%
+        \ifstrequal{#5}{kratki_odgovor}{%
+            \par\vspace{1.5mm}
+            \noindent{\small\bfseries Odgovor:}~\makebox[4.5cm]{\hrulefill}%
+        }{}%
     \end{taskbox}
+}
+
+% \krajtesta{tekst} — jednostavan marker kraja popisa zadataka (npr.
+% "KRAJ TESTA"), ništa više - ne dodaje prostor za postupak (učenici
+% imaju odvojen list za koncept/računanje, to nije dio ovog PDF-a).
+% Poziva se iz main_test_template.tex odmah nakon zadnjeg zadatka,
+% prije (opcionalne) sekcije rješenja.
+\newcommand{\krajtesta}[1]{%
+    \par\vspace{3mm}
+    \begin{center}
+        {\sffamily\bfseries\large\color{MathPrimary} #1}
+    \end{center}
 }
