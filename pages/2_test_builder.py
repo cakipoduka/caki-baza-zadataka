@@ -1,5 +1,5 @@
 """
-CAKI Matematika - test_builder.py
+CAKI Matematika - pages/2_test_builder.py
 Streamlit "Test Builder": profesor pretraži i odabere zadatke iz baze
 (ili doda ručni/ad-hoc zadatak), posloži redoslijed strelicama, unese
 naslov/datum/bodove (ako je test), i generira gotov PDF za print —
@@ -24,6 +24,29 @@ from baza_zadataka_pipeline import get_drive_service, get_gspread_client
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
 
 TEMPLATE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ---------------------------------------------------------------
+# Kategorije vrednovanja (kurikulum matematike) — profesor po zadatku
+# može čekirati 1-3 kategorije i upisati koliko bodova od ukupnih
+# bodova zadatka ide u svaku kategoriju (npr. RP: 1 bod + MK: 2 boda).
+# Ovo je metapodatak SAMO za ovaj generirani dokument (analogno polju
+# "bodovi" koje je već editabilno po odabranom zadatku, ne mijenja se
+# baza) - NE zapisuje se natrag u Google Sheets bazu zadataka.
+# ---------------------------------------------------------------
+
+KATEGORIJE_INFO = [
+    ("UZV", "Usvojenost znanja i vještina"),
+    ("RP", "Rješavanje problema"),
+    ("MK", "Matematička komunikacija"),
+]
+
+TIP_ZADATKA_OPCIJE = ["", "visestruki_izbor", "kratki_odgovor", "prosireni_odgovor"]
+TIP_ZADATKA_LABELS = {
+    "": "— (nije određeno)",
+    "visestruki_izbor": "Višestruki izbor (A/B/C/D...)",
+    "kratki_odgovor": "Kratki odgovor (crta za upis)",
+    "prosireni_odgovor": "Prošireni odgovor / puni postupak",
+}
 
 
 # ---------------------------------------------------------------
@@ -141,12 +164,59 @@ def prikazi_opcije_markdown(ponudjeni_odgovori):
     return "  ".join(dijelovi)
 
 
+def izgradi_kategorije_tex(kategorije: dict) -> str:
+    """kategorije: {"UZV": "2", "RP": "1", ...} -> LaTeX tekst prikazan kao mala
+    oznaka na vrhu okvira zadatka u PDF-u, npr. "UZV: 2 bod.  RP: 1 bod."
+    Redoslijed je UVIJEK UZV/RP/MK (fiksiran u KATEGORIJE_INFO), bez obzira
+    kojim je redom profesor čekirao kategorije u sučelju. Ako je kategorija
+    čekirana ali bodovi nisu upisani, prikazuje se samo kod kategorije."""
+    dijelovi = []
+    for kod, _naziv in KATEGORIJE_INFO:
+        if kod not in kategorije:
+            continue
+        bod = str(kategorije.get(kod, "")).strip()
+        if bod:
+            dijelovi.append(f"{kod}: {escape_outside_math(bod)}\\space bod.")
+        else:
+            dijelovi.append(kod)
+    return "\\quad ".join(dijelovi)
+
+
+def broj_iz_stringa(vrijednost) -> float:
+    """Parsira tekstualni unos bodova (dopušta i ',' kao decimalni zarez) u float.
+    Baca ValueError za prazno/neispravno - poziv MORA to hvatati (koristi se i u
+    UI upozorenju i u blokirajućoj provjeri prije generiranja)."""
+    return float(str(vrijednost).strip().replace(",", "."))
+
+
+def izgradi_kategorije_redovi(ukupno_po_kategoriji: dict) -> str:
+    """ukupno_po_kategoriji: {"UZV": 3.0, "RP": 1.0, ...} (zbroj bodova te
+    kategorije preko SVIH odabranih zadataka) -> LaTeX blok redaka za zaglavlje
+    testa (\\cakiispithead #5) - PO JEDAN redak s "Ostvareno"/"Ocjena" za SVAKU
+    kategoriju koja se stvarno koristi u testu (test se ocjenjuje po kategoriji,
+    ne jednim cjelokupnim zbrojem/ocjenom - vidi #25 u CAKI_MASTER_BAZA).
+    Kategorije bez ijednog dodijeljenog boda (0 ili nema u dictu) se preskaču."""
+    redovi = []
+    for kod, _naziv in KATEGORIJE_INFO:
+        total = ukupno_po_kategoriji.get(kod) or 0
+        if not total:
+            continue
+        total_str = f"{total:g}"
+        redovi.append(
+            "\\par\\vspace{2mm}\n"
+            f"\\noindent\\textbf{{{kod} \\textemdash{{}} ukupno bodova:}} {total_str} \\quad "
+            "\\textbf{Ostvareno:} \\makebox[2cm]{\\hrulefill} \\quad "
+            "\\textbf{Ocjena:} \\makebox[2cm]{\\hrulefill}"
+        )
+    return "".join(redovi)
+
+
 # ---------------------------------------------------------------
 # Session state — odabrani zadaci (redoslijed = redoslijed u listi)
 # ---------------------------------------------------------------
 
 if "odabrani" not in st.session_state:
-    st.session_state.odabrani = []  # [{id, tekst, video_url, bodovi, izvor}]
+    st.session_state.odabrani = []  # [{id, tekst, video_url, bodovi, izvor, kategorije, ...}]
 
 
 def dodaj_zadatak(row, bodovi_default=""):
@@ -169,6 +239,9 @@ def dodaj_zadatak(row, bodovi_default=""):
         "slika_putanja": row.get("slika_putanja", "").strip() if row.get("slika_zadana") == "da" else "",
         "rjesenje": row.get("rjesenje", ""),
         "konacan_odgovor": row.get("konacan_odgovor", ""),
+        # Kategorije vrednovanja (UZV/RP/MK) s bodovima po kategoriji - profesor
+        # ih bira ovdje u Test Builderu, ne dolaze iz baze (vidi KATEGORIJE_INFO gore).
+        "kategorije": {},
     })
 
 
@@ -248,9 +321,12 @@ with col_pretraga:
         rucni_tekst = st.text_area("Tekst zadatka (LaTeX matematika unutar $...$)", key="rucni_tekst")
         rucni_video = st.text_input("Video URL (opcionalno)", key="rucni_video")
         rucni_bodovi = st.text_input("Bodovi (opcionalno)", key="rucni_bodovi")
-        rucni_je_mc = st.checkbox("Višestruki izbor (A/B/C/D...)", key="rucni_je_mc")
+        rucni_tip = st.selectbox(
+            "Tip zadatka", TIP_ZADATKA_OPCIJE, format_func=lambda t: TIP_ZADATKA_LABELS[t],
+            key="rucni_tip",
+        )
         rucni_odgovori_raw = ""
-        if rucni_je_mc:
+        if rucni_tip == "visestruki_izbor":
             rucni_odgovori_raw = st.text_input(
                 "Ponuđeni odgovori, odvojeni s ';' (npr. $x=1$; $x=2$; $x=4$; $x=6$)",
                 key="rucni_odgovori",
@@ -262,14 +338,15 @@ with col_pretraga:
                 st.session_state.odabrani.append({
                     "id": None, "tekst": rucni_tekst, "video_url": rucni_video,
                     "bodovi": rucni_bodovi, "izvor": "ad_hoc",
-                    "tip_zadatka": "visestruki_izbor" if rucni_je_mc else "",
+                    "tip_zadatka": rucni_tip,
                     "ponudjeni_odgovori": [
                         o.strip() for o in rucni_odgovori_raw.split(";") if o.strip()
-                    ] if rucni_je_mc else [],
+                    ] if rucni_tip == "visestruki_izbor" else [],
                     "prikazi_opcije": True,
                     "slika_putanja": "",
                     "rjesenje": rucni_rjesenje,
                     "konacan_odgovor": rucni_konacan,
+                    "kategorije": {},
                 })
                 st.rerun()
             else:
@@ -282,6 +359,8 @@ with col_odabrano:
         st.info("Još nema odabranih zadataka — dodaj ih s lijeve strane.")
 
     for idx, z in enumerate(st.session_state.odabrani):
+        if "kategorije" not in z:
+            z["kategorije"] = {}
         with st.container(border=True):
             c1, c2 = st.columns([5, 1])
             with c1:
@@ -302,6 +381,42 @@ with col_odabrano:
                     else:
                         st.warning(f"⚠️ Slika '{z['slika_putanja']}' nije pronađena na Driveu.")
                 z["bodovi"] = st.text_input("Bodovi", value=z["bodovi"], key=f"bod_{idx}")
+
+                st.caption("Kategorije vrednovanja (može više odjednom, bodovi po kategoriji):")
+                kat_cols = st.columns(3)
+                for kcol, (kod, naziv) in zip(kat_cols, KATEGORIJE_INFO):
+                    with kcol:
+                        odabrano_kat = st.checkbox(
+                            kod, value=kod in z["kategorije"],
+                            key=f"kat_{kod}_{idx}", help=naziv,
+                        )
+                        if odabrano_kat:
+                            z["kategorije"][kod] = st.text_input(
+                                f"Bodovi ({kod})", value=z["kategorije"].get(kod, ""),
+                                key=f"katbod_{kod}_{idx}", label_visibility="collapsed",
+                                placeholder="bod.",
+                            )
+                        else:
+                            z["kategorije"].pop(kod, None)
+
+                # Uživo upozorenje (rano upozorenje dok profesor još uređuje) - zbroj
+                # bodova po kategorijama MORA odgovarati ukupnim bodovima zadatka;
+                # ovo je samo prikaz, stvarno BLOKIRANJE generiranja PDF-a radi
+                # provjeri_zbroj_kategorija() niže, pozvana na klik "Generiraj PDF".
+                if z["kategorije"] and str(z["bodovi"]).strip():
+                    try:
+                        zbroj_kat = sum(
+                            broj_iz_stringa(v) for v in z["kategorije"].values() if str(v).strip()
+                        )
+                        ukupno_zad = broj_iz_stringa(z["bodovi"])
+                        if abs(zbroj_kat - ukupno_zad) > 1e-9:
+                            st.caption(
+                                f"❌ Zbroj bodova po kategorijama ({zbroj_kat:g}) "
+                                f"mora odgovarati bodovima zadatka ({ukupno_zad:g}) — "
+                                f"generiranje PDF-a bit će blokirano dok se ne uskladi."
+                            )
+                    except ValueError:
+                        st.caption("❌ Bodovi po kategoriji moraju biti brojevi.")
             with c2:
                 if st.button("⬆️", key=f"up_{idx}", disabled=(idx == 0)):
                     pomakni(idx, -1)
@@ -337,8 +452,9 @@ if je_test:
 
 prikazi_rjesenja = st.checkbox("Uključi rješenja na kraju dokumenta", value=True)
 st.caption(
-    "💡 Prikaz ponuđenih odgovora (A/B/C/D) za višestruki izbor uređuje se "
-    "**po zadatku** — vidi checkbox uz svaki takav zadatak u koloni '2. Odabrani zadaci' gore."
+    "💡 Prikaz ponuđenih odgovora (A/B/C/D) za višestruki izbor, kategorije vrednovanja "
+    "(UZV/RP/MK) i bodovi uređuju se **po zadatku** — vidi kontrole uz svaki zadatak u "
+    "koloni '2. Odabrani zadaci' gore."
 )
 
 dodaj_mamac = st.checkbox(
@@ -390,7 +506,7 @@ def izgradi_opcije_blok(ponudjeni_odgovori):
     if not opcije:
         return ""
     dijelovi = [f"\\textbf{{{slova[j]})}}~{opc}" for j, opc in enumerate(opcije)]
-    return "\n\\vspace{3mm}\n\\noindent " + "\\quad ".join(dijelovi) + "\\par"
+    return "\n\\par\\vspace{3mm}\n\\noindent " + "\\quad ".join(dijelovi) + "\\par"
 
 
 def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac=False, mamac_tekst=""):
@@ -401,6 +517,8 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
         tekst = escape_outside_math(z["tekst"].strip())
         video = (z["video_url"] or "").strip()
         bodovi = (z["bodovi"] or "").strip() if je_test else ""
+        tip_z = (z.get("tip_zadatka") or "").strip()
+        kategorije_tex = izgradi_kategorije_tex(z.get("kategorije") or {})
 
         if z.get("prikazi_opcije", True) and z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
             # Lokalna kopija (ne diramo spremljeni z["ponudjeni_odgovori"]) - mamac
@@ -413,7 +531,9 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
 
         putanja = z.get("slika_putanja")
         slika_rel = f"images/{putanja}" if putanja and slike_bytes.get(putanja) else ""
-        zad_lines.append(f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}{{{slika_rel}}}")
+        zad_lines.append(
+            f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}{{{slika_rel}}}{{{tip_z}}}{{{kategorije_tex}}}"
+        )
         zad_lines.append("")
         if ukljuci_rjesenja:
             rjesenje_raw = (z.get("rjesenje") or "").strip()
@@ -456,6 +576,44 @@ def pronadji_neuparene_dolare(zadaci_odabrani):
     return problemi
 
 
+def provjeri_zbroj_kategorija(zadaci_odabrani):
+    """BLOKIRAJUĆA provjera (dogovoreno 25.8.2026.): za svaki zadatak koji ima
+    BAREM JEDNU čekiranu kategoriju, zbroj bodova po kategorijama MORA točno
+    odgovarati polju 'Bodovi' tog zadatka - inače se PDF ne generira. Zadaci
+    BEZ ijedne dodijeljene kategorije se ne provjeravaju (kategorizacija je i
+    dalje opcionalna po zadatku, samo je zbroj obavezan KAD SE koristi).
+    Vraća listu (index, id_zadatka, poruka) - prazna lista = sve u redu."""
+    problemi = []
+    for i, z in enumerate(zadaci_odabrani, start=1):
+        kategorije = z.get("kategorije") or {}
+        if not kategorije:
+            continue
+        zid = z.get("id") or "ručni zadatak"
+
+        neispravno = []
+        zbroj = 0.0
+        for kod, bod in kategorije.items():
+            try:
+                zbroj += broj_iz_stringa(bod)
+            except ValueError:
+                neispravno.append(kod)
+        if neispravno:
+            problemi.append((i, zid, f"nedostaju/neispravni bodovi za kategorije: {', '.join(neispravno)}"))
+            continue
+
+        try:
+            ukupno_zad = broj_iz_stringa(z.get("bodovi", ""))
+        except ValueError:
+            problemi.append((i, zid, "zadatak ima dodijeljene kategorije, ali polje 'Bodovi' nije valjan broj"))
+            continue
+
+        if abs(zbroj - ukupno_zad) > 1e-9:
+            problemi.append(
+                (i, zid, f"zbroj bodova po kategorijama ({zbroj:g}) ne odgovara bodovima zadatka ({ukupno_zad:g})")
+            )
+    return problemi
+
+
 if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_state.odabrani):
     problemi = pronadji_neuparene_dolare(st.session_state.odabrani)
     if problemi:
@@ -467,6 +625,16 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
         for idx, zid, polje, tekst in problemi:
             st.markdown(f"**Zadatak {idx}** (`{zid}`) — polje *{polje}*:")
             st.code(tekst, language="text")
+        st.stop()
+
+    problemi_kat = provjeri_zbroj_kategorija(st.session_state.odabrani)
+    if problemi_kat:
+        st.error(
+            f"❌ {len(problemi_kat)} zadatak(a) ima neusklađen zbroj bodova po kategorijama "
+            f"s ukupnim bodovima zadatka — zbroj MORA odgovarati. Ispravi i pokušaj ponovno:"
+        )
+        for idx, zid, poruka in problemi_kat:
+            st.markdown(f"**Zadatak {idx}** (`{zid}`) — {poruka}")
         st.stop()
 
     # Prvo dohvati slike (bajtove) za sve zadatke koji ih trebaju - MORA biti
@@ -501,6 +669,24 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
             "\\input{generated/rjesenja_body}"
         )
 
+    kraj_oznaka = "KRAJ TESTA" if je_test else "KRAJ RADNOG LISTIĆA"
+
+    # Zbroj bodova po kategoriji PREKO SVIH odabranih zadataka - ako je barem
+    # jedna kategorija ikad korištena, zaglavlje testa prikazuje "Ostvareno"/
+    # "Ocjena" PO KATEGORIJI umjesto jednog cjelokupnog zbroja/ocjene (dogovoreno
+    # 25.8.2026., v. §25 CAKI_MASTER_BAZA). Samo za tip "Test" - kod radnog
+    # listića se ništa ne ocjenjuje, kao ni dosadašnji {{UKUPNO_BODOVA}}.
+    kategorije_redovi_tex = ""
+    if je_test:
+        ukupno_po_kategoriji = {}
+        for z in st.session_state.odabrani:
+            for kod, bod in (z.get("kategorije") or {}).items():
+                try:
+                    ukupno_po_kategoriji[kod] = ukupno_po_kategoriji.get(kod, 0) + broj_iz_stringa(bod)
+                except ValueError:
+                    pass  # provjeri_zbroj_kategorija() gore već bi ovo blokirala prije nego stignemo ovdje
+        kategorije_redovi_tex = izgradi_kategorije_redovi(ukupno_po_kategoriji)
+
     with open(os.path.join(TEMPLATE_DIR, "main_test_template.tex"), encoding="utf-8") as f:
         main_tex = f.read()
     main_tex = (
@@ -509,6 +695,8 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
         .replace("{{DATUM}}", datum.strftime("%d.%m.%Y."))
         .replace("{{TIP}}", tip_dok)
         .replace("{{UKUPNO_BODOVA}}", ukupno_bodova)
+        .replace("{{KATEGORIJE_REDOVI}}", kategorije_redovi_tex)
+        .replace("{{KRAJ_OZNAKA}}", kraj_oznaka)
         .replace("{{RJESENJA_SEKCIJA}}", rjesenja_sekcija)
     )
 
