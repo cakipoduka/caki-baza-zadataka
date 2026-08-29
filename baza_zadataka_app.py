@@ -13,12 +13,11 @@ Stranice (navigacija u sidebaru):
 import json
 import mimetypes
 import os
-import traceback
-from datetime import datetime
 
 import streamlit as st
 
 from baza_zadataka_pipeline import (
+    SLOVA_PONUDJENIH_ODGOVORA,
     _col_letter,
     build_sifrarnik_potpoglavlja_text,
     build_sifrarnik_text,
@@ -30,8 +29,8 @@ from baza_zadataka_pipeline import (
     mathpix_ocr_vise_datoteka,
     nadopuni_ili_dodaj_zadatke,
     preuzmi_i_spremi_slike,
+    prikazi_opcije_markdown,
     upload_image_to_drive,
-    zapisi_log_obrade,
 )
 
 # Tipovi datoteka koje uploaderi za OCR ulaz prihvaćaju - PDF i uobičajeni formati slika
@@ -88,31 +87,6 @@ def stranica_obradi_ispit():
     st.title("📚 CAKI Matematika — Obrada ispita")
     st.caption("Upload PDF-ova → OCR → Claude strukturiranje → upis u bazu")
 
-    # --- Izvještaj o ZADNJOJ obradi. Ostaje vidljiv dok se ne pokrene nova obrada (ili se
-    # aplikacija ne ugasi) - drži se u session_state, PRIJE forme/ranog returna ispod, da
-    # se prikazuje i nakon običnog refresha/rerun-a stranice, ne samo odmah nakon klika.
-    # NAPOMENA: ako se aplikacija nenadano ugasi/restarta USRED obrade, ovaj izvještaj
-    # (kao i cijeli session_state) nestaje zajedno s procesom - za taj slučaj vidi tab
-    # "Log_obrade" u bazi, koji se upisuje odvojeno i preživljava i potpuni pad procesa.
-    zadnja = st.session_state.get("zadnja_obrada")
-    if zadnja:
-        trajanje = f" ({zadnja['pocetak']} – {zadnja.get('zavrsetak') or 'u tijeku'})"
-        if zadnja["status"] == "uspjeh":
-            st.success(f"✅ Zadnja obrada: **{zadnja['izvor']}**{trajanje} — {zadnja['poruka']}")
-        elif zadnja["status"] == "neuspjeh":
-            st.error(f"❌ Zadnja obrada NIJE uspjela: **{zadnja['izvor']}**{trajanje} — {zadnja['poruka']}")
-        else:
-            st.warning(
-                f"⏳ Zadnja obrada (**{zadnja['izvor']}**, pokrenuta {zadnja['pocetak']}) nije zabilježena "
-                "kao završena u ovoj sesiji - moguće da je aplikacija nenadano prekinuta usred obrade. "
-                "Provjeri tab 'Log_obrade' u bazi za točno mjesto prekida."
-            )
-        with st.expander("Log zadnje obrade", expanded=(zadnja["status"] != "uspjeh")):
-            st.text("\n".join(zadnja.get("log", [])) or "(prazno)")
-            if zadnja.get("traceback"):
-                st.code(zadnja["traceback"])
-        st.divider()
-
     with st.form("obrada_form", clear_on_submit=False):
         st.subheader("1. Datoteke")
         st.caption(
@@ -145,60 +119,35 @@ def stranica_obradi_ispit():
         st.error("Moraš priložiti barem jednu datoteku sa zadatcima (PDF ili slika).")
         st.stop()
 
-    izvor_naziv = os.path.splitext(ispit_datoteke[0].name)[0]
-    broj_pdf_ulaza = len(ispit_datoteke) + len(rjesenja_datoteke)
-
-    # Nova obrada počinje - resetiraj izvještaj (prijašnji ostaje u Log_obrade tabu na Sheetu
-    # ako ga trebaš naknadno pogledati, samo se briše iz ovog on-screen prikaza).
     log_prostor = st.empty()
     log_redovi = []
-    st.session_state["zadnja_obrada"] = {
-        "izvor": izvor_naziv,
-        "pocetak": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "zavrsetak": None,
-        "status": "u_tijeku",
-        "poruka": "",
-        "log": [],
-        "traceback": "",
-    }
 
     def log(poruka: str):
         log_redovi.append(poruka)
         log_prostor.text("\n".join(log_redovi))
-        st.session_state["zadnja_obrada"]["log"] = list(log_redovi)
 
     mathpix_id = st.secrets["MATHPIX_APP_ID"]
     mathpix_key = st.secrets["MATHPIX_APP_KEY"]
     anthropic_key = st.secrets["ANTHROPIC_API_KEY"]
     slike_folder_id = st.secrets["SLIKE_FOLDER_ID"]
 
-    zapisi_log_obrade(sheet, izvor_naziv, "pocetak", "u_tijeku", f"{broj_pdf_ulaza} datoteka", log=log)
+    izvor_naziv = os.path.splitext(ispit_datoteke[0].name)[0]
+    broj_pdf_ulaza = len(ispit_datoteke) + len(rjesenja_datoteke)
 
-    broj_dodanih, broj_azuriranih = 0, 0
-    zadaci = []
-
-    with st.spinner("Obrada u tijeku — ovo može potrajati 1-3 minute (kod velikih ispita i dulje, vidi log ispod)..."):
+    with st.spinner("Obrada u tijeku — ovo može potrajati 1-3 minute..."):
         log(f"📄 Obrađujem: {izvor_naziv} ({broj_pdf_ulaza} datoteka)")
 
         try:
             # 1. Mathpix OCR zadataka (PDF i/ili slike, spojeno u jedan tekst)
-            log("📄 [1/5] OCR zadataka...")
             ispit_md = mathpix_ocr_vise_datoteka(ispit_datoteke, mathpix_id, mathpix_key, log=log)
             log(f"✅ OCR zadataka gotov (ukupno {len(ispit_md)} znakova)")
-            zapisi_log_obrade(sheet, izvor_naziv, "ocr_zadataka", "gotovo", f"{len(ispit_md)} znakova", log=log)
 
             # 2. Mathpix OCR rješenja (ako postoje, PDF i/ili slike)
-            log("📄 [2/5] OCR rješenja...")
             rjesenja_md = mathpix_ocr_vise_datoteka(rjesenja_datoteke, mathpix_id, mathpix_key, log=log) \
                 if rjesenja_datoteke else None
-            zapisi_log_obrade(
-                sheet, izvor_naziv, "ocr_rjesenja", "gotovo",
-                f"{len(rjesenja_md) if rjesenja_md else 0} znakova", log=log,
-            )
 
             # 3. Claude strukturiranje (uključujući klasifikaciju potpoglavlja iz šifrarnika)
-            log("🤖 [3/5] Claude strukturira zadatke (najsporiji korak - kod velikih ispita "
-                "može uključivati nekoliko uzastopnih pokušaja ako se odgovor odreže)...")
+            log("🤖 Claude strukturira zadatke...")
             sifrarnik_text = build_sifrarnik_text(sheet)
             sifrarnik_potpoglavlja_text = build_sifrarnik_potpoglavlja_text(sheet)
             zadaci = extract_zadaci_with_claude(
@@ -206,43 +155,22 @@ def stranica_obradi_ispit():
                 sifrarnik_potpoglavlja_text, log=log,
             )
             log(f"✅ Claude vratio {len(zadaci)} zadataka")
-            zapisi_log_obrade(
-                sheet, izvor_naziv, "claude_strukturiranje", "gotovo", f"{len(zadaci)} zadataka", log=log,
-            )
 
             # 4. Preuzmi/spremi slike (zadatci sa slika_zadana=da)
-            log("🖼️ [4/5] Provjeravam zadatke sa zadanom slikom...")
+            log("🖼️ Provjeravam zadatke sa zadanom slikom...")
             zadaci = preuzmi_i_spremi_slike(
                 zadaci, izvor_naziv, mathpix_id, mathpix_key, drive_service, slike_folder_id, log=log
             )
 
             # 5. Upis u Sheet (s detekcijom duplikata)
-            log("💾 [5/5] Upisujem u bazu (provjera duplikata)...")
             broj_dodanih, broj_azuriranih = nadopuni_ili_dodaj_zadatke(
                 ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza, log=log
             )
             log(f"✅ {broj_dodanih} novih zadataka, {broj_azuriranih} nadopunjeno (duplikat)")
 
-            poruka_uspjeha = f"{broj_dodanih} novih zadataka, {broj_azuriranih} nadopunjeno."
-            st.session_state["zadnja_obrada"]["status"] = "uspjeh"
-            st.session_state["zadnja_obrada"]["poruka"] = poruka_uspjeha
-            zapisi_log_obrade(sheet, izvor_naziv, "zavrseno", "uspjeh", poruka_uspjeha, log=log)
-
         except Exception as e:
-            puni_trag = traceback.format_exc()
-            st.session_state["zadnja_obrada"]["status"] = "neuspjeh"
-            st.session_state["zadnja_obrada"]["poruka"] = str(e)
-            st.session_state["zadnja_obrada"]["traceback"] = puni_trag
-            zapisi_log_obrade(sheet, izvor_naziv, "greska", "neuspjeh", str(e), log=log)
             st.error(f"Greška tijekom obrade: {e}")
-            with st.expander("🐛 Detalji greške (za dijagnozu)"):
-                st.code(puni_trag)
             st.stop()
-
-        finally:
-            # finally se izvrši i kad st.stop() gore digne svoju internu iznimku - tako da
-            # vrijeme završetka uvijek bude zabilježeno, bilo da je obrada uspjela ili pala.
-            st.session_state["zadnja_obrada"]["zavrsetak"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     st.success(f"Gotovo! {broj_dodanih} novih zadataka dodano, {broj_azuriranih} nadopunjeno.")
 
@@ -465,6 +393,30 @@ def stranica_uredi_zadatak():
 
     with st.expander("👁️ Puni tekst zadatka (renderirano, ne sirovi LaTeX)", expanded=True):
         st.write(get(row, "tekst_zadatka_latex") or "*(prazno)*")
+        if get(row, "tip_zadatka") == "visestruki_izbor":
+            _opcije_pregled = [o.strip() for o in get(row, "ponudjeni_odgovori").split("||") if o.strip()]
+            if _opcije_pregled:
+                st.markdown(prikazi_opcije_markdown(_opcije_pregled))
+                _konacan_pregled = get(row, "konacan_odgovor").strip().upper()
+                _slova_dostupna = SLOVA_PONUDJENIH_ODGOVORA[: len(_opcije_pregled)]
+                if _konacan_pregled in _slova_dostupna:
+                    st.caption(
+                        f"✅ Točan odgovor: **{_konacan_pregled}) "
+                        f"{_opcije_pregled[_slova_dostupna.index(_konacan_pregled)]}**"
+                    )
+                elif _konacan_pregled:
+                    st.warning(
+                        f"⚠️ Konačan odgovor '{get(row, 'konacan_odgovor')}' ne odgovara nijednoj "
+                        "od ponuđenih opcija."
+                    )
+                else:
+                    st.warning("⚠️ Nije označen točan odgovor među ponuđenim opcijama.")
+            else:
+                st.warning("⚠️ Tip zadatka je 'višestruki izbor', ali nema unesenih ponuđenih odgovora.")
+            st.caption(
+                "Napomena: ponuđeni odgovori se ovdje prikazuju kao tekst/LaTeX. Opcije koje su "
+                "SLIKA (a ne tekst) trenutno baza ne podržava zasebno - vidi napomenu ispod."
+            )
         if get(row, "rjesenje"):
             st.markdown("**Rješenje:**")
             st.write(get(row, "rjesenje"))
@@ -496,10 +448,20 @@ def stranica_uredi_zadatak():
         "Rješenje - puni postupak (rjesenje)", value=get(row, "rjesenje"),
         height=150, key=f"rjesenje_{broj_retka}",
     )
-    novi_konacan_odgovor = st.text_input(
-        "Konačan odgovor - kratka vrijednost (konacan_odgovor)", value=get(row, "konacan_odgovor"),
-        key=f"konacan_{broj_retka}",
-    )
+    if get(row, "tip_zadatka") == "visestruki_izbor":
+        # Za višestruki izbor je konacan_odgovor ZAPRAVO slovo točne opcije, ne slobodan tekst -
+        # uređuje se u sekciji "🔤 Ponuđeni odgovori" niže, zajedno s popisom opcija (da su uvijek
+        # usklađeni). Ovdje samo proslijedimo trenutnu vrijednost nepromijenjenu.
+        st.caption(
+            "ℹ️ Ovo je zadatak s višestrukim izborom - konačan odgovor (točno slovo) uređuje se "
+            "niže, u sekciji '🔤 Ponuđeni odgovori', zajedno s popisom opcija."
+        )
+        novi_konacan_odgovor = get(row, "konacan_odgovor")
+    else:
+        novi_konacan_odgovor = st.text_input(
+            "Konačan odgovor - kratka vrijednost (konacan_odgovor)", value=get(row, "konacan_odgovor"),
+            key=f"konacan_{broj_retka}",
+        )
     nova_uputa = st.text_area(
         "Uputa / naznaka za rješavanje (uputa - PreTeXt <hint>)", value=get(row, "uputa"),
         height=100, key=f"uputa_{broj_retka}",
@@ -535,6 +497,116 @@ def stranica_uredi_zadatak():
         st.success(f"✅ Tekst/rješenje/uputa spremljeni za zadatak #{get(row, 'id')}.")
         _ucitaj_zadatke_za_pretragu.clear()
         st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
+
+    # ------------------------------------------------------------------
+    # Sekcija 1b: Ponuđeni odgovori (samo za tip_zadatka = visestruki_izbor)
+    # ------------------------------------------------------------------
+    tip_zadatka_trenutni = get(row, "tip_zadatka")
+
+    if tip_zadatka_trenutni != "visestruki_izbor" and get(row, "ponudjeni_odgovori").strip():
+        st.divider()
+        st.warning(
+            f"⚠️ Ovaj zadatak ima upisane ponuđene odgovore, ali tip_zadatka nije "
+            f"'visestruki_izbor' (nego '{tip_zadatka_trenutni or '—'}') - vjerojatno greška iz "
+            "OCR/Claude obrade. tip_zadatka trenutno nije uređiv iz ove aplikacije - ispravi "
+            "izravno u Google Sheetu ako treba."
+        )
+
+    if tip_zadatka_trenutni == "visestruki_izbor":
+        st.divider()
+        st.subheader("🔤 Ponuđeni odgovori")
+        st.caption(
+            "Popis opcija i oznaka koja je točna - isti podaci koje vidiš u pregledu iznad i "
+            "koje Test Builder koristi za ispis A/B/C/D... u testu. Trenutno podržava samo "
+            "tekst/LaTeX opcije; opcije koje su slika baza još ne podržava zasebno (vidi napomenu)."
+        )
+
+        _mc_kljuc = f"mc_opcije_{broj_retka}"
+        if _mc_kljuc not in st.session_state:
+            _pocetne_opcije = [
+                o.strip() for o in get(row, "ponudjeni_odgovori").split("||") if o.strip()
+            ] or [""]
+            st.session_state[_mc_kljuc] = [
+                {"uid": i, "tekst": t} for i, t in enumerate(_pocetne_opcije)
+            ]
+            st.session_state[f"{_mc_kljuc}_sljedeci_uid"] = len(_pocetne_opcije)
+
+        mc_opcije = st.session_state[_mc_kljuc]
+
+        for _i, _stavka in enumerate(mc_opcije):
+            _slovo = SLOVA_PONUDJENIH_ODGOVORA[_i] if _i < len(SLOVA_PONUDJENIH_ODGOVORA) else str(_i + 1)
+            c1, c2 = st.columns([8, 1])
+            with c1:
+                _stavka["tekst"] = st.text_input(
+                    f"Opcija {_slovo}", value=_stavka["tekst"], key=f"{_mc_kljuc}_{_stavka['uid']}",
+                )
+            with c2:
+                st.write("")
+                if st.button(
+                    "🗑️", key=f"{_mc_kljuc}_ukloni_{_stavka['uid']}",
+                    disabled=len(mc_opcije) <= 1, help="Ukloni ovu opciju",
+                ):
+                    mc_opcije.pop(_i)
+                    st.rerun()
+
+        if st.button("➕ Dodaj opciju", key=f"{_mc_kljuc}_dodaj"):
+            _novi_uid = st.session_state[f"{_mc_kljuc}_sljedeci_uid"]
+            mc_opcije.append({"uid": _novi_uid, "tekst": ""})
+            st.session_state[f"{_mc_kljuc}_sljedeci_uid"] = _novi_uid + 1
+            st.rerun()
+
+        opcije_za_spremanje = [_stavka["tekst"].strip() for _stavka in mc_opcije if _stavka["tekst"].strip()]
+        if opcije_za_spremanje:
+            st.caption("Pregled:")
+            st.markdown(prikazi_opcije_markdown(opcije_za_spremanje))
+
+        slova_opcije = SLOVA_PONUDJENIH_ODGOVORA[: len(opcije_za_spremanje)]
+        konacan_trenutni = get(row, "konacan_odgovor").strip().upper()
+        tocan_index = slova_opcije.index(konacan_trenutni) if konacan_trenutni in slova_opcije else 0
+
+        if slova_opcije:
+            novi_konacan_mc = st.selectbox(
+                "Točan odgovor", slova_opcije, index=tocan_index, key=f"tocan_mc_{broj_retka}",
+            )
+            if konacan_trenutni and konacan_trenutni not in slova_opcije:
+                st.warning(
+                    f"⚠️ Trenutno spremljen konačan odgovor '{get(row, 'konacan_odgovor')}' ne "
+                    f"odgovara nijednoj od {len(slova_opcije)} opcije/a (A–{slova_opcije[-1]}) - "
+                    "odaberi točan odgovor iznad i spremi."
+                )
+        else:
+            novi_konacan_mc = None
+            st.info("Unesi barem jednu opciju da odabereš točan odgovor.")
+
+        st.caption(
+            "📷 Ako opcija treba biti SLIKA umjesto teksta (npr. graf/dijagram kao jedan od "
+            "ponuđenih odgovora) - baza to trenutno ne podržava kao zaseban tip podatka. "
+            "Privremeno rješenje dok se ne dogovori shema: upiši u opciju tekstualnu oznaku "
+            "(npr. 'vidi sliku X') i javi da se ovo doda kao novo polje."
+        )
+
+        if st.button("💾 Spremi ponuđene odgovore", type="primary", key=f"spremi_mc_{broj_retka}"):
+            if not opcije_za_spremanje:
+                st.error("Unesi barem jednu neprazna opciju prije spremanja.")
+                st.stop()
+            c_odgovori = _col_letter("ponudjeni_odgovori")
+            c_konacan = _col_letter("konacan_odgovor")
+            azuriranja = [
+                {"range": f"{c_odgovori}{broj_retka}", "values": [[" || ".join(opcije_za_spremanje)]]},
+            ]
+            if novi_konacan_mc:
+                azuriranja.append({"range": f"{c_konacan}{broj_retka}", "values": [[novi_konacan_mc]]})
+
+            with st.spinner("Spremam ponuđene odgovore..."):
+                try:
+                    ws_zadaci.batch_update(azuriranja)
+                except Exception as e:
+                    st.error(f"Greška: {e}")
+                    st.stop()
+
+            st.success(f"✅ Ponuđeni odgovori spremljeni za zadatak #{get(row, 'id')}.")
+            _ucitaj_zadatke_za_pretragu.clear()
+            st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
 
     # ------------------------------------------------------------------
     # Sekcija 2: Kategorija / cjelina / potpoglavlje (šifrarnik)
