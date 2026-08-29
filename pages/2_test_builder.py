@@ -19,7 +19,7 @@ import tempfile
 
 import streamlit as st
 
-from baza_zadataka_pipeline import get_drive_service, get_gspread_client
+from baza_zadataka_pipeline import get_drive_service, get_gspread_client, prikazi_opcije_markdown
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
 
@@ -145,23 +145,6 @@ def escape_outside_math(text: str) -> str:
         else:
             out.append("".join(SPECIAL_CHARS.get(ch, ch) for ch in part))
     return "".join(out)
-
-
-def prikazi_opcije_markdown(ponudjeni_odgovori):
-    """Vraća Markdown string za PREGLED ponuđenih odgovora u Streamlit sučelju
-    (ne za LaTeX!) - Streamlitov st.markdown zna renderirati $...$ preko KaTeX-a.
-    Baza sprema opcije BEZ $ omotača (čist LaTeX), pa ih ovdje samo omatamo
-    radi prikaza - isto načelo kao formatiraj_opciju() niže, ali za Streamlit."""
-    slova = ["A", "B", "C", "D", "E", "F"]
-    dijelovi = []
-    for i, opcija in enumerate(ponudjeni_odgovori):
-        opcija = opcija.strip()
-        if not opcija:
-            continue
-        prikaz = opcija if "$" in opcija else f"${opcija}$"
-        slovo = slova[i] if i < len(slova) else str(i + 1)
-        dijelovi.append(f"**{slovo})** {prikaz}")
-    return "  ".join(dijelovi)
 
 
 def izgradi_kategorije_tex(kategorije: dict) -> str:
