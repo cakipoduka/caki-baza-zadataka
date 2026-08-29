@@ -206,6 +206,22 @@ def build_sifrarnik_text(sheet) -> str:
     return "\n".join(f"- Kategorija: {r[0]} | Cjelina: {r[1]}" for r in rows if len(r) >= 2 and r[0])
 
 
+def get_sifrarnik_cjelina(sheet) -> dict:
+    """Vraća {cjelina: kategorija}, čitano iz taba 'Sifrarnik_cjelina' (stupci: kategorija,
+    cjelina, razred_tipican, mathify_link), redoslijedom kako se pojavljuju u Sheetu. Koristi
+    se za padajući izbornik "Cjelina" kod ručnog ispravka klasifikacije u aplikaciji - isti
+    šifrarnik kojim se Claude već vodi kod klasifikacije pri unosu novog ispita (vidi
+    build_sifrarnik_text), samo kao strukturirani rječnik umjesto teksta za AI prompt."""
+    ws = sheet.worksheet("Sifrarnik_cjelina")
+    rows = ws.get_all_values()[1:]
+    kategorija_po_cjelini = {}
+    for r in rows:
+        if len(r) < 2 or not r[1]:
+            continue
+        kategorija_po_cjelini[r[1].strip()] = r[0].strip()
+    return kategorija_po_cjelini
+
+
 def get_potpoglavlja_po_cjelini(sheet) -> dict:
     """Vraća {cjelina: [(potpoglavlje, redoslijed), ...]} sortirano po redoslijedu,
     čitano iz taba 'Sifrarnik_potpoglavlja' (stupci: cjelina, potpoglavlje, redoslijed)."""
