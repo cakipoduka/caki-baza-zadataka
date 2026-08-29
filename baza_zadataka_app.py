@@ -13,6 +13,8 @@ Stranice (navigacija u sidebaru):
 import json
 import mimetypes
 import os
+import traceback
+from datetime import datetime
 
 import streamlit as st
 
@@ -29,6 +31,7 @@ from baza_zadataka_pipeline import (
     nadopuni_ili_dodaj_zadatke,
     preuzmi_i_spremi_slike,
     upload_image_to_drive,
+    zapisi_log_obrade,
 )
 
 # Tipovi datoteka koje uploaderi za OCR ulaz prihvaćaju - PDF i uobičajeni formati slika
@@ -85,6 +88,31 @@ def stranica_obradi_ispit():
     st.title("📚 CAKI Matematika — Obrada ispita")
     st.caption("Upload PDF-ova → OCR → Claude strukturiranje → upis u bazu")
 
+    # --- Izvještaj o ZADNJOJ obradi. Ostaje vidljiv dok se ne pokrene nova obrada (ili se
+    # aplikacija ne ugasi) - drži se u session_state, PRIJE forme/ranog returna ispod, da
+    # se prikazuje i nakon običnog refresha/rerun-a stranice, ne samo odmah nakon klika.
+    # NAPOMENA: ako se aplikacija nenadano ugasi/restarta USRED obrade, ovaj izvještaj
+    # (kao i cijeli session_state) nestaje zajedno s procesom - za taj slučaj vidi tab
+    # "Log_obrade" u bazi, koji se upisuje odvojeno i preživljava i potpuni pad procesa.
+    zadnja = st.session_state.get("zadnja_obrada")
+    if zadnja:
+        trajanje = f" ({zadnja['pocetak']} – {zadnja.get('zavrsetak') or 'u tijeku'})"
+        if zadnja["status"] == "uspjeh":
+            st.success(f"✅ Zadnja obrada: **{zadnja['izvor']}**{trajanje} — {zadnja['poruka']}")
+        elif zadnja["status"] == "neuspjeh":
+            st.error(f"❌ Zadnja obrada NIJE uspjela: **{zadnja['izvor']}**{trajanje} — {zadnja['poruka']}")
+        else:
+            st.warning(
+                f"⏳ Zadnja obrada (**{zadnja['izvor']}**, pokrenuta {zadnja['pocetak']}) nije zabilježena "
+                "kao završena u ovoj sesiji - moguće da je aplikacija nenadano prekinuta usred obrade. "
+                "Provjeri tab 'Log_obrade' u bazi za točno mjesto prekida."
+            )
+        with st.expander("Log zadnje obrade", expanded=(zadnja["status"] != "uspjeh")):
+            st.text("\n".join(zadnja.get("log", [])) or "(prazno)")
+            if zadnja.get("traceback"):
+                st.code(zadnja["traceback"])
+        st.divider()
+
     with st.form("obrada_form", clear_on_submit=False):
         st.subheader("1. Datoteke")
         st.caption(
@@ -117,35 +145,60 @@ def stranica_obradi_ispit():
         st.error("Moraš priložiti barem jednu datoteku sa zadatcima (PDF ili slika).")
         st.stop()
 
+    izvor_naziv = os.path.splitext(ispit_datoteke[0].name)[0]
+    broj_pdf_ulaza = len(ispit_datoteke) + len(rjesenja_datoteke)
+
+    # Nova obrada počinje - resetiraj izvještaj (prijašnji ostaje u Log_obrade tabu na Sheetu
+    # ako ga trebaš naknadno pogledati, samo se briše iz ovog on-screen prikaza).
     log_prostor = st.empty()
     log_redovi = []
+    st.session_state["zadnja_obrada"] = {
+        "izvor": izvor_naziv,
+        "pocetak": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "zavrsetak": None,
+        "status": "u_tijeku",
+        "poruka": "",
+        "log": [],
+        "traceback": "",
+    }
 
     def log(poruka: str):
         log_redovi.append(poruka)
         log_prostor.text("\n".join(log_redovi))
+        st.session_state["zadnja_obrada"]["log"] = list(log_redovi)
 
     mathpix_id = st.secrets["MATHPIX_APP_ID"]
     mathpix_key = st.secrets["MATHPIX_APP_KEY"]
     anthropic_key = st.secrets["ANTHROPIC_API_KEY"]
     slike_folder_id = st.secrets["SLIKE_FOLDER_ID"]
 
-    izvor_naziv = os.path.splitext(ispit_datoteke[0].name)[0]
-    broj_pdf_ulaza = len(ispit_datoteke) + len(rjesenja_datoteke)
+    zapisi_log_obrade(sheet, izvor_naziv, "pocetak", "u_tijeku", f"{broj_pdf_ulaza} datoteka", log=log)
 
-    with st.spinner("Obrada u tijeku — ovo može potrajati 1-3 minute..."):
+    broj_dodanih, broj_azuriranih = 0, 0
+    zadaci = []
+
+    with st.spinner("Obrada u tijeku — ovo može potrajati 1-3 minute (kod velikih ispita i dulje, vidi log ispod)..."):
         log(f"📄 Obrađujem: {izvor_naziv} ({broj_pdf_ulaza} datoteka)")
 
         try:
             # 1. Mathpix OCR zadataka (PDF i/ili slike, spojeno u jedan tekst)
+            log("📄 [1/5] OCR zadataka...")
             ispit_md = mathpix_ocr_vise_datoteka(ispit_datoteke, mathpix_id, mathpix_key, log=log)
             log(f"✅ OCR zadataka gotov (ukupno {len(ispit_md)} znakova)")
+            zapisi_log_obrade(sheet, izvor_naziv, "ocr_zadataka", "gotovo", f"{len(ispit_md)} znakova", log=log)
 
             # 2. Mathpix OCR rješenja (ako postoje, PDF i/ili slike)
+            log("📄 [2/5] OCR rješenja...")
             rjesenja_md = mathpix_ocr_vise_datoteka(rjesenja_datoteke, mathpix_id, mathpix_key, log=log) \
                 if rjesenja_datoteke else None
+            zapisi_log_obrade(
+                sheet, izvor_naziv, "ocr_rjesenja", "gotovo",
+                f"{len(rjesenja_md) if rjesenja_md else 0} znakova", log=log,
+            )
 
             # 3. Claude strukturiranje (uključujući klasifikaciju potpoglavlja iz šifrarnika)
-            log("🤖 Claude strukturira zadatke...")
+            log("🤖 [3/5] Claude strukturira zadatke (najsporiji korak - kod velikih ispita "
+                "može uključivati nekoliko uzastopnih pokušaja ako se odgovor odreže)...")
             sifrarnik_text = build_sifrarnik_text(sheet)
             sifrarnik_potpoglavlja_text = build_sifrarnik_potpoglavlja_text(sheet)
             zadaci = extract_zadaci_with_claude(
@@ -153,22 +206,43 @@ def stranica_obradi_ispit():
                 sifrarnik_potpoglavlja_text, log=log,
             )
             log(f"✅ Claude vratio {len(zadaci)} zadataka")
+            zapisi_log_obrade(
+                sheet, izvor_naziv, "claude_strukturiranje", "gotovo", f"{len(zadaci)} zadataka", log=log,
+            )
 
             # 4. Preuzmi/spremi slike (zadatci sa slika_zadana=da)
-            log("🖼️ Provjeravam zadatke sa zadanom slikom...")
+            log("🖼️ [4/5] Provjeravam zadatke sa zadanom slikom...")
             zadaci = preuzmi_i_spremi_slike(
                 zadaci, izvor_naziv, mathpix_id, mathpix_key, drive_service, slike_folder_id, log=log
             )
 
             # 5. Upis u Sheet (s detekcijom duplikata)
+            log("💾 [5/5] Upisujem u bazu (provjera duplikata)...")
             broj_dodanih, broj_azuriranih = nadopuni_ili_dodaj_zadatke(
                 ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza, log=log
             )
             log(f"✅ {broj_dodanih} novih zadataka, {broj_azuriranih} nadopunjeno (duplikat)")
 
+            poruka_uspjeha = f"{broj_dodanih} novih zadataka, {broj_azuriranih} nadopunjeno."
+            st.session_state["zadnja_obrada"]["status"] = "uspjeh"
+            st.session_state["zadnja_obrada"]["poruka"] = poruka_uspjeha
+            zapisi_log_obrade(sheet, izvor_naziv, "zavrseno", "uspjeh", poruka_uspjeha, log=log)
+
         except Exception as e:
+            puni_trag = traceback.format_exc()
+            st.session_state["zadnja_obrada"]["status"] = "neuspjeh"
+            st.session_state["zadnja_obrada"]["poruka"] = str(e)
+            st.session_state["zadnja_obrada"]["traceback"] = puni_trag
+            zapisi_log_obrade(sheet, izvor_naziv, "greska", "neuspjeh", str(e), log=log)
             st.error(f"Greška tijekom obrade: {e}")
+            with st.expander("🐛 Detalji greške (za dijagnozu)"):
+                st.code(puni_trag)
             st.stop()
+
+        finally:
+            # finally se izvrši i kad st.stop() gore digne svoju internu iznimku - tako da
+            # vrijeme završetka uvijek bude zabilježeno, bilo da je obrada uspjela ili pala.
+            st.session_state["zadnja_obrada"]["zavrsetak"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     st.success(f"Gotovo! {broj_dodanih} novih zadataka dodano, {broj_azuriranih} nadopunjeno.")
 
