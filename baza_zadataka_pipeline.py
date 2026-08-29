@@ -39,6 +39,28 @@ ZADACI_HEADERS = [
 ]
 
 
+SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
+
+
+def prikazi_opcije_markdown(ponudjeni_odgovori) -> str:
+    """Vraća Markdown string za PREGLED ponuđenih odgovora (višestruki izbor) u Streamlit
+    sučelju (ne za LaTeX!) - Streamlitov st.markdown zna renderirati $...$ preko KaTeX-a.
+    Baza sprema opcije BEZ $ omotača (čist LaTeX), pa ih ovdje samo omatamo radi prikaza -
+    isto načelo kao formatiraj_opciju() u pages/2_test_builder.py, ali za Streamlit prikaz,
+    ne za LaTeX izlaz. Zajednička funkcija za baza_zadataka_app.py (stranica 'Uredi zadatak')
+    i pages/2_test_builder.py (pregled u pretrazi/odabiru) - da se prikaz opcija ne dupllicira
+    na dva mjesta i ne razmimoiđe (npr. broj podržanih slova A-?)."""
+    dijelovi = []
+    for i, opcija in enumerate(ponudjeni_odgovori):
+        opcija = (opcija or "").strip()
+        if not opcija:
+            continue
+        prikaz = opcija if "$" in opcija else f"${opcija}$"
+        slovo = SLOVA_PONUDJENIH_ODGOVORA[i] if i < len(SLOVA_PONUDJENIH_ODGOVORA) else str(i + 1)
+        dijelovi.append(f"**{slovo})** {prikaz}")
+    return "  ".join(dijelovi)
+
+
 def _col_letter(field_name: str, headers=ZADACI_HEADERS) -> str:
     """Pretvori naziv polja u slovo(a) Sheet stupca (0-indeksirano -> A, B, ... Z, AA, AB, ...).
     Računa se dinamički iz ZADACI_HEADERS, umjesto hardkodiranih slova - tako da
@@ -249,40 +271,6 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
         popis = ", ".join(p for p, _ in stavke)
         lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {popis}")
     return "\n".join(lines)
-
-
-# --- Log obrade (upisuje se u Sheet, NE samo u Streamlit session_state) ---
-#
-# st.session_state i on-screen log (st.empty().text(...)) žive samo dok proces same
-# Streamlit aplikacije radi - ako se aplikacija nenadano ugasi/restarta usred obrade
-# (npr. hosting je ubije zbog memorije/timeouta), sve to nestane bez traga i korisnik
-# ostane bez ikakve informacije o tome dokle je obrada stigla. Zato se ključni koraci
-# UZ TO upisuju i u zaseban tab "Log_obrade" u istom Google Sheetu - to je vanjski,
-# trajan zapis koji preživi čak i potpuni pad/restart aplikacije.
-
-LOG_OBRADE_HEADERS = ["vrijeme", "izvor_naziv", "faza", "status", "poruka"]
-
-
-def _get_or_create_log_worksheet(sheet, naziv="Log_obrade"):
-    try:
-        return sheet.worksheet(naziv)
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sheet.add_worksheet(title=naziv, rows=2000, cols=len(LOG_OBRADE_HEADERS))
-        ws.append_row(LOG_OBRADE_HEADERS)
-        return ws
-
-
-def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
-    """Upiši jedan redak u 'Log_obrade' tab - vidi obrazloženje gore. Namjerno je
-    omotano u try/except koji SAMO upozori (preko `log`), a ne baca dalje: upis loga
-    ne smije srušiti/prekinuti stvarnu obradu ako npr. Sheets API kratko zapne."""
-    from datetime import datetime
-    try:
-        ws = _get_or_create_log_worksheet(sheet)
-        ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), izvor_naziv, faza, status, poruka])
-    except Exception as e:
-        if log:
-            log(f"⚠️ Upis u Log_obrade nije uspio (samo evidencija - obrada se nastavlja): {e}")
 
 
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
