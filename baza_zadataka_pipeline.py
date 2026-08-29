@@ -251,6 +251,40 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
     return "\n".join(lines)
 
 
+# --- Log obrade (upisuje se u Sheet, NE samo u Streamlit session_state) ---
+#
+# st.session_state i on-screen log (st.empty().text(...)) žive samo dok proces same
+# Streamlit aplikacije radi - ako se aplikacija nenadano ugasi/restarta usred obrade
+# (npr. hosting je ubije zbog memorije/timeouta), sve to nestane bez traga i korisnik
+# ostane bez ikakve informacije o tome dokle je obrada stigla. Zato se ključni koraci
+# UZ TO upisuju i u zaseban tab "Log_obrade" u istom Google Sheetu - to je vanjski,
+# trajan zapis koji preživi čak i potpuni pad/restart aplikacije.
+
+LOG_OBRADE_HEADERS = ["vrijeme", "izvor_naziv", "faza", "status", "poruka"]
+
+
+def _get_or_create_log_worksheet(sheet, naziv="Log_obrade"):
+    try:
+        return sheet.worksheet(naziv)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=naziv, rows=2000, cols=len(LOG_OBRADE_HEADERS))
+        ws.append_row(LOG_OBRADE_HEADERS)
+        return ws
+
+
+def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
+    """Upiši jedan redak u 'Log_obrade' tab - vidi obrazloženje gore. Namjerno je
+    omotano u try/except koji SAMO upozori (preko `log`), a ne baca dalje: upis loga
+    ne smije srušiti/prekinuti stvarnu obradu ako npr. Sheets API kratko zapne."""
+    from datetime import datetime
+    try:
+        ws = _get_or_create_log_worksheet(sheet)
+        ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), izvor_naziv, faza, status, poruka])
+    except Exception as e:
+        if log:
+            log(f"⚠️ Upis u Log_obrade nije uspio (samo evidencija - obrada se nastavlja): {e}")
+
+
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
 def _spasi_djelomican_json_popis(raw_text: str, log=None):
