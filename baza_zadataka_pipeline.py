@@ -84,6 +84,8 @@ VAŽNO: slika_zadana i vizualni_potencijal se međusobno isključuju - zadatak s
 
 VAŽNO: Odgovori ISKLJUČIVO JSON listom objekata, bez ikakvog teksta prije/poslije, bez markdown ograda (bez ```). Svaki objekt neka ima točno ova polja:
 privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor, uputa
+
+KRITIČNO za ispravnost JSON-a: ako bilo koje polje sadrži navodnik (npr. zapis kuta u stupnjevima/minutama/sekundama poput 12°34'56", oznaka inča, ili citat unutar teksta zadatka), TAJ NAVODNIK MORAŠ escapeati kao \" unutar JSON stringa. Isto vrijedi za obrnutu kosu crtu (\\ -> \\\\) i nove retke unutar stringa (koristi \\n, ne stvarni prijelom retka). Jedan neescapean navodnik ili obrnuta kosa crta učini CIJELI JSON odgovor neispravnim i cijela obrada zadataka propadne - budi posebno pažljiv kod zapisa kutova i LaTeX izraza.
 """
 
 
@@ -235,6 +237,45 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
 
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
+def _spasi_djelomican_json_popis(raw_text: str, log=None):
+    """Pokušaj standardni json.loads(); ako Claudeov odgovor NIJE ispravan JSON
+    (najčešće: odgovor je odrezan zbog max_tokens čak i nakon što je iscrpljen
+    budžet automatskog dijeljenja, ili je negdje u tekstu ostao neescapean
+    navodnik, npr. u zapisu kuta 12°34'56"), ne bacamo cijeli rezultat - umjesto
+    toga odrežemo odgovor na mjestu ZADNJEG potpuno zatvorenog objekta PRIJE
+    mjesta greške i spasimo te zadatke. Bolje spasiti npr. 18 od 20 zadataka
+    nego izgubiti svih 20 zbog jednog pokvarenog znaka na kraju odgovora.
+
+    Vraća (zadaci, je_li_potpuno: bool). Ako se ništa ne može spasiti, ponovno
+    baca originalnu json.JSONDecodeError (isto ponašanje kao prije - poziv
+    gore u lancu i dalje mora znati da je obrada za ovaj dio propala)."""
+    try:
+        return json.loads(raw_text, strict=False), True
+    except json.JSONDecodeError as e:
+        if log:
+            log(f"⚠️ Claudeov odgovor nije ispravan JSON ({e}) - pokušavam spasiti "
+                f"zadatke parsirane prije mjesta greške...")
+        granica = e.pos
+        kraj_objekta = raw_text.rfind("}", 0, granica)
+        while kraj_objekta != -1:
+            kandidat = raw_text[:kraj_objekta + 1]
+            # Gruba provjera ravnoteže zagrada - dovoljno za ovaj slučaj uporabe
+            # (izbjegava da probamo parsirati na mjestu "}" koji je dio stringa).
+            if kandidat.count("{") == kandidat.count("}"):
+                try:
+                    zadaci = json.loads(kandidat + "]", strict=False)
+                    if log:
+                        log(f"✅ Spašeno {len(zadaci)} zadataka prije mjesta greške "
+                            f"(ostatak ovog Claude odgovora je odbačen kao nepouzdan).")
+                    return zadaci, False
+                except json.JSONDecodeError:
+                    pass
+            kraj_objekta = raw_text.rfind("}", 0, kraj_objekta)
+        if log:
+            log("❌ Nije uspjelo spasiti nijedan zadatak iz ovog odgovora - obrada ovog dijela propada.")
+        raise
+
+
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
                                 sifrarnik_potpoglavlja_text="", model="claude-sonnet-5",
                                 _preostala_dubina=2, log=None):
@@ -280,7 +321,11 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     raw_text = "".join(b.text for b in response.content if b.type == "text").strip()
     raw_text = re.sub(r"^```(json)?", "", raw_text).strip()
     raw_text = re.sub(r"```$", "", raw_text).strip()
-    zadaci = json.loads(raw_text, strict=False)
+    zadaci, potpuno = _spasi_djelomican_json_popis(raw_text, log=log)
+    if not potpuno and log:
+        log("⚠️ POZOR: gornji zadaci su spašeni iz NEPOTPUNOG Claude odgovora - "
+            "preporučamo nakon obrade provjeriti bazu (zadnji zadatak u ovom dijelu "
+            "ispita je vjerojatno izostavljen) i po potrebi ručno dodati/ponoviti obradu.")
 
     for z in zadaci:
         latex_text = z.get("tekst_zadatka_latex", "")
