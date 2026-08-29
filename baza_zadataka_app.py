@@ -486,10 +486,10 @@ def stranica_uredi_tekst():
         height=150, key=f"tekst_{broj_retka}",
     )
     st.caption(
-        "✏️ Za uređivanje/provjeru LaTeX matematike: "
-        "[latexpreview.com](https://latexpreview.com/) — "
-        "formula mora biti unutar `$...$` (npr. `$x^2-5x+6=0$`), inače se neće prikazati kao matematika."
-    )
+    "✏️ Za uređivanje/provjeru LaTeX matematike: "
+    "[latexpreview.com](https://latexpreview.com/) — "
+    "formula mora biti unutar `$...$` (npr. `$x^2-5x+6=0$`), inače se neće prikazati kao matematika."
+)
     novo_rjesenje = st.text_area(
         "Rješenje - puni postupak (rjesenje)", value=get(row, "rjesenje"),
         height=150, key=f"rjesenje_{broj_retka}",
