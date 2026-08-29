@@ -487,7 +487,7 @@ def stranica_uredi_tekst():
     )
     st.caption(
     "✏️ Za uređivanje/provjeru LaTeX matematike: "
-    "[latexpreview.com](https://latexpreview.com/) — "
+    "[CodeCogs Equation Editor](https://editor.codecogs.com/) — "
     "formula mora biti unutar `$...$` (npr. `$x^2-5x+6=0$`), inače se neće prikazati kao matematika."
 )
     novo_rjesenje = st.text_area(
