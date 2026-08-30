@@ -273,6 +273,40 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
     return "\n".join(lines)
 
 
+# --- Log obrade (upisuje se u Sheet, NE samo u Streamlit session_state) ---
+#
+# st.session_state i on-screen log (st.empty().text(...)) žive samo dok proces same
+# Streamlit aplikacije radi - ako se aplikacija nenadano ugasi/restarta usred obrade
+# (npr. hosting je ubije zbog memorije/timeouta), sve to nestane bez traga i korisnik
+# ostane bez ikakve informacije o tome dokle je obrada stigla. Zato se ključni koraci
+# UZ TO upisuju i u zaseban tab "Log_obrade" u istom Google Sheetu - to je vanjski,
+# trajan zapis koji preživi čak i potpuni pad/restart aplikacije.
+
+LOG_OBRADE_HEADERS = ["vrijeme", "izvor_naziv", "faza", "status", "poruka"]
+
+
+def _get_or_create_log_worksheet(sheet, naziv="Log_obrade"):
+    try:
+        return sheet.worksheet(naziv)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=naziv, rows=2000, cols=len(LOG_OBRADE_HEADERS))
+        ws.append_row(LOG_OBRADE_HEADERS)
+        return ws
+
+
+def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
+    """Upiši jedan redak u 'Log_obrade' tab - vidi obrazloženje gore. Namjerno je
+    omotano u try/except koji SAMO upozori (preko `log`), a ne baca dalje: upis loga
+    ne smije srušiti/prekinuti stvarnu obradu ako npr. Sheets API kratko zapne."""
+    from datetime import datetime
+    try:
+        ws = _get_or_create_log_worksheet(sheet)
+        ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), izvor_naziv, faza, status, poruka])
+    except Exception as e:
+        if log:
+            log(f"⚠️ Upis u Log_obrade nije uspio (samo evidencija - obrada se nastavlja): {e}")
+
+
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
 def _spasi_djelomican_json_popis(raw_text: str, log=None):
@@ -316,7 +350,7 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
 
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
                                 sifrarnik_potpoglavlja_text="", model="claude-sonnet-5",
-                                _preostala_dubina=2, log=None):
+                                _preostala_dubina=2, log=None, _preostali_pokusaji_praznog=2):
     client = anthropic.Anthropic(api_key=anthropic_api_key)
     user_content = f"""ŠIFRARNIK (koristi isključivo ove kategorije/cjeline, doslovno):
 {sifrarnik_text}
@@ -359,6 +393,32 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     raw_text = "".join(b.text for b in response.content if b.type == "text").strip()
     raw_text = re.sub(r"^```(json)?", "", raw_text).strip()
     raw_text = re.sub(r"```$", "", raw_text).strip()
+
+    if not raw_text:
+        # "Expecting value: line 1 column 1 (char 0)" iz json.loads() uvijek znači BAŠ ovo -
+        # Claude je vratio 0 znakova teksta (različito od odrezanog/pokvarenog JSON-a, koje
+        # rješava _spasi_djelomican_json_popis niže). Bilježimo stop_reason i tipove content
+        # blokova radi dijagnoze, i pokušavamo ponovno prije nego odustanemo - prazan odgovor
+        # je tipično prolazna stvar (API hiccup), ne stvarni problem sa sadržajem ispita.
+        broj_blokova = len(response.content)
+        tipovi_blokova = [b.type for b in response.content]
+        if log:
+            log(f"⚠️ Claude je vratio PRAZAN odgovor (stop_reason={response.stop_reason}, "
+                f"broj_blokova={broj_blokova}, tipovi={tipovi_blokova}).")
+        if _preostali_pokusaji_praznog > 0:
+            if log:
+                log(f"🔁 Prazan odgovor je često prolazna greška - pokušavam ponovno "
+                    f"(preostalo pokušaja: {_preostali_pokusaji_praznog})...")
+            return extract_zadaci_with_claude(
+                ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
+                sifrarnik_potpoglavlja_text, model, _preostala_dubina, log,
+                _preostali_pokusaji_praznog - 1,
+            )
+        raise ValueError(
+            f"Claude je vratio prazan odgovor i nakon ponovnih pokušaja "
+            f"(stop_reason={response.stop_reason}, broj_blokova={broj_blokova})."
+        )
+
     zadaci, potpuno = _spasi_djelomican_json_popis(raw_text, log=log)
     if not potpuno and log:
         log("⚠️ POZOR: gornji zadaci su spašeni iz NEPOTPUNOG Claude odgovora - "
