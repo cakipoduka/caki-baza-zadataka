@@ -217,11 +217,19 @@ def stranica_obradi_ispit():
             zadaci = preuzmi_i_spremi_slike(
                 zadaci, izvor_naziv, mathpix_id, mathpix_key, drive_service, slike_folder_id, log=log
             )
+            broj_slika = sum(1 for z in zadaci if z.get("slika_putanja"))
+            zapisi_log_obrade(sheet, izvor_naziv, "slike", "gotovo", f"{broj_slika} slika", log=log)
 
-            # 5. Upis u Sheet (s detekcijom duplikata)
+            # 5. Upis u Sheet (s detekcijom duplikata) - ovo je korak koji uspoređuje svaki
+            # novi zadatak sa SVIM postojećim zadacima u bazi, pa je najosjetljiviji na
+            # rast baze. Bilježimo "u_tijeku" PRIJE poziva - ako aplikacija padne/restarta
+            # se usred ovog koraka (npr. zbog memorije/vremena kod velike baze), sljedeći
+            # put ćemo u Log_obrade tabu točno vidjeti da je tu stalo, a ne pogađati.
             log("💾 [5/5] Upisujem u bazu (provjera duplikata)...")
+            zapisi_log_obrade(sheet, izvor_naziv, "upis_baza", "u_tijeku", f"{len(zadaci)} zadataka za upis", log=log)
             broj_dodanih, broj_azuriranih = nadopuni_ili_dodaj_zadatke(
-                ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza, log=log
+                ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza, log=log,
+                ogranici_po_cjelini=True,
             )
             log(f"✅ {broj_dodanih} novih zadataka, {broj_azuriranih} nadopunjeno (duplikat)")
 
