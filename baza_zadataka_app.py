@@ -201,6 +201,7 @@ def stranica_obradi_ispit():
             # 3. Claude strukturiranje (uključujući klasifikaciju potpoglavlja iz šifrarnika)
             log("🤖 [3/5] Claude strukturira zadatke (najsporiji korak - kod velikih ispita "
                 "može uključivati nekoliko uzastopnih pokušaja ako se odgovor odreže)...")
+            zapisi_log_obrade(sheet, izvor_naziv, "claude_strukturiranje", "u_tijeku", "", log=log)
             sifrarnik_text = build_sifrarnik_text(sheet)
             sifrarnik_potpoglavlja_text = build_sifrarnik_potpoglavlja_text(sheet)
             zadaci = extract_zadaci_with_claude(
