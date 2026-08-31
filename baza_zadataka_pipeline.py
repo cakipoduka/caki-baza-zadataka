@@ -654,10 +654,12 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
     # izmjene sad idu u JEDAN ws_zadaci.batch_update() poziv na kraju cijele funkcije -
     # bez obzira koliko duplikata ima u ovoj obradi, to je i dalje samo JEDAN write zahtjev
     # (plus jedan za append_rows), umjesto potencijalno stotina.
-    _sheet_naziv_za_raspon = "'" + ws_zadaci.title.replace("'", "''") + "'"
-
     def _puni_raspon(bare_range):
-        return f"{_sheet_naziv_za_raspon}!{bare_range}"
+        # NAPOMENA: gspread's Worksheet.batch_update() SAM dodaje naziv sheeta ispred
+        # raspona (isto kao i .update()), pa OVDJE range ostaje gol ("N74:P74") - ručno
+        # dodavanje naziva sheeta ovdje uzrokovalo je dupliciranje ("'Zadaci'!'Zadaci'!...")
+        # i grešku "Unable to parse range" iz Google Sheets API-ja.
+        return bare_range
 
     sva_azuriranja_polja = []
 
