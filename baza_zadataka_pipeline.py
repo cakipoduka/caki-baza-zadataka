@@ -309,6 +309,41 @@ def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
 
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
+def _parsiraj_uzastopne_json_vrijednosti(raw_text: str, log=None):
+    """Pokušaj pročitati raw_text kao NIZ UZASTOPNIH JSON vrijednosti (jedna za drugom,
+    bez zajedničke omotne liste), umjesto jedne JSON liste. Rješava slučaj kad Claude
+    (najčešće kod vrlo malog dijela ispita, npr. nakon dijeljenja na pola pa pola) umjesto
+    tražene JSON liste vrati jedan ili više ODVOJENIH objekata: '{...}\\n{...}' - takav
+    odgovor json.loads() odbija s "Extra data", a POSTOJEĆI trik "odreži na zadnjem '}'
+    prije greške i zatvori s ']'" ovdje ne pomaže (kandidat postaje "{...}]" - objekt s
+    viškom uglate zagrade - i dalje neispravan JSON), pa je ovo zaseban, dodatni pokušaj.
+    Koristi json.JSONDecoder().raw_decode() koji čita TOČNO jednu vrijednost i vraća poziciju
+    gdje je stao, pa se to ponavlja dok ima još teksta. Zadatke koje Claude vrati kao listu
+    proširujemo u rezultat, a pojedinačne objekte dodajemo jedan po jedan. Čim naiđemo na
+    nešto što se uopće ne da parsirati kao JSON, stajemo i vraćamo što je do tad skupljeno
+    (bolje spasiti dio nego ništa)."""
+    decoder = json.JSONDecoder(strict=False)
+    zadaci = []
+    idx, n = 0, len(raw_text)
+    while idx < n:
+        while idx < n and raw_text[idx] in " \t\n\r":
+            idx += 1
+        if idx >= n:
+            break
+        try:
+            obj, kraj = decoder.raw_decode(raw_text, idx)
+        except json.JSONDecodeError:
+            break
+        if isinstance(obj, list):
+            zadaci.extend(obj)
+        elif isinstance(obj, dict):
+            zadaci.append(obj)
+        else:
+            break
+        idx = kraj
+    return zadaci
+
+
 def _spasi_djelomican_json_popis(raw_text: str, log=None):
     """Pokušaj standardni json.loads(); ako Claudeov odgovor NIJE ispravan JSON
     (najčešće: odgovor je odrezan zbog max_tokens čak i nakon što je iscrpljen
@@ -317,12 +352,24 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
     toga odrežemo odgovor na mjestu ZADNJEG potpuno zatvorenog objekta PRIJE
     mjesta greške i spasimo te zadatke. Bolje spasiti npr. 18 od 20 zadataka
     nego izgubiti svih 20 zbog jednog pokvarenog znaka na kraju odgovora.
+    Ako niti to ne upali (tipično kod greške "Extra data" - Claude je vratio jedan ili
+    više ODVOJENIH JSON objekata umjesto jedne liste), probamo drugu strategiju:
+    _parsiraj_uzastopne_json_vrijednosti - vidi njezin docstring.
 
     Vraća (zadaci, je_li_potpuno: bool). Ako se ništa ne može spasiti, ponovno
     baca originalnu json.JSONDecodeError (isto ponašanje kao prije - poziv
     gore u lancu i dalje mora znati da je obrada za ovaj dio propala)."""
     try:
-        return json.loads(raw_text, strict=False), True
+        rezultat = json.loads(raw_text, strict=False)
+        if isinstance(rezultat, dict):
+            # Claude je (unatoč uputi da odgovori JSON LISTOM) vratio jedan JEDINI
+            # objekt bez omotne liste - čest slučaj kod vrlo malog dijela ispita
+            # (npr. samo 1 preostali zadatak nakon dijeljenja). Ne odbacujemo ga -
+            # samo ga omotamo u listu od jednog elementa.
+            if log:
+                log("⚠️ Claudeov odgovor je JEDAN objekt bez omotne JSON liste - tretiram ga kao listu od 1 zadatka.")
+            rezultat = [rezultat]
+        return rezultat, True
     except json.JSONDecodeError as e:
         if log:
             log(f"⚠️ Claudeov odgovor nije ispravan JSON ({e}) - pokušavam spasiti "
@@ -343,6 +390,17 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
                 except json.JSONDecodeError:
                     pass
             kraj_objekta = raw_text.rfind("}", 0, kraj_objekta)
+
+        # Prvi pokušaj (gore) ne pomaže kad raw_text nije "lista koja je odrezana", nego
+        # jedan ili više ODVOJENIH JSON objekata (npr. "{...}\n{...}") - tipičan uzrok
+        # greške "Extra data". Probaj drugu strategiju prije nego potpuno odustanemo.
+        zadaci_iz_niza = _parsiraj_uzastopne_json_vrijednosti(raw_text, log=log)
+        if zadaci_iz_niza:
+            if log:
+                log(f"✅ Spašeno {len(zadaci_iz_niza)} zadataka čitanjem kao niz odvojenih "
+                    f"JSON vrijednosti (Claudeov odgovor nije bio omotan u jednu JSON listu).")
+            return zadaci_iz_niza, False
+
         if log:
             log("❌ Nije uspjelo spasiti nijedan zadatak iz ovog odgovora - obrada ovog dijela propada.")
         raise
