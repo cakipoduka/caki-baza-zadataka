@@ -369,6 +369,14 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
         max_tokens=16000,
         system=EXTRACTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],
+        # Claude Sonnet 5 po defaultu koristi "adaptive thinking" (effort "high"), a tokeni
+        # potrošeni na razmišljanje broje se u ISTI max_tokens budžet kao i sam odgovor -
+        # kod složenijih/dužih ispita to zna pojesti cijeli budžet PRIJE nego što Claude
+        # uopće počne pisati JSON (stop_reason=max_tokens, sadržaj=samo "thinking" blok, bez
+        # teksta - vidljivo u logovima kao "prazan odgovor" čak i nakon ponovnih pokušaja).
+        # Za ovaj strukturirani JSON zadatak razmišljanje ne donosi korist, pa ga isključujemo
+        # da cijelih 16000 tokena ide na stvarni odgovor.
+        thinking={"type": "disabled"},
     )
 
     if response.stop_reason == "max_tokens":
