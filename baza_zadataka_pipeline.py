@@ -528,17 +528,48 @@ def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
 
 
 def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza,
-                                skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None):
+                                skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None,
+                                ogranici_po_cjelini=False):
+    """
+    ogranici_po_cjelini=False (zadano): usporedba svakog novog zadatka sa SVIM postojećim
+    zadacima u bazi, kao dosad - najsigurnije, ali kod baze od 20-30 tisuća zadataka
+    najsporije (O(broj_novih x broj_postojecih) SequenceMatcher.ratio() poziva).
+
+    ogranici_po_cjelini=True: usporedba se ograničava SAMO na postojeće zadatke iz ISTE
+    cjeline (npr. "Trigonometrija") kao novi zadatak - jer bi dva zadatka koja su stvarni
+    duplikat gotovo uvijek trebala biti klasificirana u istu cjelinu. Ovo je red veličine
+    brže na velikoj bazi (dijeli posao otprilike na broj cjelina u šifrarniku), ALI nosi
+    mali rizik: ako Claude pri dvije odvojene obrade ISTOG zadatka (npr. slučajno
+    uploadan isti ispit dvaput) dodijeli RAZLIČITU cjelinu, taj duplikat neće biti
+    prepoznat i bit će dodan kao nov zadatak. Radi sigurnosti, postojeći zadaci BEZ
+    upisane cjeline (prazno polje - stariji/ručno dodani unosi) uvijek se uspoređuju sa
+    SVIM novim zadacima, bez obzira na ovu postavku - da migrirani/nekategorizirani
+    unosi ne postanu "slijepa točka" za detekciju duplikata.
+    """
     all_values = ws_zadaci.get_all_values()
     data_rows = all_values[1:]
 
     _idx_naziv = ZADACI_HEADERS.index("izvor_naziv")
     _idx_latex = ZADACI_HEADERS.index("tekst_zadatka_latex")
-    existing_lookup = [
-        (i + 2, row[_idx_naziv] if len(row) > _idx_naziv else "",
-         row[_idx_latex] if len(row) > _idx_latex else "")
-        for i, row in enumerate(data_rows)
-    ]
+    _idx_cjelina = ZADACI_HEADERS.index("cjelina")
+    # Normalizirani tekst i njegova duljina računaju se OVDJE, JEDNOM za svaki postojeći
+    # redak - ne iznova za svaki novi zadatak (kako je bilo prije). Kod baze od nekoliko
+    # tisuća zadataka to je bila stvarna, mjerljiva sporost: normalizacija (regex) postojećih
+    # redaka izvodila se broj_novih_zadataka x broj_postojecih_redaka puta umjesto samo
+    # broj_postojecih_redaka puta. Rezultat provjere duplikata ostaje IDENTIČAN kad je
+    # ogranici_po_cjelini=False - ovo je čisto ubrzanje, ne mijenja logiku usporedbe.
+    existing_lookup = []
+    grupe_po_cjelini = {}
+    for i, row in enumerate(data_rows):
+        existing_naziv = row[_idx_naziv] if len(row) > _idx_naziv else ""
+        existing_latex = row[_idx_latex] if len(row) > _idx_latex else ""
+        existing_cjelina = (row[_idx_cjelina] if len(row) > _idx_cjelina else "").strip()
+        norm_existing = _normalize_za_usporedbu(existing_latex)
+        stavka = (i + 2, existing_naziv, norm_existing, len(norm_existing))
+        existing_lookup.append(stavka)
+        grupe_po_cjelini.setdefault(existing_cjelina, []).append(stavka)
+    # "Bez cjeline" grupa (prazan string) - uvijek dio kandidata, vidi obrazloženje gore.
+    bez_cjeline = grupe_po_cjelini.get("", [])
 
     id_prefix = izvor_naziv.replace(" ", "_")
     # Sljedeći broj ID-a računamo iz STVARNO postojećih brojeva (max + 1), NE brojanjem redaka -
@@ -562,9 +593,16 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
         duljina_novi = len(norm_novi)
         najbolji_redak, najbolja_slicnost, najbolji_naziv = None, 0.0, None
 
-        for row_number, existing_naziv, existing_latex in existing_lookup:
-            norm_existing = _normalize_za_usporedbu(existing_latex)
-            if duljina_novi and abs(len(norm_existing) - duljina_novi) / duljina_novi > 0.4:
+        if ogranici_po_cjelini:
+            nova_cjelina = (z.get("cjelina") or "").strip()
+            kandidati = grupe_po_cjelini.get(nova_cjelina, [])
+            if nova_cjelina and bez_cjeline:
+                kandidati = kandidati + bez_cjeline
+        else:
+            kandidati = existing_lookup
+
+        for row_number, existing_naziv, norm_existing, duljina_existing in kandidati:
+            if duljina_novi and abs(duljina_existing - duljina_novi) / duljina_novi > 0.4:
                 continue
             omjer = difflib.SequenceMatcher(None, norm_novi, norm_existing).ratio()
             if omjer > najbolja_slicnost:
