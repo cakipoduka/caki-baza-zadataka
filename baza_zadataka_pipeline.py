@@ -645,6 +645,21 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
     novi_redovi = []
     broj_azuriranih = 0
     broj_dodanih = 0
+    # Sve izmjene POSTOJEĆIH redaka (duplikata) skupljamo ovdje umjesto da svaku šaljemo
+    # kao zaseban ws_zadaci.update() poziv - Google Sheets API ima limit "Write requests
+    # per minute per user" (tipično 60/min), a svaki duplikat je dosad slao do 8 ODVOJENIH
+    # write poziva (rjesenje, potpoglavlje, slika, bodovi, tip_zadatka, slika_zadana,
+    # ponudjeni_odgovori, uputa) - kod ispita s puno duplikata (npr. ponovna obrada već
+    # unesenog ispita) to je vrlo brzo probijalo limit (429 "Quota exceeded"). Sve te
+    # izmjene sad idu u JEDAN ws_zadaci.batch_update() poziv na kraju cijele funkcije -
+    # bez obzira koliko duplikata ima u ovoj obradi, to je i dalje samo JEDAN write zahtjev
+    # (plus jedan za append_rows), umjesto potencijalno stotina.
+    _sheet_naziv_za_raspon = "'" + ws_zadaci.title.replace("'", "''") + "'"
+
+    def _puni_raspon(bare_range):
+        return f"{_sheet_naziv_za_raspon}!{bare_range}"
+
+    sva_azuriranja_polja = []
 
     for z in zadaci:
         norm_novi = _normalize_za_usporedbu(z.get("tekst_zadatka_latex", ""))
@@ -676,33 +691,51 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
             rjesenje_novo = z.get("rjesenje", "")
             if rjesenje_novo:
                 c1, c2 = _col_letter("rjesenje"), _col_letter("tip_rjesenja_izvor")
-                ws_zadaci.update(range_name=f"{c1}{najbolji_redak}:{c2}{najbolji_redak}", values=[[
-                    rjesenje_novo, "sluzbeno", z.get("tip_rjesenja_izvor", ""),
-                ]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c1}{najbolji_redak}:{c2}{najbolji_redak}"),
+                    "values": [[rjesenje_novo, "sluzbeno", z.get("tip_rjesenja_izvor", "")]],
+                })
             if z.get("potpoglavlje", ""):
                 c = _col_letter("potpoglavlje")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("potpoglavlje", "")]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("potpoglavlje", "")]],
+                })
             if z.get("slika_putanja", ""):
                 c = _col_letter("slika_putanja")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("slika_putanja", "")]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("slika_putanja", "")]],
+                })
             if z.get("max_bodovi", ""):
                 c = _col_letter("max_bodovi")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("max_bodovi", "")]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("max_bodovi", "")]],
+                })
             if z.get("tip_zadatka", ""):
                 c = _col_letter("tip_zadatka")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("tip_zadatka", "")]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("tip_zadatka", "")]],
+                })
             if z.get("slika_zadana", ""):
                 c = _col_letter("slika_zadana")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("slika_zadana", "")]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("slika_zadana", "")]],
+                })
             if z.get("ponudjeni_odgovori"):
                 c = _col_letter("ponudjeni_odgovori")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[" || ".join(z.get("ponudjeni_odgovori", []))]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"),
+                    "values": [[" || ".join(z.get("ponudjeni_odgovori", []))]],
+                })
             if z.get("konacan_odgovor", ""):
                 c = _col_letter("konacan_odgovor")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("konacan_odgovor", "")]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("konacan_odgovor", "")]],
+                })
             if z.get("uputa", ""):
                 c = _col_letter("uputa")
-                ws_zadaci.update(range_name=f"{c}{najbolji_redak}", values=[[z.get("uputa", "")]])
+                sva_azuriranja_polja.append({
+                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("uputa", "")]],
+                })
             if log:
                 znak = "📄" if isti_naziv else "🔤"
                 log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
@@ -735,5 +768,10 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
 
     if novi_redovi:
         ws_zadaci.append_rows(novi_redovi)
+
+    if sva_azuriranja_polja:
+        # JEDAN poziv za SVE izmjene duplikata iz ove obrade - vidi obrazloženje gore
+        # (rješava "Quota exceeded... Write requests per minute" grešku).
+        ws_zadaci.batch_update(sva_azuriranja_polja)
 
     return broj_dodanih, broj_azuriranih
