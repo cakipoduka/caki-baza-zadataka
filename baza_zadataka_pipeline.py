@@ -401,6 +401,21 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     raw_text = "".join(b.text for b in response.content if b.type == "text").strip()
     raw_text = re.sub(r"^```(json)?", "", raw_text).strip()
     raw_text = re.sub(r"```$", "", raw_text).strip()
+    # Ukloni "nevidljive" unicode znakove (BOM, zero-width space i sl.) koje obično .strip()
+    # NE smatra whitespaceom - jedan takav znak na samom početku dovoljan je da json.loads
+    # padne s "Expecting value: line 1 column 1 (char 0)" iako raw_text izgleda neprazan.
+    raw_text = raw_text.strip("﻿​‌‍")
+
+    if raw_text and not raw_text.startswith(("[", "{")):
+        # Claude je (unatoč uputi da odgovori ISKLJUČIVO JSON-om) ipak dodao neki uvodni tekst
+        # prije same JSON liste (npr. "Evo JSON odgovora:\n[...]") - potraži prvu '[' i odbaci
+        # sve prije nje, umjesto da cijeli poziv propadne zbog par riječi viška na početku.
+        prvi_zagrada = raw_text.find("[")
+        if prvi_zagrada > 0:
+            if log:
+                log(f"⚠️ Claudeov odgovor sadrži tekst prije JSON liste "
+                    f"('{raw_text[:prvi_zagrada].strip()[:80]}') - odbacujem taj uvod.")
+            raw_text = raw_text[prvi_zagrada:]
 
     if not raw_text:
         # "Expecting value: line 1 column 1 (char 0)" iz json.loads() uvijek znači BAŠ ovo -
