@@ -12,6 +12,7 @@ import re
 import io
 import json
 import time
+import shutil
 import difflib
 import requests
 import anthropic
@@ -36,6 +37,13 @@ ZADACI_HEADERS = [
     "status_provjere", "skenirano", "pretext_permalink",
     "tip_zadatka", "slika_zadana", "ponudjeni_odgovori", "konacan_odgovor",
     "uputa",
+    # 🆕 Ručni redoslijed zadatka UNUTAR svog potpoglavlja, za PreTeXt izlaz (Korak 3.1) -
+    # broj (preporučeno u razmacima od 10: 10, 20, 30... da se kasnije da ubaciti zadatak
+    # između dva postojeća bez pretipkavanja svih brojeva). Prazno = ide na kraj svoje
+    # tezina-grupe (vidi _redoslijed_u_potpoglavlju_sort_key). DODAN NA KRAJ popisa (ne
+    # umetnut u sredinu) da se ne pomakne stupac postojećim retcima u već popunjenom
+    # Sheetu - fizički dodaj kao NOVI zadnji stupac u tabu 'Zadaci', ne umeći ga.
+    "redoslijed_u_potpoglavlju",
 ]
 
 
@@ -271,6 +279,285 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
         popis = ", ".join(p for p, _ in stavke)
         lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {popis}")
     return "\n".join(lines)
+
+
+# --- PreTeXt XML generiranje (Korak 3.1) ---
+#
+# Prebačeno iz Colab bilježnice (Faza 1, 1.9.2026.) da postoji JEDAN izvor istine za ovu
+# logiku (i za ZADACI_HEADERS shemu koju koristi) umjesto dvije ručno sinkronizirane kopije.
+# Colab sad UVOZI ove funkcije iz ovog javnog repoa (vidi bootstrap ćeliju u Koraku 3.1) i
+# lokalno drži samo pokreni_pretext_build() - taj dio ostaje Colab-only jer čita/piše na
+# disk montiran preko Google Drivea (LATEX_BAZA_ROOT) i poziva pravi `pretext` CLI/xelatex
+# u kasnijim koracima (3.2, 3.3), što ne pripada lagano hostanoj Streamlit aplikaciji.
+#
+# VAŽNO ako mijenjaš ove funkcije: nakon push-a na GitHub, Colab mora ponovno pokrenuti
+# bootstrap ćeliju (pip install --force-reinstall) da povuče novu verziju - pip inače
+# može zadržati već instaliranu (staru) verziju iz iste sesije.
+
+def _sanitize_id(text):
+    text = re.sub(r"[^a-zA-Z0-9_\-]", "-", text)
+    if not text or not text[0].isalpha():
+        text = "z-" + text
+    return text
+
+
+def _sanitize_filename(text):
+    text = re.sub(r"[^a-zA-Z0-9_]+", "_", text.strip())
+    return text.strip("_")
+
+
+def _normalizuj_ostatke_ocr_escapinga(text):
+    r"""Mathpix/LaTeX OCR često ostavlja stray backslash-escape za obične tekstualne znakove
+    (\% umjesto %, \_ umjesto _) koji NISU LaTeX naredbe - samo su ostatak sirovog OCR-a.
+    PreTeXt sam ispravno eskejpa % i _ za LaTeX izlaz, pa ako mu proslijedimo VEĆ eskejpanu
+    verziju, dobijemo dupli/vidljivi backslash u izlazu. Očisti prije daljnje obrade."""
+    if text is None:
+        return ""
+    text = str(text)
+    text = re.sub(r"\\%", "%", text)
+    text = re.sub(r"\\_", "_", text)
+    return text
+
+
+def _xml_escape(text):
+    if text is None:
+        return ""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def _latex_to_pretext_math(text):
+    # Zamijeni $...$ (inline LaTeX) u <m>...</m> (PreTeXt inline math oznaka).
+    # Osnovna konverzija - ne hvata ugniježđene $ znakove unutar $...$.
+    return re.sub(r"\$([^$]+)\$", r"<m>\1</m>", text)
+
+
+def _pretext_text(raw_text):
+    return _latex_to_pretext_math(_xml_escape(_normalizuj_ostatke_ocr_escapinga(raw_text)))
+
+
+def _izgleda_kao_recenica(raw):
+    """Heuristika: ako sadrži razmak I ima više slova nego brojeva/simbola, vjerojatno je
+    obična rečenica (npr. 'ne može se odrediti'), a ne matematički izraz."""
+    if " " not in raw:
+        return False
+    slova = sum(c.isalpha() for c in raw)
+    ostalo = len(raw) - slova
+    return slova > ostalo
+
+
+def _pretext_math_or_text(raw):
+    r"""Za polja poput ponudjeni_odgovori/konacan_odgovor koja NISU dosljedno omotana u
+    $...$ (za razliku od tekst_zadatka_latex): ako već sadrži $, ponašaj se kao _pretext_text.
+    INAČE: DEFAULT je matematika (čak i jednostavan izraz poput '3x-9' bez ^/_/\ znakova -
+    ranija verzija je to promašila kao 'obični tekst', što je u PDF izlazu gubilo prijelom
+    retka u <ol> listi), OSIM ako izraz 'izgleda kao rečenica' (ima razmake, pretežno slova) -
+    npr. 'ne može se odrediti' - tada ostaje običan tekst."""
+    if raw is None:
+        return ""
+    raw = _normalizuj_ostatke_ocr_escapinga(str(raw))
+    if "$" in raw:
+        return _pretext_text(raw)
+    if _izgleda_kao_recenica(raw):
+        return _xml_escape(raw)
+    return f"<m>{_xml_escape(raw)}</m>"
+
+
+# Težina: sortiranje unutar potpoglavlja (lako -> srednje -> tesko) + vizualna oznaka
+# [izvor, boja+težina] na početku svakog zadatka. Nepoznata/prazna težina ide na KRAJ
+# grupe (99) da ne poremeti poredak lakši->teži, umjesto da nasumično upadne u sredinu.
+_TEZINA_REDOSLIJED = {"lako": 0, "srednje": 1, "tesko": 2, "teško": 2}
+
+
+def _tezina_sort_key(row):
+    t = (row.get("tezina") or "").strip().lower()
+    return _TEZINA_REDOSLIJED.get(t, 99)
+
+
+# Ručni redoslijed UNUTAR svake tezina-grupe (30+ zadataka po potpoglavlju se više ne
+# slažu proizvoljnim redoslijedom unosa u bazu - vidi polje redoslijed_u_potpoglavlju i
+# stranicu "Redoslijed zadataka po potpoglavlju" u baza_zadataka_app.py). Prazna/nevaljana
+# vrijednost ide na KRAJ svoje tezina-grupe (velik broj) umjesto da nasumično upadne u sredinu.
+def _redoslijed_u_potpoglavlju_sort_key(row):
+    v = (row.get("redoslijed_u_potpoglavlju") or "").strip()
+    if not v:
+        return 1_000_000.0
+    try:
+        return float(v.replace(",", "."))
+    except ValueError:
+        return 1_000_000.0
+
+
+def _puni_sort_key(row):
+    """Kombinirani ključ za sortiranje zadataka unutar jedne (pot)sekcije: prvo težina
+    (lako -> srednje -> tesko), PA unutar iste težine ručni redoslijed_u_potpoglavlju."""
+    return (_tezina_sort_key(row), _redoslijed_u_potpoglavlju_sort_key(row))
+
+
+_TEZINA_OZNAKA = {
+    "lako": "🟢 lagano",
+    "srednje": "🟠 srednje",
+    "tesko": "🔴 teško",
+    "teško": "🔴 teško",
+}
+
+
+def _oznaka_izvor_tezina(row):
+    """Gradi prefiks '[izvor, 🟢 lagano] ' ispred teksta zadatka. Boja ide preko emoji
+    kruga (radi identično u HTML izlazu bez diranja PreTeXt/CSS teme - PreTeXt namjerno
+    ne dopušta proizvoljan inline style po zadatku, boje idu isključivo kroz CSS klase teme).
+
+    Naziv izvora ovisi o izvor_tip (4 moguće vrijednosti u Sheetu: matura, zbirka,
+    udzbenik, vlastiti_materijal):
+    - "matura"            -> "matura <godina>" (npr. "matura 2010")
+    - "zbirka"            -> "zbirka" (bez konkretnog naziva)
+    - "udzbenik" / "vlastiti_materijal" (i sve ostalo/nepoznato) -> BEZ naziva izvora,
+      prikazuje se samo težina."""
+    izvor_tip = (row.get("izvor_tip") or "").strip().lower()
+    godina = (row.get("godina") or "").strip()
+    tezina_raw = (row.get("tezina") or "").strip().lower()
+    tezina_txt = _TEZINA_OZNAKA.get(tezina_raw, tezina_raw)
+
+    izvor_txt = ""
+    if izvor_tip == "matura":
+        izvor_txt = f"matura {godina}".strip() if godina else "matura"
+    elif izvor_tip == "zbirka":
+        izvor_txt = "zbirka"
+    # "udzbenik", "vlastiti_materijal" i sve ostalo -> izvor_txt ostaje prazan (samo težina)
+
+    dijelovi = [d for d in [izvor_txt, tezina_txt] if d]
+    if not dijelovi:
+        return ""
+    return f"[{', '.join(dijelovi)}] "
+
+
+def _build_exercise_lines(row, images_dir_abs, slike_izvor_dir):
+    """Gradi <exercise> XML za jedan redak. Ako zadatak ima sliku, kopira je iz
+    02_SLIKE/ u 03_PRETEXT_IZVOR/images/ i referencira relativno. Za visestruki_izbor
+    koristi strukturirano polje ponudjeni_odgovori (umjesto sirovog teksta A/B/C/D).
+    Vraća (lines, slika_kopirana_bool)."""
+    zid = _sanitize_id(f"zad-{row.get('id', '')}")
+    tekst = _pretext_text(row.get('tekst_zadatka_latex', ''))
+    oznaka = _xml_escape(_oznaka_izvor_tezina(row))
+    rjesenje = (row.get('rjesenje') or '').strip()
+    video_url = (row.get('video_url') or '').strip()
+    slika_putanja = (row.get('slika_putanja') or '').strip()
+    tip_zadatka = (row.get('tip_zadatka') or '').strip()
+    ponudjeni_odgovori_raw = (row.get('ponudjeni_odgovori') or '').strip()
+    konacan_odgovor = (row.get('konacan_odgovor') or '').strip()
+    uputa = (row.get('uputa') or '').strip()
+
+    lines = []
+    lines.append(f'      <exercise xml:id="{zid}">')
+    lines.append(f'        <statement>')
+    lines.append(f'          <p>{oznaka}{tekst}</p>')
+
+    slika_ok = False
+    if slika_putanja:
+        # slika_putanja je SAMO naziv datoteke (izravna referenca, ispravljeno u Koraku 3) -
+        # puni izvor je 02_SLIKE/<naziv>, kopiramo u 03_PRETEXT_IZVOR/images/<naziv>.
+        naziv_datoteke = os.path.basename(slika_putanja)
+        izvorna = os.path.join(slike_izvor_dir, naziv_datoteke)
+        if os.path.exists(izvorna):
+            shutil.copyfile(izvorna, os.path.join(images_dir_abs, naziv_datoteke))
+            slika_ok = True
+            lines.append(f'          <image source="images/{_xml_escape(naziv_datoteke)}" width="70%"/>')
+        else:
+            print(f"    ⚠️ Slika nije pronađena na disku za zadatak #{row.get('id', '')}: {izvorna}")
+
+    if tip_zadatka == "visestruki_izbor" and ponudjeni_odgovori_raw:
+        opcije = [o.strip() for o in ponudjeni_odgovori_raw.split("||") if o.strip()]
+        lines.append('          <ol marker="A.">')
+        for opcija in opcije:
+            lines.append(f'            <li><p>{_pretext_math_or_text(opcija)}</p></li>')
+        lines.append('          </ol>')
+
+    lines.append(f'        </statement>')
+
+    if uputa:
+        # <hint> mora doći NAKON </statement> i PRIJE <solution> po PreTeXt shemi.
+        lines.append(f'        <hint>')
+        lines.append(f'          <p>{_pretext_math_or_text(uputa)}</p>')
+        lines.append(f'        </hint>')
+
+    if rjesenje:
+        lines.append(f'        <solution>')
+        if tip_zadatka == "visestruki_izbor" and konacan_odgovor:
+            lines.append(f'          <p>Točan odgovor: {_pretext_math_or_text(konacan_odgovor)}</p>')
+        lines.append(f'          <p>{_pretext_math_or_text(rjesenje)}</p>')
+        lines.append(f'        </solution>')
+    elif konacan_odgovor:
+        lines.append(f'        <solution>')
+        lines.append(f'          <p>Odgovor: {_pretext_math_or_text(konacan_odgovor)}</p>')
+        lines.append(f'        </solution>')
+
+    if video_url:
+        lines.append(f'        <video youtube="{_xml_escape(video_url)}"/>')
+    lines.append(f'      </exercise>')
+    return lines, slika_ok
+
+
+def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir):
+    """Vraća (lines, broj_slika) - unutrašnji sadržaj BEZ vanjskog <article>/<title> omota:
+    ako je potpoglavlja_redoslijed zadan, grupira zadatke u <section> po potpoglavlju
+    (redoslijedom iz šifrarnika; zadaci bez prepoznatog potpoglavlja idu u 'Ostalo' na kraju);
+    inače stavlja sve ravno u jedan <exercises> blok."""
+    lines = []
+    broj_slika = 0
+
+    if not potpoglavlja_redoslijed:
+        lines.append('    <exercises>')
+        for row in sorted(zadaci_redovi, key=_puni_sort_key):
+            ex_lines, slika_ok = _build_exercise_lines(row, images_dir_abs, slike_izvor_dir)
+            lines.extend(ex_lines)
+            broj_slika += 1 if slika_ok else 0
+        lines.append('    </exercises>')
+        return lines, broj_slika
+
+    po_potpoglavlju = {}
+    for row in zadaci_redovi:
+        potpoglavlje = (row.get('potpoglavlje') or '').strip()
+        po_potpoglavlju.setdefault(potpoglavlje, []).append(row)
+
+    poznati = [p for p, _ in potpoglavlja_redoslijed]
+    redoslijed_kljuceva = [p for p in poznati if p in po_potpoglavlju]
+    for p in po_potpoglavlju:  # potpoglavlja koja postoje u zadacima, ali NISU u šifrarniku
+        if p and p not in redoslijed_kljuceva:
+            redoslijed_kljuceva.append(p)
+    if "" in po_potpoglavlju:  # zadaci bez ikakvog potpoglavlja - uvijek zadnji
+        redoslijed_kljuceva.append("")
+
+    for potpoglavlje in redoslijed_kljuceva:
+        grupa = po_potpoglavlju[potpoglavlje]
+        naslov_sekcije = potpoglavlje if potpoglavlje else "Ostalo (bez dodijeljenog potpoglavlja)"
+        sec_id = _sanitize_id(f"{xml_id_root}-{potpoglavlje or 'ostalo'}")
+        lines.append(f'    <section xml:id="{sec_id}">')
+        lines.append(f'      <title>{_xml_escape(naslov_sekcije)}</title>')
+        lines.append('      <exercises>')
+        for row in sorted(grupa, key=_puni_sort_key):
+            ex_lines, slika_ok = _build_exercise_lines(row, images_dir_abs, slike_izvor_dir)
+            lines.extend(ex_lines)
+            broj_slika += 1 if slika_ok else 0
+        lines.append('      </exercises>')
+        lines.append('    </section>')
+
+    return lines, broj_slika
+
+
+def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir, potpoglavlja_redoslijed=None):
+    """Gradi samostalan PreTeXt dokument: <pretext><article>...</article></pretext>
+    (root mora biti <pretext> po PreTeXt shemi - ranija verzija je to preskakala)."""
+    inner_lines, broj_slika = _build_inner_content(
+        zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir)
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>',
+             f'  <article xml:id="{_sanitize_id(xml_id_root)}">',
+             f'    <title>{_xml_escape(naslov)}</title>']
+    lines.extend(inner_lines)
+    lines.append('  </article>')
+    lines.append('</pretext>')
+    return "\n".join(lines), broj_slika
 
 
 # --- Log obrade (upisuje se u Sheet, NE samo u Streamlit session_state) ---
@@ -784,6 +1071,7 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
                 " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
                 z.get("uputa", ""),
+                "",  # redoslijed_u_potpoglavlju - postavlja se ručno kasnije (stranica u appu)
             ]
             novi_redovi.append(row)
             broj_dodanih += 1
