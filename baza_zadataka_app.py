@@ -8,6 +8,9 @@ Stranice (navigacija u sidebaru):
 - 📄 Obradi novi ispit  - originalni pipeline (PDF -> baza)
 - ✏️ Uredi zadatak - pretraga + ispravak teksta/rješenja/upute, kategorije/cjeline/
   potpoglavlja i slike za postojeći zadatak, sve na jednom mjestu
+- 📑 Redoslijed zadataka po potpoglavlju - ručno određivanje redoslijeda kojim se zadaci
+  prikazuju unutar jednog potpoglavlja u generiranom PreTeXt skriptu (polje
+  redoslijed_u_potpoglavlju, sekundarni ključ nakon težine iz Koraka 3.1)
 - 🔍 Zadaci za provjeru - pregled zadataka koje je Claude označio za ručnu provjeru
 """
 import json
@@ -909,6 +912,162 @@ def stranica_zadaci_za_provjeru():
 
 
 # ============================================================
+# Stranica: Redoslijed zadataka po potpoglavlju
+# ============================================================
+#
+# Kontekst: Korak 3.1 (PreTeXt build, Colab) grupira zadatke po potpoglavlju i unutar
+# svake grupe ih sortira po `tezina` (lako -> srednje -> tesko). Kako baza raste (36
+# maturalnih rokova x ~40-50 zadataka), zadaci ISTE težine unutar istog potpoglavlja su se
+# ređali proizvoljnim redoslijedom unosa u bazu (2015. i 2024. izmiješano). Ova stranica
+# dodaje SEKUNDARNI ključ - `redoslijed_u_potpoglavlju` (broj; prazno = na kraj svoje
+# tezina-grupe) - koji Korak 3.1 mora primjenjivati NAKON grupiranja po težini. Vidi
+# _redoslijed_u_potpoglavlju_sort_key i primjenu u _build_inner_content u bilježnici.
+
+_TEZINA_OZNAKA_UI = {"lako": "🟢", "srednje": "🟠", "tesko": "🔴", "teško": "🔴"}
+_TEZINA_REDOSLIJED_UI = {"lako": 0, "srednje": 1, "tesko": 2, "teško": 2}
+
+
+def _redoslijed_sort_key(vrijednost: str) -> float:
+    """Prazna/nevaljana vrijednost ide na KRAJ svoje težina-grupe (velik broj) umjesto da
+    nasumično upadne u sredinu - isto načelo koje Korak 3.1 mora koristiti kod PreTeXt builda,
+    da se prikaz ovdje poklapa sa stvarnim izlazom."""
+    vrijednost = (vrijednost or "").strip()
+    if not vrijednost:
+        return 1_000_000.0
+    try:
+        return float(vrijednost)
+    except ValueError:
+        return 1_000_000.0
+
+
+def stranica_redoslijed_zadataka():
+    st.title("📑 Redoslijed zadataka po potpoglavlju")
+    st.caption(
+        "Odredi kojim redoslijedom se zadaci prikazuju unutar JEDNOG potpoglavlja u generiranom "
+        "PreTeXt skriptu (Korak 3.1). Prikaz ispod odgovara stvarnom izlazu: zadaci se prvo "
+        "grupiraju po težini (🟢 lako → 🟠 srednje → 🔴 teško), a TEK unutar iste težine sortiraju "
+        "po broju koji upišeš dolje (manji broj = ranije; prazno = ide na kraj svoje grupe). "
+        "Preporuka: koristi razmake od 10 (10, 20, 30…) da kasnije možeš ubaciti zadatak "
+        "između dva postojeća bez pretipkavanja svih brojeva."
+    )
+
+    if st.button("🔄 Osvježi popis zadataka", key="osvjezi_redoslijed"):
+        _ucitaj_zadatke_za_pretragu.clear()
+
+    headers, redovi = _ucitaj_zadatke_za_pretragu()
+    idx = {h: i for i, h in enumerate(headers)}
+
+    if "redoslijed_u_potpoglavlju" not in idx:
+        st.error(
+            "Stupac 'redoslijed_u_potpoglavlju' još ne postoji u tabu 'Zadaci'. Dodaj ga kao "
+            "NOVI ZADNJI stupac (zaglavlje točno: `redoslijed_u_potpoglavlju`, iza `uputa`) - "
+            "vidi ZADACI_HEADERS u baza_zadataka_pipeline.py i u Colab bilježnici (Korak 0)."
+        )
+        return
+
+    _, potpoglavlja_po_cjelini = _ucitaj_sifrarnik()
+    if not potpoglavlja_po_cjelini:
+        st.warning("Šifrarnik potpoglavlja je prazan - popuni tab 'Sifrarnik_potpoglavlja' prvo.")
+        return
+
+    cjelina = st.selectbox("Cjelina", sorted(potpoglavlja_po_cjelini.keys()), key="redoslijed_cjelina")
+    potpoglavlja = [p for p, _ in potpoglavlja_po_cjelini.get(cjelina, []) if p]
+    if not potpoglavlja:
+        st.info("Ova cjelina nema definirana potpoglavlja u šifrarniku.")
+        return
+    potpoglavlje = st.selectbox("Potpoglavlje", potpoglavlja, key="redoslijed_potpoglavlje")
+
+    stavke = [
+        (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
+        if _get_polje(row, idx, "cjelina").strip() == cjelina
+        and _get_polje(row, idx, "potpoglavlje").strip() == potpoglavlje
+    ]
+    if not stavke:
+        st.info("Nema zadataka u ovoj kombinaciji cjelina/potpoglavlje.")
+        return
+
+    # Isti poredak kao stvarni PreTeXt izlaz Koraka 3.1: težina, PA redoslijed_u_potpoglavlju.
+    def _prikaz_sort_key(par):
+        _, row = par
+        tezina_key = _TEZINA_REDOSLIJED_UI.get((_get_polje(row, idx, "tezina") or "").strip().lower(), 99)
+        return (tezina_key, _redoslijed_sort_key(_get_polje(row, idx, "redoslijed_u_potpoglavlju")))
+
+    stavke.sort(key=_prikaz_sort_key)
+
+    st.caption(f"{len(stavke)} zadataka u **{cjelina} → {potpoglavlje}**. Poredak ispod = poredak u izlazu.")
+
+    c = _col_letter("redoslijed_u_potpoglavlju")
+
+    if st.button(
+        "🔢 Popuni prazne (10, 20, 30… prema trenutnom prikazu)", key="auto_redoslijed",
+        help="Dira SAMO zadatke koji još nemaju upisan redoslijed - postojeće vrijednosti ostaju netaknute.",
+    ):
+        azuriranja = []
+        broj = 10
+        for broj_retka, row in stavke:
+            if not _get_polje(row, idx, "redoslijed_u_potpoglavlju").strip():
+                azuriranja.append({"range": f"{c}{broj_retka}", "values": [[broj]]})
+            broj += 10
+        if azuriranja:
+            with st.spinner("Upisujem..."):
+                ws_zadaci.batch_update(azuriranja)
+            st.success(f"✅ Popunjeno {len(azuriranja)} praznih vrijednosti.")
+            _ucitaj_zadatke_za_pretragu.clear()
+            st.rerun()
+        else:
+            st.info("Sve stavke već imaju upisan redoslijed - nema što popuniti.")
+
+    st.divider()
+
+    with st.form("forma_redoslijeda"):
+        unosi = {}
+        for broj_retka, row in stavke:
+            oznaka_tezine = _TEZINA_OZNAKA_UI.get((_get_polje(row, idx, "tezina") or "").strip().lower(), "⚪")
+            fragment = _get_polje(row, idx, "tekst_zadatka_latex")[:80]
+            c1, c2 = st.columns([1, 5])
+            with c1:
+                unosi[broj_retka] = st.text_input(
+                    "Redoslijed", value=_get_polje(row, idx, "redoslijed_u_potpoglavlju").strip(),
+                    key=f"redoslijed_{broj_retka}", label_visibility="collapsed", placeholder="npr. 20",
+                )
+            with c2:
+                st.caption(
+                    f"{oznaka_tezine} #{_get_polje(row, idx, 'id')} "
+                    f"({_get_polje(row, idx, 'godina') or '—'}) — {fragment}..."
+                )
+        spremi = st.form_submit_button("💾 Spremi poredak", type="primary")
+
+    if spremi:
+        azuriranja = []
+        nevaljano = []
+        for broj_retka, row in stavke:
+            nova_str = unosi[broj_retka].strip()
+            if nova_str:
+                try:
+                    float(nova_str.replace(",", "."))
+                except ValueError:
+                    nevaljano.append((broj_retka, nova_str))
+                    continue
+            postojeci = _get_polje(row, idx, "redoslijed_u_potpoglavlju").strip()
+            if nova_str != postojeci:
+                azuriranja.append({"range": f"{c}{broj_retka}", "values": [[nova_str]]})
+
+        if nevaljano:
+            st.error(
+                "Ovo nisu valjani brojevi (nisu spremljeni, ostalo je sve ostalo): "
+                + ", ".join(f"redak {r}: '{v}'" for r, v in nevaljano)
+            )
+        if azuriranja:
+            with st.spinner("Spremam..."):
+                ws_zadaci.batch_update(azuriranja)
+            st.success(f"✅ Spremljeno {len(azuriranja)} izmjena.")
+            _ucitaj_zadatke_za_pretragu.clear()
+            st.rerun()
+        elif not nevaljano:
+            st.info("Nema izmjena za spremiti.")
+
+
+# ============================================================
 # Navigacija
 # ============================================================
 
@@ -917,6 +1076,7 @@ stranica = st.sidebar.radio(
     [
         "📄 Obradi novi ispit",
         "✏️ Uredi zadatak",
+        "📑 Redoslijed zadataka po potpoglavlju",
         "🔍 Zadaci za provjeru",
     ],
 )
@@ -925,5 +1085,7 @@ if stranica == "📄 Obradi novi ispit":
     stranica_obradi_ispit()
 elif stranica == "✏️ Uredi zadatak":
     stranica_uredi_zadatak()
+elif stranica == "📑 Redoslijed zadataka po potpoglavlju":
+    stranica_redoslijed_zadataka()
 else:
     stranica_zadaci_za_provjeru()
