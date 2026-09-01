@@ -309,6 +309,23 @@ def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
 
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
+def _ocisti_zadatke(zadaci, log=None):
+    """Zadrži SAMO elemente koji su zapravo JSON objekti (dict) - svaki pravi zadatak
+    je objekt s poljima poput tekst_zadatka_latex, kategorija, itd. Ako je Claudeov
+    odgovor (ili neka od strategija spašavanja iznad) proizveo listu u kojoj se
+    zabunom našao string/broj/None umjesto objekta (npr. dio uvodnog teksta koji je
+    slučajno bio valjan JSON, poput kratkog citata u navodnicima), takav element bi
+    kasnije srušio obradu s "AttributeError: 'str' object has no attribute 'get'" -
+    umjesto toga ga ovdje tiho izbacimo (uz upozorenje) i nastavimo sa stvarnim zadacima."""
+    ocisceno = [z for z in zadaci if isinstance(z, dict)]
+    odbaceno = len(zadaci) - len(ocisceno)
+    if odbaceno and log:
+        log(f"⚠️ Odbačeno {odbaceno} stavki iz Claudeovog odgovora koje nisu JSON objekt "
+            f"zadatka (vjerojatno ostatak uvodnog teksta koji je slučajno valjan JSON) - "
+            f"preostalih {len(ocisceno)} zadataka je u redu.")
+    return ocisceno
+
+
 def _parsiraj_uzastopne_json_vrijednosti(raw_text: str, log=None):
     """Pokušaj pročitati raw_text kao NIZ UZASTOPNIH JSON vrijednosti (jedna za drugom,
     bez zajedničke omotne liste), umjesto jedne JSON liste. Rješava slučaj kad Claude
@@ -369,6 +386,8 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
             if log:
                 log("⚠️ Claudeov odgovor je JEDAN objekt bez omotne JSON liste - tretiram ga kao listu od 1 zadatka.")
             rezultat = [rezultat]
+        if isinstance(rezultat, list):
+            rezultat = _ocisti_zadatke(rezultat, log=log)
         return rezultat, True
     except json.JSONDecodeError as e:
         if log:
@@ -383,6 +402,7 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
             if kandidat.count("{") == kandidat.count("}"):
                 try:
                     zadaci = json.loads(kandidat + "]", strict=False)
+                    zadaci = _ocisti_zadatke(zadaci, log=log)
                     if log:
                         log(f"✅ Spašeno {len(zadaci)} zadataka prije mjesta greške "
                             f"(ostatak ovog Claude odgovora je odbačen kao nepouzdan).")
@@ -394,7 +414,7 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
         # Prvi pokušaj (gore) ne pomaže kad raw_text nije "lista koja je odrezana", nego
         # jedan ili više ODVOJENIH JSON objekata (npr. "{...}\n{...}") - tipičan uzrok
         # greške "Extra data". Probaj drugu strategiju prije nego potpuno odustanemo.
-        zadaci_iz_niza = _parsiraj_uzastopne_json_vrijednosti(raw_text, log=log)
+        zadaci_iz_niza = _ocisti_zadatke(_parsiraj_uzastopne_json_vrijednosti(raw_text, log=log), log=log)
         if zadaci_iz_niza:
             if log:
                 log(f"✅ Spašeno {len(zadaci_iz_niza)} zadataka čitanjem kao niz odvojenih "
