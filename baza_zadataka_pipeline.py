@@ -44,11 +44,16 @@ ZADACI_HEADERS = [
     # umetnut u sredinu) da se ne pomakne stupac postojećim retcima u već popunjenom
     # Sheetu - fizički dodaj kao NOVI zadnji stupac u tabu 'Zadaci', ne umeći ga.
     "redoslijed_u_potpoglavlju",
+    # 🆕 (§27.3) "da"/"ne" (prazno = "ne") - zadatak koji profesor rješava UŽIVO na satu kao
+    # demonstraciju (rješenje odmah vidljivo kao dio izlaganja), NE kao vježbu za samostalno
+    # rješavanje. U PreTeXt izlazu (Korak 3.1) takvi zadaci idu u <example> blok, prikazan
+    # PRIJE <exercises> unutar istog potpoglavlja, i izostavljeni su iz <exercises> (ne
+    # dupliciraju se na oba mjesta). DODAN NA KRAJ popisa (isti razlog kao
+    # redoslijed_u_potpoglavlju gore) - fizički dodaj kao NOVI zadnji stupac u tabu 'Zadaci'.
+    "koristi_kao_primjer_na_satu",
 ]
 
-
 SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
-
 
 def prikazi_opcije_markdown(ponudjeni_odgovori) -> str:
     """Vraća Markdown string za PREGLED ponuđenih odgovora (višestruki izbor) u Streamlit
@@ -67,7 +72,6 @@ def prikazi_opcije_markdown(ponudjeni_odgovori) -> str:
         slovo = SLOVA_PONUDJENIH_ODGOVORA[i] if i < len(SLOVA_PONUDJENIH_ODGOVORA) else str(i + 1)
         dijelovi.append(f"**{slovo})** {prikaz}")
     return "  ".join(dijelovi)
-
 
 def _col_letter(field_name: str, headers=ZADACI_HEADERS) -> str:
     """Pretvori naziv polja u slovo(a) Sheet stupca (0-indeksirano -> A, B, ... Z, AA, AB, ...).
@@ -118,20 +122,16 @@ privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, kljucne
 KRITIČNO za ispravnost JSON-a: ako bilo koje polje sadrži navodnik (npr. zapis kuta u stupnjevima/minutama/sekundama poput 12°34'56", oznaka inča, ili citat unutar teksta zadatka), TAJ NAVODNIK MORAŠ escapeati kao \" unutar JSON stringa. Isto vrijedi za obrnutu kosu crtu (\\ -> \\\\) i nove retke unutar stringa (koristi \\n, ne stvarni prijelom retka). Jedan neescapean navodnik ili obrnuta kosa crta učini CIJELI JSON odgovor neispravnim i cijela obrada zadataka propadne - budi posebno pažljiv kod zapisa kutova i LaTeX izraza.
 """
 
-
 # --- Google auth (Service Account) ---
 
 def get_credentials(service_account_info: dict):
     return Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 
-
 def get_gspread_client(service_account_info: dict):
     return gspread.authorize(get_credentials(service_account_info))
 
-
 def get_drive_service(service_account_info: dict):
     return build("drive", "v3", credentials=get_credentials(service_account_info))
-
 
 # --- Mathpix ---
 
@@ -146,20 +146,17 @@ def mathpix_process_pdf(pdf_bytes: bytes, filename: str, app_id: str, app_key: s
     response.raise_for_status()
     return response.json()["pdf_id"]
 
-
 def mathpix_check_status(pdf_id: str, app_id: str, app_key: str) -> dict:
     headers = {"app_id": app_id, "app_key": app_key}
     response = requests.get(f"https://api.mathpix.com/v3/pdf/{pdf_id}", headers=headers)
     response.raise_for_status()
     return response.json()
 
-
 def mathpix_get_markdown(pdf_id: str, app_id: str, app_key: str) -> str:
     headers = {"app_id": app_id, "app_key": app_key}
     response = requests.get(f"https://api.mathpix.com/v3/pdf/{pdf_id}.md", headers=headers)
     response.raise_for_status()
     return response.text
-
 
 def mathpix_wait_and_get(pdf_id, app_id, app_key, poll_seconds=3, timeout_seconds=300, log=None) -> str:
     waited = 0
@@ -176,13 +173,10 @@ def mathpix_wait_and_get(pdf_id, app_id, app_key, poll_seconds=3, timeout_second
         waited += poll_seconds
     raise TimeoutError("Mathpix obrada nije završila u zadanom vremenu.")
 
-
 SLIKA_EKSTENZIJE = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
-
 
 def je_slika(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() in SLIKA_EKSTENZIJE
-
 
 def mathpix_process_image(image_bytes: bytes, filename: str, app_id: str, app_key: str) -> str:
     """OCR JEDNE slike preko Mathpixovog /v3/text endpointa. Za razliku od /v3/pdf,
@@ -198,7 +192,6 @@ def mathpix_process_image(image_bytes: bytes, filename: str, app_id: str, app_ke
     response.raise_for_status()
     return response.json().get("text", "")
 
-
 def mathpix_ocr_datoteka(file_bytes: bytes, filename: str, app_id: str, app_key: str, log=None) -> str:
     """Jedinstvena ulazna točka za OCR JEDNE datoteke, PDF ILI slika - grana se
     automatski po ekstenziji imena datoteke. PDF ide na asinkroni /v3/pdf (pošalji
@@ -211,7 +204,6 @@ def mathpix_ocr_datoteka(file_bytes: bytes, filename: str, app_id: str, app_key:
         log(f"📄 Šaljem PDF na Mathpix ({filename})...")
     pdf_id = mathpix_process_pdf(file_bytes, filename, app_id, app_key)
     return mathpix_wait_and_get(pdf_id, app_id, app_key, log=log)
-
 
 def mathpix_ocr_vise_datoteka(datoteke, app_id, app_key, log=None):
     """OCR liste uploadanih datoteka (bilo koja kombinacija PDF-ova i slika) i
@@ -227,14 +219,12 @@ def mathpix_ocr_vise_datoteka(datoteke, app_id, app_key, log=None):
             log(f"✅ OCR gotov ({f.name}, {len(tekst)} znakova)")
     return "\n\n---\n\n".join(dijelovi) if dijelovi else None
 
-
 # --- Šifrarnik ---
 
 def build_sifrarnik_text(sheet) -> str:
     ws = sheet.worksheet("Sifrarnik_cjelina")
     rows = ws.get_all_values()[1:]
     return "\n".join(f"- Kategorija: {r[0]} | Cjelina: {r[1]}" for r in rows if len(r) >= 2 and r[0])
-
 
 def get_sifrarnik_cjelina(sheet) -> dict:
     """Vraća {cjelina: kategorija}, čitano iz taba 'Sifrarnik_cjelina' (stupci: kategorija,
@@ -250,7 +240,6 @@ def get_sifrarnik_cjelina(sheet) -> dict:
             continue
         kategorija_po_cjelini[r[1].strip()] = r[0].strip()
     return kategorija_po_cjelini
-
 
 def get_potpoglavlja_po_cjelini(sheet) -> dict:
     """Vraća {cjelina: [(potpoglavlje, redoslijed), ...]} sortirano po redoslijedu,
@@ -271,7 +260,6 @@ def get_potpoglavlja_po_cjelini(sheet) -> dict:
         po_cjelini[cjelina].sort(key=lambda t: t[1])
     return po_cjelini
 
-
 def build_sifrarnik_potpoglavlja_text(sheet) -> str:
     po_cjelini = get_potpoglavlja_po_cjelini(sheet)
     lines = []
@@ -279,7 +267,6 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
         popis = ", ".join(p for p, _ in stavke)
         lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {popis}")
     return "\n".join(lines)
-
 
 # --- PreTeXt XML generiranje (Korak 3.1) ---
 #
@@ -300,11 +287,9 @@ def _sanitize_id(text):
         text = "z-" + text
     return text
 
-
 def _sanitize_filename(text):
     text = re.sub(r"[^a-zA-Z0-9_]+", "_", text.strip())
     return text.strip("_")
-
 
 def _normalizuj_ostatke_ocr_escapinga(text):
     r"""Mathpix/LaTeX OCR često ostavlja stray backslash-escape za obične tekstualne znakove
@@ -318,7 +303,6 @@ def _normalizuj_ostatke_ocr_escapinga(text):
     text = re.sub(r"\\_", "_", text)
     return text
 
-
 def _xml_escape(text):
     if text is None:
         return ""
@@ -327,16 +311,13 @@ def _xml_escape(text):
             .replace("<", "&lt;")
             .replace(">", "&gt;"))
 
-
 def _latex_to_pretext_math(text):
     # Zamijeni $...$ (inline LaTeX) u <m>...</m> (PreTeXt inline math oznaka).
     # Osnovna konverzija - ne hvata ugniježđene $ znakove unutar $...$.
     return re.sub(r"\$([^$]+)\$", r"<m>\1</m>", text)
 
-
 def _pretext_text(raw_text):
     return _latex_to_pretext_math(_xml_escape(_normalizuj_ostatke_ocr_escapinga(raw_text)))
-
 
 def _izgleda_kao_recenica(raw):
     """Heuristika: ako sadrži razmak I ima više slova nego brojeva/simbola, vjerojatno je
@@ -346,7 +327,6 @@ def _izgleda_kao_recenica(raw):
     slova = sum(c.isalpha() for c in raw)
     ostalo = len(raw) - slova
     return slova > ostalo
-
 
 def _pretext_math_or_text(raw):
     r"""Za polja poput ponudjeni_odgovori/konacan_odgovor koja NISU dosljedno omotana u
@@ -364,17 +344,14 @@ def _pretext_math_or_text(raw):
         return _xml_escape(raw)
     return f"<m>{_xml_escape(raw)}</m>"
 
-
 # Težina: sortiranje unutar potpoglavlja (lako -> srednje -> tesko) + vizualna oznaka
 # [izvor, boja+težina] na početku svakog zadatka. Nepoznata/prazna težina ide na KRAJ
 # grupe (99) da ne poremeti poredak lakši->teži, umjesto da nasumično upadne u sredinu.
 _TEZINA_REDOSLIJED = {"lako": 0, "srednje": 1, "tesko": 2, "teško": 2}
 
-
 def _tezina_sort_key(row):
     t = (row.get("tezina") or "").strip().lower()
     return _TEZINA_REDOSLIJED.get(t, 99)
-
 
 # Ručni redoslijed UNUTAR svake tezina-grupe (30+ zadataka po potpoglavlju se više ne
 # slažu proizvoljnim redoslijedom unosa u bazu - vidi polje redoslijed_u_potpoglavlju i
@@ -389,12 +366,10 @@ def _redoslijed_u_potpoglavlju_sort_key(row):
     except ValueError:
         return 1_000_000.0
 
-
 def _puni_sort_key(row):
     """Kombinirani ključ za sortiranje zadataka unutar jedne (pot)sekcije: prvo težina
     (lako -> srednje -> tesko), PA unutar iste težine ručni redoslijed_u_potpoglavlju."""
     return (_tezina_sort_key(row), _redoslijed_u_potpoglavlju_sort_key(row))
-
 
 _TEZINA_OZNAKA = {
     "lako": "🟢 lagano",
@@ -402,7 +377,6 @@ _TEZINA_OZNAKA = {
     "tesko": "🔴 teško",
     "teško": "🔴 teško",
 }
-
 
 def _oznaka_izvor_tezina(row):
     """Gradi prefiks '[izvor, 🟢 lagano] ' ispred teksta zadatka. Boja ide preko emoji
@@ -432,13 +406,18 @@ def _oznaka_izvor_tezina(row):
         return ""
     return f"[{', '.join(dijelovi)}] "
 
+def _je_primjer_na_satu(row):
+    """True ako je zadatak označen kao 'primjer na satu' (koristi_kao_primjer_na_satu="da") -
+    ide u <example> blok umjesto u <exercises>, vidi _build_inner_content."""
+    return (row.get("koristi_kao_primjer_na_satu") or "").strip().lower() == "da"
 
-def _build_exercise_lines(row, images_dir_abs, slike_izvor_dir):
-    """Gradi <exercise> XML za jedan redak. Ako zadatak ima sliku, kopira je iz
-    02_SLIKE/ u 03_PRETEXT_IZVOR/images/ i referencira relativno. Za visestruki_izbor
-    koristi strukturirano polje ponudjeni_odgovori (umjesto sirovog teksta A/B/C/D).
-    Vraća (lines, slika_kopirana_bool)."""
-    zid = _sanitize_id(f"zad-{row.get('id', '')}")
+
+def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
+    """Zajednička jezgra za <exercise> I <example>: <statement> (tekst + opcionalna slika +
+    opcije za visestruki_izbor), <hint>, <solution>, <video>. Vraća (lines, slika_ok) BEZ
+    vanjskog <exercise>/<example> omota - pozivatelj (_build_exercise_lines ili
+    _build_example_lines) dodaje xml:id i ispravan naziv taga. Izdvojeno iz stare
+    _build_exercise_lines (§27.3) da <example> ne duplicira istu logiku ručno."""
     tekst = _pretext_text(row.get('tekst_zadatka_latex', ''))
     oznaka = _xml_escape(_oznaka_izvor_tezina(row))
     rjesenje = (row.get('rjesenje') or '').strip()
@@ -450,7 +429,6 @@ def _build_exercise_lines(row, images_dir_abs, slike_izvor_dir):
     uputa = (row.get('uputa') or '').strip()
 
     lines = []
-    lines.append(f'      <exercise xml:id="{zid}">')
     lines.append(f'        <statement>')
     lines.append(f'          <p>{oznaka}{tekst}</p>')
 
@@ -494,26 +472,72 @@ def _build_exercise_lines(row, images_dir_abs, slike_izvor_dir):
         lines.append(f'        </solution>')
 
     if video_url:
+        # Napomena §27.4 (sljedeći korak, NE dio ove izmjene): ovdje se video_url i dalje
+        # koristi sirovo - ekstrakcija YouTube ID-a iz pune URL adrese dolazi u §27.4.
         lines.append(f'        <video youtube="{_xml_escape(video_url)}"/>')
-    lines.append(f'      </exercise>')
+
     return lines, slika_ok
 
+
+def _build_exercise_lines(row, images_dir_abs, slike_izvor_dir):
+    """Gradi <exercise> XML za jedan redak - VJEŽBA koju učenik rješava sam (rješenje
+    sakriveno/na klik u HTML izlazu). Vraća (lines, slika_kopirana_bool)."""
+    zid = _sanitize_id(f"zad-{row.get('id', '')}")
+    body_lines, slika_ok = _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir)
+    lines = [f'      <exercise xml:id="{zid}">'] + body_lines + ['      </exercise>']
+    return lines, slika_ok
+
+
+def _build_example_lines(row, images_dir_abs, slike_izvor_dir):
+    """Gradi <example> XML za jedan redak - riješen PRIMJER koji profesor demonstrira NA SATU
+    (rješenje se prikazuje kao dio izlaganja, ne kao skriveni odgovor). Semantički odvojeno od
+    <exercise>. Ide direktno kao dijete <section>, BEZ <exercises> omota (PreTeXt shema:
+    <example> ne treba wrapper, može ih biti više uzastopnih). Zaseban ID-prefiks ('prim-'
+    umjesto 'zad-') da isti redak, ako se ikad pojavi na oba mjesta greškom, ne izazove
+    xml:id sudar. Vraća (lines, slika_kopirana_bool)."""
+    zid = _sanitize_id(f"prim-{row.get('id', '')}")
+    body_lines, slika_ok = _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir)
+    lines = [f'      <example xml:id="{zid}">'] + body_lines + ['      </example>']
+    return lines, slika_ok
 
 def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir):
     """Vraća (lines, broj_slika) - unutrašnji sadržaj BEZ vanjskog <article>/<title> omota:
     ako je potpoglavlja_redoslijed zadan, grupira zadatke u <section> po potpoglavlju
     (redoslijedom iz šifrarnika; zadaci bez prepoznatog potpoglavlja idu u 'Ostalo' na kraju);
-    inače stavlja sve ravno u jedan <exercises> blok."""
+    inače stavlja sve ravno u jedan <exercises> blok (plus eventualni <example> blokovi ispred).
+
+    §27.3: unutar svake grupe (cijela baza BEZ sekcija, ili jedno potpoglavlje), zadaci s
+    koristi_kao_primjer_na_satu="da" idu KAO <example> blokovi PRIJE <exercises>, i NISU
+    ponovljeni unutar <exercises> - svaki zadatak je ili primjer ILI vježba, nikad oboje."""
     lines = []
     broj_slika = 0
 
-    if not potpoglavlja_redoslijed:
-        lines.append('    <exercises>')
-        for row in sorted(zadaci_redovi, key=_puni_sort_key):
+    def _dodaj_primjere_i_vjezbe(redovi, base_indent):
+        """Za jednu grupu redaka: prvo <example> blokovi (primjeri na satu, sortirano po
+        _puni_sort_key kao i sve ostalo), pa <exercises> blok s ostatkom (isto sortirano).
+        Vraća (lines, broj_slika)."""
+        unutra = []
+        slika_brojac = 0
+        primjeri = sorted([r for r in redovi if _je_primjer_na_satu(r)], key=_puni_sort_key)
+        vjezbe = sorted([r for r in redovi if not _je_primjer_na_satu(r)], key=_puni_sort_key)
+
+        for row in primjeri:
+            ex_lines, slika_ok = _build_example_lines(row, images_dir_abs, slike_izvor_dir)
+            unutra.extend(ex_lines)
+            slika_brojac += 1 if slika_ok else 0
+
+        unutra.append(f'{base_indent}<exercises>')
+        for row in vjezbe:
             ex_lines, slika_ok = _build_exercise_lines(row, images_dir_abs, slike_izvor_dir)
-            lines.extend(ex_lines)
-            broj_slika += 1 if slika_ok else 0
-        lines.append('    </exercises>')
+            unutra.extend(ex_lines)
+            slika_brojac += 1 if slika_ok else 0
+        unutra.append(f'{base_indent}</exercises>')
+        return unutra, slika_brojac
+
+    if not potpoglavlja_redoslijed:
+        dio, s = _dodaj_primjere_i_vjezbe(zadaci_redovi, '    ')
+        lines.extend(dio)
+        broj_slika += s
         return lines, broj_slika
 
     po_potpoglavlju = {}
@@ -535,16 +559,12 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
         sec_id = _sanitize_id(f"{xml_id_root}-{potpoglavlje or 'ostalo'}")
         lines.append(f'    <section xml:id="{sec_id}">')
         lines.append(f'      <title>{_xml_escape(naslov_sekcije)}</title>')
-        lines.append('      <exercises>')
-        for row in sorted(grupa, key=_puni_sort_key):
-            ex_lines, slika_ok = _build_exercise_lines(row, images_dir_abs, slike_izvor_dir)
-            lines.extend(ex_lines)
-            broj_slika += 1 if slika_ok else 0
-        lines.append('      </exercises>')
+        dio, s = _dodaj_primjere_i_vjezbe(grupa, '      ')
+        lines.extend(dio)
+        broj_slika += s
         lines.append('    </section>')
 
     return lines, broj_slika
-
 
 def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir, potpoglavlja_redoslijed=None):
     """Gradi samostalan PreTeXt dokument: <pretext><article>...</article></pretext>
@@ -559,7 +579,6 @@ def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, sl
     lines.append('</pretext>')
     return "\n".join(lines), broj_slika
 
-
 # --- Log obrade (upisuje se u Sheet, NE samo u Streamlit session_state) ---
 #
 # st.session_state i on-screen log (st.empty().text(...)) žive samo dok proces same
@@ -571,7 +590,6 @@ def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, sl
 
 LOG_OBRADE_HEADERS = ["vrijeme", "izvor_naziv", "faza", "status", "poruka"]
 
-
 def _get_or_create_log_worksheet(sheet, naziv="Log_obrade"):
     try:
         return sheet.worksheet(naziv)
@@ -579,7 +597,6 @@ def _get_or_create_log_worksheet(sheet, naziv="Log_obrade"):
         ws = sheet.add_worksheet(title=naziv, rows=2000, cols=len(LOG_OBRADE_HEADERS))
         ws.append_row(LOG_OBRADE_HEADERS)
         return ws
-
 
 def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
     """Upiši jedan redak u 'Log_obrade' tab - vidi obrazloženje gore. Namjerno je
@@ -592,7 +609,6 @@ def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
     except Exception as e:
         if log:
             log(f"⚠️ Upis u Log_obrade nije uspio (samo evidencija - obrada se nastavlja): {e}")
-
 
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
@@ -611,7 +627,6 @@ def _ocisti_zadatke(zadaci, log=None):
             f"zadatka (vjerojatno ostatak uvodnog teksta koji je slučajno valjan JSON) - "
             f"preostalih {len(ocisceno)} zadataka je u redu.")
     return ocisceno
-
 
 def _parsiraj_uzastopne_json_vrijednosti(raw_text: str, log=None):
     """Pokušaj pročitati raw_text kao NIZ UZASTOPNIH JSON vrijednosti (jedna za drugom,
@@ -646,7 +661,6 @@ def _parsiraj_uzastopne_json_vrijednosti(raw_text: str, log=None):
             break
         idx = kraj
     return zadaci
-
 
 def _spasi_djelomican_json_popis(raw_text: str, log=None):
     """Pokušaj standardni json.loads(); ako Claudeov odgovor NIJE ispravan JSON
@@ -711,7 +725,6 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
         if log:
             log("❌ Nije uspjelo spasiti nijedan zadatak iz ovog odgovora - obrada ovog dijela propada.")
         raise
-
 
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
                                 sifrarnik_potpoglavlja_text="", model="claude-sonnet-5",
@@ -818,7 +831,6 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
         z["tekst_zadatka_mathjax"] = latex_text.replace("\\\\", "<br>")
     return zadaci
 
-
 # --- Slike (preuzimanje s Mathpixa, upload na Drive) ---
 
 def upload_image_to_drive(drive_service, folder_id: str, filename: str, image_bytes: bytes, mimetype: str = "image/png"):
@@ -828,7 +840,6 @@ def upload_image_to_drive(drive_service, folder_id: str, filename: str, image_by
         body=file_metadata, media_body=media, fields="id,webViewLink", supportsAllDrives=True
     ).execute()
     return created.get("id"), created.get("webViewLink")
-
 
 def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
                             drive_service, slike_folder_id, log=None):
@@ -861,12 +872,10 @@ def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
             z["slika_putanja"] = z.get("slika_putanja", "")
     return zadaci
 
-
 # --- Upis u Sheet (s detekcijom duplikata po sličnosti teksta) ---
 
 def _normalize_za_usporedbu(text):
     return re.sub(r"\s+", " ", (text or "").strip().lower())
-
 
 def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
     """
@@ -890,7 +899,6 @@ def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
     except Exception as e:
         if log:
             log(f"⚠️ Backup nije uspio (baza je i dalje sigurna, samo bez dodatne kopije): {e}")
-
 
 def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza,
                                 skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None,
