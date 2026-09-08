@@ -944,11 +944,13 @@ def stranica_redoslijed_zadataka():
     st.title("📑 Redoslijed zadataka po potpoglavlju")
     st.caption(
         "Odredi kojim redoslijedom se zadaci prikazuju unutar JEDNOG potpoglavlja u generiranom "
-        "PreTeXt skriptu (Korak 3.1). Prikaz ispod odgovara stvarnom izlazu: zadaci se prvo "
-        "grupiraju po težini (🟢 lako → 🟠 srednje → 🔴 teško), a TEK unutar iste težine sortiraju "
-        "po broju koji upišeš dolje (manji broj = ranije; prazno = ide na kraj svoje grupe). "
-        "Preporuka: koristi razmake od 10 (10, 20, 30…) da kasnije možeš ubaciti zadatak "
-        "između dva postojeća bez pretipkavanja svih brojeva."
+        "PreTeXt skriptu (Korak 3.1), i koji zadaci idu kao '📌 primjer na satu' (riješen primjer "
+        "koji profesor demonstrira, prikazuje se PRIJE vježbi, s odmah vidljivim rješenjem) umjesto "
+        "u standardne vježbe (rješenje sakriveno/na klik). Prikaz ispod odgovara stvarnom izlazu: "
+        "zadaci se prvo grupiraju po težini (🟢 lako → 🟠 srednje → 🔴 teško), a TEK unutar iste "
+        "težine sortiraju po broju koji upišeš dolje (manji broj = ranije; prazno = ide na kraj "
+        "svoje grupe). Preporuka: koristi razmake od 10 (10, 20, 30…) da kasnije možeš ubaciti "
+        "zadatak između dva postojeća bez pretipkavanja svih brojeva."
     )
 
     if st.button("🔄 Osvježi popis zadataka", key="osvjezi_redoslijed"):
@@ -962,6 +964,13 @@ def stranica_redoslijed_zadataka():
             "Stupac 'redoslijed_u_potpoglavlju' još ne postoji u tabu 'Zadaci'. Dodaj ga kao "
             "NOVI ZADNJI stupac (zaglavlje točno: `redoslijed_u_potpoglavlju`, iza `uputa`) - "
             "vidi ZADACI_HEADERS u baza_zadataka_pipeline.py i u Colab bilježnici (Korak 0)."
+        )
+        return
+    if "koristi_kao_primjer_na_satu" not in idx:
+        st.error(
+            "Stupac 'koristi_kao_primjer_na_satu' još ne postoji u tabu 'Zadaci'. Dodaj ga kao "
+            "NOVI ZADNJI stupac (zaglavlje točno: `koristi_kao_primjer_na_satu`, iza "
+            "`redoslijed_u_potpoglavlju`) - vidi ZADACI_HEADERS u baza_zadataka_pipeline.py."
         )
         return
 
@@ -995,8 +1004,14 @@ def stranica_redoslijed_zadataka():
     stavke.sort(key=_prikaz_sort_key)
 
     st.caption(f"{len(stavke)} zadataka u **{cjelina} → {potpoglavlje}**. Poredak ispod = poredak u izlazu.")
+    st.caption(
+        "📌 Čekiraj 'Primjer' za zadatke koje profesor rješava UŽIVO na satu (idu u <example> "
+        "blok prije vježbi, rješenje odmah vidljivo) - ostali idu kao standardne vježbe "
+        "(<exercises>, rješenje sakriveno/na klik)."
+    )
 
-    c = _col_letter("redoslijed_u_potpoglavlju")
+    c_redoslijed = _col_letter("redoslijed_u_potpoglavlju")
+    c_primjer = _col_letter("koristi_kao_primjer_na_satu")
 
     if st.button(
         "🔢 Popuni prazne (10, 20, 30… prema trenutnom prikazu)", key="auto_redoslijed",
@@ -1006,7 +1021,7 @@ def stranica_redoslijed_zadataka():
         broj = 10
         for broj_retka, row in stavke:
             if not _get_polje(row, idx, "redoslijed_u_potpoglavlju").strip():
-                azuriranja.append({"range": f"{c}{broj_retka}", "values": [[broj]]})
+                azuriranja.append({"range": f"{c_redoslijed}{broj_retka}", "values": [[broj]]})
             broj += 10
         if azuriranja:
             with st.spinner("Upisujem..."):
@@ -1021,21 +1036,28 @@ def stranica_redoslijed_zadataka():
 
     with st.form("forma_redoslijeda"):
         unosi = {}
+        primjer_unosi = {}
         for broj_retka, row in stavke:
             oznaka_tezine = _TEZINA_OZNAKA_UI.get((_get_polje(row, idx, "tezina") or "").strip().lower(), "⚪")
             fragment = _get_polje(row, idx, "tekst_zadatka_latex")[:80]
-            c1, c2 = st.columns([1, 5])
+            c1, c2, c3 = st.columns([1, 1, 5])
             with c1:
                 unosi[broj_retka] = st.text_input(
                     "Redoslijed", value=_get_polje(row, idx, "redoslijed_u_potpoglavlju").strip(),
                     key=f"redoslijed_{broj_retka}", label_visibility="collapsed", placeholder="npr. 20",
                 )
             with c2:
+                primjer_unosi[broj_retka] = st.checkbox(
+                    "📌 Primjer",
+                    value=_get_polje(row, idx, "koristi_kao_primjer_na_satu").strip().lower() == "da",
+                    key=f"primjer_{broj_retka}",
+                )
+            with c3:
                 st.caption(
                     f"{oznaka_tezine} #{_get_polje(row, idx, 'id')} "
                     f"({_get_polje(row, idx, 'godina') or '—'}) — {fragment}..."
                 )
-        spremi = st.form_submit_button("💾 Spremi poredak", type="primary")
+        spremi = st.form_submit_button("💾 Spremi poredak i oznake", type="primary")
 
     if spremi:
         azuriranja = []
@@ -1050,7 +1072,12 @@ def stranica_redoslijed_zadataka():
                     continue
             postojeci = _get_polje(row, idx, "redoslijed_u_potpoglavlju").strip()
             if nova_str != postojeci:
-                azuriranja.append({"range": f"{c}{broj_retka}", "values": [[nova_str]]})
+                azuriranja.append({"range": f"{c_redoslijed}{broj_retka}", "values": [[nova_str]]})
+
+            nova_primjer_str = "da" if primjer_unosi[broj_retka] else "ne"
+            postojeci_primjer = _get_polje(row, idx, "koristi_kao_primjer_na_satu").strip().lower() or "ne"
+            if nova_primjer_str != postojeci_primjer:
+                azuriranja.append({"range": f"{c_primjer}{broj_retka}", "values": [[nova_primjer_str]]})
 
         if nevaljano:
             st.error(
