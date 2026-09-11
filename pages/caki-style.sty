@@ -92,16 +92,30 @@
 % sequence" i cijelo kompajliranje padne (vidi CAKI_MASTER_BAZA §25.6). Ovo NIJE
 % problem kodiranja znakova (mojibake) - potvrdeno testom, \overparenAB nije
 % Unicode nego cisti ASCII LaTeX poziv nepostojece naredbe.
-% Rjesenje: \wideparen iz paketa yhmath je pravi matematicki akcent (radi
-% ispravno i s indeksima, npr. \wideparen{A_1B_1}, jer se primjenjuje na cijelu
-% matematicku grupu, ne kao odvojeni tekstualni okvir) - testirano da se
-% razvlaci i za dulje nizove slova (npr. ABCDEF). \overparen je ovdje
-% definiran kao ALIAS za \wideparen da postojeci/buduci tekst zadataka koji
-% koristi \overparen (naziv koji OCR/LLM ekstrakcija ocekivano proizvodi jer
-% "izgleda" kao standardna naredba) radi bez rucne izmjene svakog zadatka u
-% bazi.
-\RequirePackage{yhmath}
-\newcommand{\overparen}[1]{\wideparen{#1}}
+%
+% POPRAVAK v1 (prvi pokusaj, NAPUSTEN): paket "yhmath" (\wideparen) - ispravno
+% je radio LOKALNO, ali produkcijski TeX Live na serveru NEMA instaliran
+% yhmath ("! LaTeX Error: File 'yhmath.sty' not found.") - lokalni texlive u
+% test okruzenju ocito je bogatiji od produkcijskog, pa provjera "radi na
+% mom stroju" ovdje NIJE bila dovoljna. Naucena lekcija: ne uvoditi NOVE
+% CTAN pakete cija prisutnost na produkciji nije potvrdena.
+%
+% POPRAVAK v2 (trenutan, BEZ ijednog novog paketa): \overparen je definiran
+% RUCNO koristeci ISKLJUCIVO pakete koji su VEC dokazano ucitani i rade u
+% produkciji (graphicx - vec koristen za \includegraphics slika zadataka;
+% amssymb - vec ucitan, daje simbol \frown). Mjeri sirinu argumenta (\wd0),
+% pa simbol \frown rastegne (\resizebox) tocno na tu sirinu i podigne iznad
+% teksta (\rlap+\raisebox) - vizualno vrlo blizu yhmath rezultatu, radi i s
+% indeksima (npr. \overparen{A_1B_1}) jer se argument tipografski slaze u
+% zasebnom \hbox-u prije mjerenja, neovisno o vanjskom matematickom nacinu.
+\newcommand{\overparen}[1]{%
+    \begingroup
+    \setbox0=\hbox{$#1$}%
+    \ifdim\wd0<1.2em \wd0=1.2em\fi
+    \rlap{\raisebox{\ht0}[0pt][0pt]{\resizebox{\wd0}{0.85ex}{$\frown$}}}%
+    \box0
+    \endgroup
+}
 
 % --- 4. PALETA BOJA (Moderna, profesionalna i dinamična) ---
 \RequirePackage[table, xcdraw]{xcolor}
