@@ -284,6 +284,52 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
         lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {popis}")
     return "\n".join(lines)
 
+# --- Teorija po potpoglavlju (§27.2, 9.9.2026.) ---
+#
+# Jedan redak = jedna (cjelina, potpoglavlje) - tekst se prikazuje kao <introduction> na
+# početku sekcije tog potpoglavlja u PreTeXt izlazu (v. _build_introduction_lines niže,
+# poziva se iz _build_inner_content). Unos/uređivanje: pages/3_teorija.py.
+
+TEORIJA_HEADERS = [
+    "cjelina", "potpoglavlje", "tekst_teorije_latex", "video_url",
+    "geogebra_material_id", "zadnja_izmjena",
+]
+
+def get_or_create_worksheet(sheet, title: str, headers: list, rows: int = 500):
+    """Generička verzija _get_or_create_log_worksheet niže u ovoj datoteci - otvara tab po
+    nazivu, ili ga sama kreira (prazan, sa zaglavljem) ako još ne postoji. Koristi je i
+    pages/3_teorija.py (Streamlit) i Colab (Korak 3.1 bootstrap ćelija) - isti kod, dva pozivatelja."""
+    try:
+        return sheet.worksheet(title)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=title, rows=rows, cols=len(headers))
+        ws.append_row(headers)
+        return ws
+
+def get_teorija_po_potpoglavlju(sheet) -> dict:
+    """Vraća {(cjelina, potpoglavlje): {stupac: vrijednost, ...}} za sve retke u tabu
+    'Teorija_potpoglavlja' (auto-kreiran ako ne postoji - tad vraća {}, bez greške).
+    Retci bez i cjeline i potpoglavlja se preskaču (ne mogu se pridijeliti nijednoj sekciji)."""
+    ws = get_or_create_worksheet(sheet, "Teorija_potpoglavlja", TEORIJA_HEADERS)
+    all_values = ws.get_all_values()
+    if not all_values:
+        return {}
+    headers = all_values[0]
+    idx = {h: i for i, h in enumerate(headers)}
+
+    def _get(row, col):
+        i = idx.get(col)
+        return row[i] if i is not None and i < len(row) else ""
+
+    rezultat = {}
+    for row in all_values[1:]:
+        cjelina = _get(row, "cjelina").strip()
+        potpoglavlje = _get(row, "potpoglavlje").strip()
+        if not cjelina or not potpoglavlje:
+            continue
+        rezultat[(cjelina, potpoglavlje)] = {h: _get(row, h) for h in TEORIJA_HEADERS}
+    return rezultat
+
 # --- PreTeXt XML generiranje (Korak 3.1) ---
 #
 # Prebačeno iz Colab bilježnice (Faza 1, 1.9.2026.) da postoji JEDAN izvor istine za ovu
@@ -516,7 +562,32 @@ def _build_example_lines(row, images_dir_abs, slike_izvor_dir):
     lines = [f'      <example xml:id="{zid}">'] + body_lines + ['      </example>']
     return lines, slika_ok
 
-def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir):
+def _build_introduction_lines(teorija_row):
+    """Gradi <introduction> blok (§27.2) iz jednog retka Teorija_potpoglavlja (dict s
+    TEORIJA_HEADERS ključevima), ili None ako nema teksta (izostavlja se, bez greške).
+    Odlomci se dijele po praznom retku -> svaki odlomak zaseban <p>; $...$ matematika ide
+    kroz istu _pretext_text konverziju kao i tekst zadatka. Ako je video_url popunjen,
+    dodaje se <video> na kraju (isto sirovo kao kod zadataka - ekstrakcija ID-a je §27.4)."""
+    if not teorija_row:
+        return None
+    tekst = (teorija_row.get("tekst_teorije_latex") or "").strip()
+    if not tekst:
+        return None
+    video_url = (teorija_row.get("video_url") or "").strip()
+    lines = ['      <introduction>']
+    odlomci = re.split(r"\n\s*\n", tekst)
+    for odlomak in odlomci:
+        odlomak = odlomak.strip()
+        if not odlomak:
+            continue
+        lines.append(f'        <p>{_pretext_text(odlomak)}</p>')
+    if video_url:
+        lines.append(f'        <video youtube="{_xml_escape(video_url)}"/>')
+    lines.append('      </introduction>')
+    return lines
+
+def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir,
+                          cjelina=None, teorija_po_potpoglavlju=None):
     """Vraća (lines, broj_slika) - unutrašnji sadržaj BEZ vanjskog <article>/<title> omota:
     ako je potpoglavlja_redoslijed zadan, grupira zadatke u <section> po potpoglavlju
     (redoslijedom iz šifrarnika; zadaci bez prepoznatog potpoglavlja idu u 'Ostalo' na kraju);
@@ -524,7 +595,13 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
 
     §27.3: unutar svake grupe (cijela baza BEZ sekcija, ili jedno potpoglavlje), zadaci s
     koristi_kao_primjer_na_satu="da" idu KAO <example> blokovi PRIJE <exercises>, i NISU
-    ponovljeni unutar <exercises> - svaki zadatak je ili primjer ILI vježba, nikad oboje."""
+    ponovljeni unutar <exercises> - svaki zadatak je ili primjer ILI vježba, nikad oboje.
+
+    §27.2: ako su OBA cjelina i teorija_po_potpoglavlju zadana, svaka sekcija potpoglavlja
+    dobiva <introduction> na početku (prije <example>/<exercises>) AKO postoji unesena
+    teorija za taj par. Izostavljanje ovih parametara (stari pozivi) ponaša se identično
+    kao prije - unatrag kompatibilno. Vrijedi SAMO za sekcionirani slučaj (po potpoglavlju),
+    ne za neskecionirani blok niti za grupu bez potpoglavlja ("Ostalo")."""
     lines = []
     broj_slika = 0
 
@@ -575,6 +652,10 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
         sec_id = _sanitize_id(f"{xml_id_root}-{potpoglavlje or 'ostalo'}")
         lines.append(f'    <section xml:id="{sec_id}">')
         lines.append(f'      <title>{_xml_escape(naslov_sekcije)}</title>')
+        if cjelina and potpoglavlje and teorija_po_potpoglavlju:
+            intro_lines = _build_introduction_lines(teorija_po_potpoglavlju.get((cjelina, potpoglavlje)))
+            if intro_lines:
+                lines.extend(intro_lines)
         dio, s = _dodaj_primjere_i_vjezbe(grupa, '      ')
         lines.extend(dio)
         broj_slika += s
@@ -582,11 +663,14 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
 
     return lines, broj_slika
 
-def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir, potpoglavlja_redoslijed=None):
+def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir, potpoglavlja_redoslijed=None,
+                           cjelina=None, teorija_po_potpoglavlju=None):
     """Gradi samostalan PreTeXt dokument: <pretext><article>...</article></pretext>
-    (root mora biti <pretext> po PreTeXt shemi - ranija verzija je to preskakala)."""
+    (root mora biti <pretext> po PreTeXt shemi - ranija verzija je to preskakala).
+    cjelina/teorija_po_potpoglavlju: v. _build_inner_content (§27.2, opcionalno)."""
     inner_lines, broj_slika = _build_inner_content(
-        zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir)
+        zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir,
+        cjelina=cjelina, teorija_po_potpoglavlju=teorija_po_potpoglavlju)
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>',
              f'  <article xml:id="{_sanitize_id(xml_id_root)}">',
              f'    <title>{_xml_escape(naslov)}</title>']
