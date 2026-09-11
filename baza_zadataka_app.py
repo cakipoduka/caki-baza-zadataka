@@ -6,12 +6,14 @@ duplikata). Zamišljeno za suradnike koji ne trebaju koristiti Colab.
 
 Stranice (navigacija u sidebaru):
 - 📄 Obradi novi ispit  - originalni pipeline (PDF -> baza)
-- ✏️ Uredi zadatak - pretraga + ispravak teksta/rješenja/upute, kategorije/cjeline/
-  potpoglavlja i slike za postojeći zadatak, sve na jednom mjestu
+- 🔍✏️ Provjera i uređivanje zadataka - dvokolonski izbornik (11.9.2026., spojene bivše
+  zasebne stranice "Uredi zadatak" i "Zadaci za provjeru"): lijevo pretraga/popis za
+  provjeru, desno formular za uređivanje trenutno odabranog zadatka - da profesor ne
+  mora skakati između dvije stranice za tekst/rješenje/kategorizaciju/sliku i pregled
+  zadataka koje je Claude označio za ručnu provjeru.
 - 📑 Redoslijed zadataka po potpoglavlju - ručno određivanje redoslijeda kojim se zadaci
   prikazuju unutar jednog potpoglavlja u generiranom PreTeXt skriptu (polje
   redoslijed_u_potpoglavlju, sekundarni ključ nakon težine iz Koraka 3.1)
-- 🔍 Zadaci za provjeru - pregled zadataka koje je Claude označio za ručnu provjeru
 """
 import json
 import mimetypes
@@ -44,7 +46,7 @@ from baza_zadataka_pipeline import (
 # u pipeline.mathpix_ocr_datoteka() - ovdje samo dopuštamo oba u Streamlit file_upload widgetu.
 OCR_TIPOVI_DATOTEKA = ["pdf", "png", "jpg", "jpeg", "gif", "webp"]
 
-st.set_page_config(page_title="CAKI Matematika — Obrada ispita", page_icon="📚", layout="centered")
+st.set_page_config(page_title="CAKI Matematika — Obrada ispita", page_icon="📚", layout="wide")
 
 
 # --- Jednostavna zaštita lozinkom (protiv slučajnih posjetitelja s interneta, ne protiv suradnika) ---
@@ -270,7 +272,7 @@ def stranica_obradi_ispit():
 
 
 # ============================================================
-# Stranica 2: Uredi zadatak (tekst/rješenje/uputa, kategorizacija, slika)
+# Stranica 3 (desna kolona): Uredi zadatak (tekst/rješenje/uputa, kategorizacija, slika)
 # ============================================================
 
 @st.cache_data(ttl=300)
@@ -290,7 +292,7 @@ def _get_polje(row, idx, col):
 @st.cache_data(ttl=600)
 def _ucitaj_sifrarnik():
     """Šifrarnik cjelina (s pripadajućom kategorijom) i potpoglavlja po cjelini, za padajuće
-    izbornike u sekciji kategorizacije na stranici 'Uredi zadatak' - keširano 10 min (šifrarnik
+    izbornike u sekciji kategorizacije na stranici '🔍✏️ Provjera i uređivanje zadataka' - keširano 10 min (šifrarnik
     se mijenja mnogo rjeđe nego sama baza zadataka, otud dulji ttl nego kod _ucitaj_zadatke_za_pretragu)."""
     return get_sifrarnik_cjelina(sheet), get_potpoglavlja_po_cjelini(sheet)
 
@@ -432,45 +434,15 @@ def _prikazi_usporedbu(headers, redovi):
             st.rerun()
 
 
-def stranica_uredi_zadatak():
-    st.title("✏️ Uredi zadatak")
-    st.caption(
-        "Pronađi zadatak i sve na jednom mjestu ispravi: tekst pitanja, rješenje, kratki "
-        "odgovor, uputu (hint), kategoriju/cjelinu/potpoglavlje ako je zadatak pogrešno "
-        "klasificiran, i sliku - bez pisanja posebnih skripti za rubne slučajeve."
-    )
-
-    if st.button("🔄 Osvježi popis zadataka", key="osvjezi_uredi"):
-        _ucitaj_zadatke_za_pretragu.clear()
-
-    headers, redovi = _ucitaj_zadatke_za_pretragu()
-
-    usporedi = st.checkbox("🔀 Usporedi dva zadatka (npr. za pronalazak/spajanje duplikata)")
-    if usporedi:
-        _prikazi_usporedbu(headers, redovi)
-        return
-
-    upit = st.text_input("🔍 Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
-
-    if not upit.strip():
-        st.info("Upiši dio ID-a ili dio teksta zadatka da pronađeš zadatak koji želiš urediti.")
-        return
-
-    idx, podudaranja = _pretrazi_zadatke(headers, redovi, upit)
-
+def _forma_uredi_zadatak(row, broj_retka, idx):
+    """Desna kolona spojene stranice '🔍✏️ Provjera i uređivanje zadataka' (11.9.2026.) -
+    formular za uređivanje JEDNOG već odabranog zadatka: tekst/rješenje/uputa, ponuđeni
+    odgovori, kategorizacija, slika. Izdvojeno iz prijašnje samostalne stranica_uredi_zadatak()
+    u zasebnu funkciju da se poziva identično bez obzira odabire li se zadatak pretragom ili
+    klikom u popisu "Zadaci za provjeru" (obje su sad u lijevoj koloni iste stranice) - tijelo
+    formulara ispod je NEIZMIJENJENO u odnosu na prijašnju stranica_uredi_zadatak()."""
     def get(row, col):
         return _get_polje(row, idx, col)
-
-    if not podudaranja:
-        st.warning("Nema podudaranja. Pokušaj drugi pojam za pretragu.")
-        return
-
-    if len(podudaranja) == 30:
-        st.caption("Prikazano prvih 30 podudaranja - suzi pretragu ako ne vidiš traženi zadatak.")
-
-    broj_retka, row = st.selectbox(
-        "Odaberi zadatak", podudaranja, format_func=lambda par: _oznaci_zadatak(par, idx), key="odabir_uredi"
-    )
 
     st.caption(
         f"Kategorija: {get(row, 'kategorija') or '—'} · Cjelina: {get(row, 'cjelina') or '—'} · "
@@ -848,67 +820,130 @@ def stranica_uredi_zadatak():
 
 
 # ============================================================
-# Stranica 3: Zadaci za provjeru (status_provjere nije prazan)
+# Stranica 3: 🔍✏️ Provjera i uređivanje zadataka (spojeno 11.9.2026.)
 # ============================================================
+#
+# Spaja bivše dvije zasebne stranice ("✏️ Uredi zadatak" i "🔍 Zadaci za provjeru") u JEDAN
+# izbornik s dvije kolone jedna do druge - lijevo pretraga/popis za provjeru, desno formular
+# za uređivanje trenutno odabranog zadatka - da profesor ne mora skakati između dvije stranice
+# (kopirati ID iz jedne pa ga lijepiti u pretragu druge). Formular u desnoj koloni je
+# NEIZMIJENJEN kod (vidi _forma_uredi_zadatak iznad) - ova funkcija samo bira KOJI zadatak mu
+# se proslijedi, preko dijeljenog st.session_state["provjera_uredi_broj_retka"] koji postavljaju
+# ILI selectbox pretrage ILI gumb "✏️ Uredi →" u popisu za provjeru.
 
-def stranica_zadaci_za_provjeru():
-    st.title("🔍 Zadaci za provjeru")
+def stranica_provjera_i_uredi():
+    st.title("🔍✏️ Provjera i uređivanje zadataka")
     st.caption(
-        "Zadaci koje je Claude označio za ručnu provjeru tijekom OCR-a/strukturiranja "
-        "(npr. nesiguran simbol, nečitko napisan broj). Nakon što provjeriš i po potrebi "
-        "ispraviš zadatak (na stranici 'Uredi zadatak'), klikni '✅ Provjereno' da skineš oznaku."
+        "Lijevo: pretraži bilo koji zadatak, ili pregledaj popis zadataka koje je Claude "
+        "označio za ručnu provjeru tijekom OCR-a/strukturiranja. Desno: formular za "
+        "uređivanje trenutno odabranog zadatka - klikni zadatak lijevo da ga ovdje otvoriš."
     )
 
-    if st.button("🔄 Osvježi popis", key="osvjezi_provjera"):
+    if st.button("🔄 Osvježi popis zadataka", key="osvjezi_uredi_provjera"):
         _ucitaj_zadatke_za_pretragu.clear()
 
     headers, redovi = _ucitaj_zadatke_za_pretragu()
+
+    usporedi = st.checkbox("🔀 Usporedi dva zadatka (npr. za pronalazak/spajanje duplikata)")
+    if usporedi:
+        _prikazi_usporedbu(headers, redovi)
+        return
+
     idx = {h: i for i, h in enumerate(headers)}
 
     def get(row, col):
         return _get_polje(row, idx, col)
 
-    za_provjeru = [
-        (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
-        if get(row, "status_provjere").strip()
-    ]
+    if "provjera_uredi_broj_retka" not in st.session_state:
+        st.session_state["provjera_uredi_broj_retka"] = None
 
-    if not za_provjeru:
-        st.success("🎉 Trenutno nema zadataka za provjeru.")
-        return
+    col_lijevo, col_desno = st.columns([1, 1], gap="large")
 
-    st.info(f"Pronađeno **{len(za_provjeru)}** zadataka za provjeru.")
+    with col_lijevo:
+        st.subheader("🔍 Pretraga")
+        upit = st.text_input("Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
 
-    for broj_retka, row in za_provjeru:
-        naslov = f"⚠️ {get(row, 'id') or f'redak {broj_retka}'} — {get(row, 'status_provjere')}"
-        with st.expander(naslov):
-            st.caption(
-                f"Cjelina: {get(row, 'cjelina') or '—'} · Potpoglavlje: {get(row, 'potpoglavlje') or '—'} · "
-                f"Tip: {get(row, 'tip_zadatka') or '—'}"
-            )
-            st.write(get(row, "tekst_zadatka_latex") or "*(prazno)*")
-            if get(row, "rjesenje"):
-                st.markdown("**Rješenje:**")
-                st.write(get(row, "rjesenje"))
-            if get(row, "konacan_odgovor"):
-                st.markdown(f"**Konačan odgovor:** {get(row, 'konacan_odgovor')}")
+        if upit.strip():
+            _, podudaranja = _pretrazi_zadatke(headers, redovi, upit)
+            if not podudaranja:
+                st.warning("Nema podudaranja. Pokušaj drugi pojam za pretragu.")
+            else:
+                if len(podudaranja) == 30:
+                    st.caption("Prikazano prvih 30 podudaranja - suzi pretragu ako ne vidiš traženi zadatak.")
+                broj_odabran, _ = st.selectbox(
+                    "Odaberi zadatak", podudaranja, format_func=lambda par: _oznaci_zadatak(par, idx),
+                    key="odabir_uredi",
+                )
+                st.session_state["provjera_uredi_broj_retka"] = broj_odabran
+        else:
+            st.caption("Upiši dio ID-a ili dio teksta zadatka, ili odaberi zadatak iz popisa za provjeru ispod.")
 
-            st.caption(
-                f"Za ispravak teksta/rješenja: kopiraj ID `{get(row, 'id')}` i pretraži ga "
-                "na stranici '✏️ Uredi zadatak'."
-            )
+        st.divider()
+        st.subheader("⚠️ Zadaci za provjeru")
+        st.caption(
+            "Zadaci koje je Claude označio za ručnu provjeru tijekom OCR-a/strukturiranja "
+            "(npr. nesiguran simbol, nečitko napisan broj). Klikni '✏️ Uredi →' da zadatak "
+            "otvoriš u desnoj koloni, ili '✅ Provjereno' da skineš oznaku bez uređivanja."
+        )
 
-            if st.button("✅ Provjereno", type="primary", key=f"provjereno_{broj_retka}"):
-                c_status = _col_letter("status_provjere")
-                with st.spinner("Ažuriram..."):
-                    try:
-                        ws_zadaci.update(range_name=f"{c_status}{broj_retka}", values=[[""]])
-                    except Exception as e:
-                        st.error(f"Greška: {e}")
-                        st.stop()
-                st.success(f"✅ Označeno kao provjereno: {get(row, 'id')}")
-                _ucitaj_zadatke_za_pretragu.clear()
-                st.rerun()
+        za_provjeru = [
+            (broj_retka_p, row_p) for broj_retka_p, row_p in enumerate(redovi, start=2)
+            if get(row_p, "status_provjere").strip()
+        ]
+
+        if not za_provjeru:
+            st.success("🎉 Trenutno nema zadataka za provjeru.")
+        else:
+            st.info(f"Pronađeno **{len(za_provjeru)}** zadataka za provjeru.")
+
+            for broj_retka_p, row_p in za_provjeru:
+                naslov = f"⚠️ {get(row_p, 'id') or f'redak {broj_retka_p}'} — {get(row_p, 'status_provjere')}"
+                with st.expander(naslov):
+                    st.caption(
+                        f"Cjelina: {get(row_p, 'cjelina') or '—'} · Potpoglavlje: {get(row_p, 'potpoglavlje') or '—'} · "
+                        f"Tip: {get(row_p, 'tip_zadatka') or '—'}"
+                    )
+                    st.write(get(row_p, "tekst_zadatka_latex") or "*(prazno)*")
+                    if get(row_p, "rjesenje"):
+                        st.markdown("**Rješenje:**")
+                        st.write(get(row_p, "rjesenje"))
+                    if get(row_p, "konacan_odgovor"):
+                        st.markdown(f"**Konačan odgovor:** {get(row_p, 'konacan_odgovor')}")
+
+                    cp1, cp2 = st.columns(2)
+                    with cp1:
+                        if st.button("✏️ Uredi →", key=f"otvori_uredi_{broj_retka_p}"):
+                            st.session_state["provjera_uredi_broj_retka"] = broj_retka_p
+                            st.rerun()
+                    with cp2:
+                        if st.button("✅ Provjereno", type="primary", key=f"provjereno_{broj_retka_p}"):
+                            c_status = _col_letter("status_provjere")
+                            with st.spinner("Ažuriram..."):
+                                try:
+                                    ws_zadaci.update(range_name=f"{c_status}{broj_retka_p}", values=[[""]])
+                                except Exception as e:
+                                    st.error(f"Greška: {e}")
+                                    st.stop()
+                            st.success(f"✅ Označeno kao provjereno: {get(row_p, 'id')}")
+                            _ucitaj_zadatke_za_pretragu.clear()
+                            st.rerun()
+
+    with col_desno:
+        st.subheader("✏️ Uredi zadatak")
+        odabrani_broj_retka = st.session_state.get("provjera_uredi_broj_retka")
+        if not odabrani_broj_retka:
+            st.info("Odaberi zadatak lijevo (pretragom ili iz popisa za provjeru) da ga urediš ovdje.")
+        else:
+            _pozicija = odabrani_broj_retka - 2
+            if _pozicija < 0 or _pozicija >= len(redovi):
+                st.warning(
+                    "Odabrani zadatak trenutno nije dostupan (popis je u međuvremenu osvježen "
+                    "ili promijenjen) - odaberi ga ponovno lijevo."
+                )
+                st.session_state["provjera_uredi_broj_retka"] = None
+            else:
+                odabrani_row = redovi[_pozicija]
+                _forma_uredi_zadatak(odabrani_row, odabrani_broj_retka, idx)
 
 
 # ============================================================
@@ -1102,17 +1137,14 @@ stranica = st.sidebar.radio(
     "Stranica",
     [
         "📄 Obradi novi ispit",
-        "✏️ Uredi zadatak",
+        "🔍✏️ Provjera i uređivanje zadataka",
         "📑 Redoslijed zadataka po potpoglavlju",
-        "🔍 Zadaci za provjeru",
     ],
 )
 
 if stranica == "📄 Obradi novi ispit":
     stranica_obradi_ispit()
-elif stranica == "✏️ Uredi zadatak":
-    stranica_uredi_zadatak()
-elif stranica == "📑 Redoslijed zadataka po potpoglavlju":
-    stranica_redoslijed_zadataka()
+elif stranica == "🔍✏️ Provjera i uređivanje zadataka":
+    stranica_provjera_i_uredi()
 else:
-    stranica_zadaci_za_provjeru()
+    stranica_redoslijed_zadataka()
