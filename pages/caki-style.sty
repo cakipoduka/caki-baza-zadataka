@@ -44,33 +44,29 @@
 % test od desetak zadataka stane na 2 stranice A4, uz odvojeni list za
 % koncept/postupak koji NIJE dio ovog PDF-a) - default tcolorbox razmak
 % (~\baselineskip) trošio je vidljivo više prostora bez stvarne dobiti.
-\newtcolorbox{taskbox}[2][]{
+%
+% IZMJENA (11.9.2026., na izričit zahtjev): NEMA VIŠE plavog okvira (ruba)
+% oko zadatka niti odvojenog "boxed title" naslovnog pečata ("Zadatak N" u
+% bijelom tekstu na plavoj pozadini) - taskbox je sad samo blago posivljena
+% pozadina bez ruba (boxrule=0pt, colframe=colback da eventualni hairline
+% ostane nevidljiv). Oznaka "Zadatak N (X bod.)" više se NE gradi ovdje kroz
+% tcolorbox 'title=' mehanizam (koji je force-ao zaseban red/pečat) - sad je
+% to obični podebljani plavi tekst koji \zadatak/\zadatakbod ispisuju kao
+% PRVI dio tijela okvira, u ISTOM retku s tekstom zadatka (vidi te naredbe
+% niže) - otud je 'taskbox' okoliš sad samo [1][] (opcije stila), bez
+% obaveznog drugog argumenta za broj zadatka.
+\newtcolorbox{taskbox}[1][]{
     enhanced,
     colback=MathBgLight,
-    colframe=MathAccent,
+    colframe=MathBgLight,
+    boxrule=0pt,
     arc=4pt,
-    boxrule=1pt,
     left=12pt,
     right=12pt,
     top=6pt,
     bottom=6pt,
     before skip=2mm,
     after skip=2.2mm,
-    fonttitle=\bfseries\sffamily\color{white},
-    coltitle=white,
-    title={Zadatak #2},
-    attach boxed title to top left={xshift=10pt, yshift=-10pt},
-    boxed title style={
-        colback=MathAccent,
-        arc=3pt,
-        outer arc=3pt,
-        boxrule=0pt,
-        left=8pt,
-        right=8pt,
-        top=3pt,
-        bottom=3pt
-    },
-    drop fuzzy shadow=MathBorder,
     before upper={\raggedright},
     #1
 }
@@ -212,10 +208,13 @@
 
 % \zadatak{tekst}{video_url ili prazno} — broj se generira automatski
 % (globalni brojač), koristi taskbox dizajn; QR kod prikazan samo
-% ako je video_url zadan.
+% ako je video_url zadan. Oznaka "Zadatak N" je od 11.9.2026. podebljan
+% plavi tekst UMETNUT na početku tijela okvira (isti redak kao tekst
+% zadatka), ne poseban naslovni pečat - vidi napomenu uz taskbox gore.
 \newcommand{\zadatak}[2]{%
     \stepcounter{cakizadatak}%
-    \begin{taskbox}{\thecakizadatak}
+    \begin{taskbox}
+        {\bfseries\sffamily\color{MathAccent}Zadatak \thecakizadatak}~%
         \ifblank{#2}{%
             #1%
         }{%
@@ -300,12 +299,13 @@
 % listu za koncept, ne u ovaj PDF). Koristi se u Test Builder izlazu.
 \newcommand{\zadatakbod}[6]{%
     \stepcounter{cakizadatak}%
-    \def\cakiTitle{\thecakizadatak}%
-    \ifblank{#3}{}{\edef\cakiTitle{\thecakizadatak\space (#3\space bod.)}}%
-    \begin{taskbox}{\cakiTitle}
+    \def\cakiTitle{Zadatak \thecakizadatak}%
+    \ifblank{#3}{}{\edef\cakiTitle{Zadatak \thecakizadatak\space (#3\space bod.)}}%
+    \begin{taskbox}
         \ifblank{#6}{}{%
             \noindent{\scriptsize\sffamily\bfseries\color{MathSecondary} #6}\par\vspace{1mm}%
         }%
+        {\bfseries\sffamily\color{MathAccent}\cakiTitle}~%
         \ifblank{#2}{%
             #1%
         }{%
