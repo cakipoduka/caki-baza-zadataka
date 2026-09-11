@@ -1,4 +1,4 @@
-"""
+*"""
 CAKI Matematika - baza_zadataka_pipeline.py
 
 Jezgra pipelinea (Mathpix OCR, Claude strukturiranje, Google Sheets upis s
@@ -857,6 +857,35 @@ def upload_image_to_drive(drive_service, folder_id: str, filename: str, image_by
     ).execute()
     return created.get("id"), created.get("webViewLink")
 
+
+def upload_image_to_drive_with_retry(sa_info: dict, folder_id: str, filename: str, image_bytes: bytes,
+                                      mimetype: str = "image/png", pokusaji: int = 2):
+    """Isto kao upload_image_to_drive(), ali otporno na 'Greška: [Errno 32] Broken pipe'
+    (11.9.2026., §25.8). Uzrok tog buga NIJE nasumican: 'drive_service' u
+    baza_zadataka_app.py je izgrađen JEDNOM po pokretanju servera preko
+    @st.cache_resource i zatim se ponovno koristi na svaki upload, satima/danima.
+    googleapiclient/httplib2 interno drži TCP vezu prema Google API-ju otvorenu i
+    kešira je za ponovnu upotrebu; ako je zadatak "spremi sliku" dulje vrijeme
+    neaktivan, Google server sa svoje strane zatvori tu vezu, a httplib2 to ne
+    primijeti unaprijed - sljedeći upisni poziv (upload slike) pokuša pisati na
+    već zatvoren socket i OS baca BrokenPipeError. Vidljivo je zašto se čini
+    "nasumično": pojavljuje se tek nakon perioda mirovanja te konkretne akcije,
+    ne odmah nakon deploya kad je veza svježa - baš kako je korisnik i opisao
+    ("sad je prošlo, vidjet ćemo hoće li se ponoviti").
+    Rješenje ovdje: kod BrokenPipeError/ConnectionError izgradi POTPUNO NOVI
+    drive_service (svježa httplib2 veza, ne diramo globalni keširani objekt) i
+    pokušaj upload još jednom prije nego se preda. `sa_info` (service account
+    dict) mora biti dostupan pozivatelju da može sam izgraditi svjež servis."""
+    zadnja_greska = None
+    for _ in range(max(1, pokusaji)):
+        try:
+            svjez_servis = get_drive_service(sa_info)
+            return upload_image_to_drive(svjez_servis, folder_id, filename, image_bytes, mimetype)
+        except (BrokenPipeError, ConnectionError, OSError) as e:
+            zadnja_greska = e
+            continue
+    raise zadnja_greska
+
 def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
                             drive_service, slike_folder_id, log=None):
     """
@@ -892,6 +921,23 @@ def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
 
 def _normalize_za_usporedbu(text):
     return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+# Minimalna duljina normaliziranog teksta (znakova) ISPOD koje se automatska
+# usporedba SequenceMatcher-om smatra NEPOUZDANOM za zadatke koji imaju sliku
+# (11.9.2026., §25.9 - prijavio korisnik). Kratak, generički tekst poput "Na
+# slici je graf funkcije. Odredi..." gotovo uvijek prijeđe prag_slicnosti (ili
+# niži prag_slicnosti_isti_naziv unutar istog ispita) prema BILO KOJEM drugom
+# grafičkom zadatku sličnog tipa pitanja, iako je stvarni razlikovni sadržaj
+# (drugačiji graf, drugačiji geometrijski lik) u SLICI koju ovaj algoritam
+# uopće ne vidi - usporeduje se samo tekst. Prije ovog popravka takav lažni
+# pozitivan pogodak nije samo "preskočio" novi zadatak - POSTOJEĆI redak bi
+# dobio PREPISANU sliku/rješenje/odgovor novog zadatka, pa bi stari podaci
+# bili TIHO PREBRISANI (stvaran gubitak podataka, ne samo duplikat).
+MIN_DULJINA_ZA_POUZDANU_USPOREDBU = 60
+
+
+def _ima_sliku(z: dict) -> bool:
+    return bool((z.get("slika_putanja") or "").strip()) or (z.get("vizualni_potencijal") == "da")
 
 def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
     """
@@ -1017,7 +1063,13 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
         isti_naziv = najbolji_redak and najbolji_naziv == izvor_naziv
         prag = prag_slicnosti_isti_naziv if isti_naziv else prag_slicnosti
 
-        if najbolji_redak and najbolja_slicnost >= prag:
+        # §25.9: kratak/generički tekst + slika -> usporedba teksta nepouzdana.
+        # NIKAD tiho ne spajaj/prepiši postojeći redak u ovom slučaju - uvijek
+        # dodaj kao nov zadatak (nula rizika gubitka podataka), a ako je
+        # sličnost ipak bila iznad praga, samo označi za RUČNU provjeru.
+        nesiguran_kratak_sa_slikom = duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU and _ima_sliku(z)
+
+        if najbolji_redak and najbolja_slicnost >= prag and not nesiguran_kratak_sa_slikom:
             # Slova stupaca računamo DINAMIČKI iz ZADACI_HEADERS (_col_letter) umjesto
             # hardkodiranih slova - dodavanje/premještanje kolone (npr. `potpoglavlje`)
             # više neće tiho pomaknuti ova ažuriranja na pogrešan stupac.
@@ -1077,6 +1129,17 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
         else:
             zid = f"{id_prefix}_{_sljedeci_broj:03d}"
             _sljedeci_broj += 1
+            status_provjere_novi = z.get("status_provjere", "") or ""
+            if nesiguran_kratak_sa_slikom and najbolji_redak and najbolja_slicnost >= prag:
+                napomena = (
+                    f"MOGUĆI duplikat retka {najbolji_redak} ({najbolja_slicnost:.0%}) - tekst prekratak/"
+                    "generički za pouzdanu automatsku usporedbu (zadatak sa slikom), provjeri ručno je li slika ista."
+                )
+                status_provjere_novi = f"{status_provjere_novi}; {napomena}" if status_provjere_novi else napomena
+                if log:
+                    log(f"⚠️ Zadatak #{z.get('privremeni_broj')} - MOGUĆI duplikat retka {najbolji_redak} "
+                        f"({najbolja_slicnost:.0%}), ali tekst je prekratak/generički (zadatak sa slikom) - "
+                        "DODAN kao NOV zadatak i označen za ručnu provjeru, umjesto tihog spajanja s postojećim retkom.")
             row = [
                 zid, izvor_tip, izvor_naziv, godina, broj_pdf_ulaza,
                 razina, "",
@@ -1090,7 +1153,7 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 "", "",
                 z.get("tezina", ""), z.get("max_bodovi", ""),
                 "",
-                z.get("status_provjere", ""), skenirano,
+                status_provjere_novi, skenirano,
                 "",
                 z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
                 " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
