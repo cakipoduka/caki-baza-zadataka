@@ -19,7 +19,12 @@ import tempfile
 
 import streamlit as st
 
-from baza_zadataka_pipeline import get_drive_service, get_gspread_client, prikazi_opcije_markdown
+from baza_zadataka_pipeline import (
+    get_drive_service,
+    get_gspread_client,
+    get_potpoglavlja_po_cjelini,
+    prikazi_opcije_markdown,
+)
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
 
@@ -46,6 +51,24 @@ TIP_ZADATKA_LABELS = {
     "visestruki_izbor": "Višestruki izbor (A/B/C/D...)",
     "kratki_odgovor": "Kratki odgovor (crta za upis)",
     "prosireni_odgovor": "Prošireni odgovor / puni postupak",
+}
+
+# ---------------------------------------------------------------
+# Tip dokumenta (izmjena 11.9.2026., na izričit zahtjev) — zamjenjuje
+# raniju dvočlanu podjelu "Test" / "Skripta - radni listić" trima
+# nastavnim oblicima. Precizni predlošci po tipu dolaze naknadno -
+# za sada je "Pisana provjera znanja" jedini tip koji se BODUJE
+# (kategorije vrednovanja, zaglavlje s "Ostvareno"/"Ocjena", zbroj
+# bodova) - isto ponašanje koje je prije imao tip "Test". Preostala
+# dva tipa ponašaju se kao dosadašnja "Skripta / radni listić"
+# (bez bodovanja) dok se ne dogovori drukčije - PRETPOSTAVKA, lako
+# promjenjiva kad stignu precizni predlošci po tipu.
+# ---------------------------------------------------------------
+TIP_DOKUMENTA_OPCIJE = ["Pisana provjera znanja", "Zadaci za vježbu na satu", "Domaća zadaća"]
+KRAJ_OZNAKA_PO_TIPU = {
+    "Pisana provjera znanja": "KRAJ TESTA",
+    "Zadaci za vježbu na satu": "KRAJ ZADATAKA ZA VJEŽBU",
+    "Domaća zadaća": "KRAJ DOMAĆE ZADAĆE",
 }
 
 
@@ -79,12 +102,16 @@ if not provjeri_lozinku():
 # ---------------------------------------------------------------
 
 @st.cache_resource
-def init_sheet():
+def init_spreadsheet():
     import json
     sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
     gc = get_gspread_client(sa_info)
-    sheet = gc.open_by_key(st.secrets["SHEET_ID"])
-    return sheet.worksheet("Zadaci")
+    return gc.open_by_key(st.secrets["SHEET_ID"])
+
+
+@st.cache_resource
+def init_sheet():
+    return init_spreadsheet().worksheet("Zadaci")
 
 
 @st.cache_resource
@@ -121,6 +148,18 @@ def dohvati_sliku_bytes(naziv_datoteke):
 def ucitaj_zadatke():
     ws = init_sheet()
     return ws.get_all_records()
+
+
+@st.cache_data(ttl=600)
+def ucitaj_potpoglavlja_po_cjelini():
+    """{cjelina: [(potpoglavlje, redoslijed), ...]} iz taba 'Sifrarnik_potpoglavlja',
+    za filter "Potpoglavlje" u pretrazi (§1) - da izbornik prati redoslijed iz šifrarnika,
+    ne abecedni/slučajan poredak. Ako tab ne postoji ili je čitanje neuspješno, vraća {}
+    - pozivatelj se tada oslanja na fallback izveden izravno iz stvarnih zadataka."""
+    try:
+        return get_potpoglavlja_po_cjelini(init_spreadsheet())
+    except Exception:
+        return {}
 
 
 # ---------------------------------------------------------------
@@ -260,12 +299,33 @@ with col_pretraga:
     sve_tezine = sorted({z.get("tezina", "") for z in zadaci if z.get("tezina")})
 
     f_cjelina = st.multiselect("Cjelina", sve_cjeline)
+
+    potpoglavlja_po_cjelini = ucitaj_potpoglavlja_po_cjelini()
+    if f_cjelina:
+        opcije_potpoglavlje = []
+        for _c in f_cjelina:
+            for _p, _ in potpoglavlja_po_cjelini.get(_c, []):
+                if _p not in opcije_potpoglavlje:
+                    opcije_potpoglavlje.append(_p)
+        if not opcije_potpoglavlje:
+            # Šifrarnik nedostupan/prazan za odabranu cjelinu - fallback na potpoglavlja
+            # koja se stvarno pojavljuju u bazi za tu cjelinu (bolje nego prazan izbornik).
+            opcije_potpoglavlje = sorted({
+                z.get("potpoglavlje", "") for z in zadaci
+                if z.get("cjelina") in f_cjelina and z.get("potpoglavlje")
+            })
+    else:
+        opcije_potpoglavlje = sorted({z.get("potpoglavlje", "") for z in zadaci if z.get("potpoglavlje")})
+    f_potpoglavlje = st.multiselect("Potpoglavlje", opcije_potpoglavlje)
+
     f_tezina = st.multiselect("Težina", sve_tezine)
     f_tekst = st.text_input("Pretraži tekst / ključne riječi")
 
     filtrirano = zadaci
     if f_cjelina:
         filtrirano = [z for z in filtrirano if z.get("cjelina") in f_cjelina]
+    if f_potpoglavlje:
+        filtrirano = [z for z in filtrirano if z.get("potpoglavlje") in f_potpoglavlje]
     if f_tezina:
         filtrirano = [z for z in filtrirano if z.get("tezina") in f_tezina]
     if f_tekst:
@@ -422,9 +482,9 @@ st.subheader("3. Metapodaci i generiranje")
 mc1, mc2, mc3 = st.columns(3)
 naslov = mc1.text_input("Naslov dokumenta", value="Test — Kvadratna jednadžba")
 datum = mc2.date_input("Datum", value=datetime.date.today())
-tip_dok = mc3.selectbox("Tip dokumenta", ["Test", "Skripta / radni listić"])
+tip_dok = mc3.selectbox("Tip dokumenta", TIP_DOKUMENTA_OPCIJE)
 
-je_test = tip_dok == "Test"
+je_test = tip_dok == "Pisana provjera znanja"
 ukupno_bodova = ""
 if je_test:
     try:
@@ -652,7 +712,7 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
             "\\input{generated/rjesenja_body}"
         )
 
-    kraj_oznaka = "KRAJ TESTA" if je_test else "KRAJ RADNOG LISTIĆA"
+    kraj_oznaka = KRAJ_OZNAKA_PO_TIPU.get(tip_dok, "KRAJ")
 
     # Zbroj bodova po kategoriji PREKO SVIH odabranih zadataka - ako je barem
     # jedna kategorija ikad korištena, zaglavlje testa prikazuje "Ostvareno"/
