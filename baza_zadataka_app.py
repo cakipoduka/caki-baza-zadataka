@@ -37,7 +37,7 @@ from baza_zadataka_pipeline import (
     nadopuni_ili_dodaj_zadatke,
     preuzmi_i_spremi_slike,
     prikazi_opcije_markdown,
-    upload_image_to_drive,
+    upload_image_to_drive_with_retry,
     zapisi_log_obrade,
 )
 
@@ -802,8 +802,16 @@ def _forma_uredi_zadatak(row, broj_retka, idx):
 
         with st.spinner("Spremam sliku i ažuriram bazu..."):
             try:
-                upload_image_to_drive(
-                    drive_service, slike_folder_id, naziv_datoteke,
+                # NAPOMENA (11.9.2026., §25.8): NE koristimo globalni keširani
+                # `drive_service` ovdje (izgrađen jednom preko @st.cache_resource
+                # pri pokretanju servera) - httplib2 veza unutar njega zna postati
+                # "stale" nakon duljeg mirovanja ove konkretne akcije, sto uzrokuje
+                # "Greška: [Errno 32] Broken pipe". upload_image_to_drive_with_retry
+                # sam izgradi svjez drive_service (i ponovi jednom ako zatreba),
+                # bez diranja globalnog keširanog objekta koji ostatak app-a koristi.
+                sa_info_za_upload = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+                upload_image_to_drive_with_retry(
+                    sa_info_za_upload, slike_folder_id, naziv_datoteke,
                     nova_slika.getvalue(), mimetype=mime or "image/png",
                 )
                 c_putanja = _col_letter("slika_putanja")
