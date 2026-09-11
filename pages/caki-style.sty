@@ -82,6 +82,27 @@
 \newunicodechar{μ}{\ensuremath{\mu}}
 \newunicodechar{…}{\ensuremath{\ldots}}
 
+% --- 3c. LUK IZNAD SLOVA (\overparen) - NIJE STVARNA amsmath NAREDBA (11.9.2026.) ---
+% Zadaci s kruznim lukovima (npr. "\overparenAB", oznaka duljine luka AB) katkad
+% dolaze iz ekstrakcije (Mathpix/Claude OCR) s naredbom \overparen{AB}, koju
+% generator (2_test_builder.py/pipeline) preuzima doslovno u .tex. PROVJERENO
+% lokalno (grep izvornog amsmath.sty): \overparen NIJE amsmath naredba niti
+% postoji u standardnom pdflatex+T1+lmodern skupu - ne postoji uopce dok se ne
+% ucita paket koji je definira, inace pdflatex baca "Undefined control
+% sequence" i cijelo kompajliranje padne (vidi CAKI_MASTER_BAZA §25.6). Ovo NIJE
+% problem kodiranja znakova (mojibake) - potvrdeno testom, \overparenAB nije
+% Unicode nego cisti ASCII LaTeX poziv nepostojece naredbe.
+% Rjesenje: \wideparen iz paketa yhmath je pravi matematicki akcent (radi
+% ispravno i s indeksima, npr. \wideparen{A_1B_1}, jer se primjenjuje na cijelu
+% matematicku grupu, ne kao odvojeni tekstualni okvir) - testirano da se
+% razvlaci i za dulje nizove slova (npr. ABCDEF). \overparen je ovdje
+% definiran kao ALIAS za \wideparen da postojeci/buduci tekst zadataka koji
+% koristi \overparen (naziv koji OCR/LLM ekstrakcija ocekivano proizvodi jer
+% "izgleda" kao standardna naredba) radi bez rucne izmjene svakog zadatka u
+% bazi.
+\RequirePackage{yhmath}
+\newcommand{\overparen}[1]{\wideparen{#1}}
+
 % --- 4. PALETA BOJA (Moderna, profesionalna i dinamična) ---
 \RequirePackage[table, xcdraw]{xcolor}
 \definecolor{MathPrimary}{HTML}{0F172A}    % Tamno plava / Slate (Glavni tekst i naslovi)
