@@ -115,6 +115,17 @@ zatim zaseban zadatak 'Riješi pravokutni trokut ako je c=5, b=3.', itd). Svaki 
 svoj privremeni_broj nastavkom slovom (npr. '5a', '5b', '5c') da se zna da dijele isti izvorni broj.
 Ako rješenja za pojedine varijante postoje odvojeno u tekstu rješenja, pridijeli svakoj svoje; ako ne,
 polje rjesenje ostaje prazno za tu varijantu (vidi točku 3).
+1c. AKO jedan zadatak ima IZRIČITO OZNAČENE PODZADATKE (npr. a), b), c)... ili A), B), C)...) koji
+dijele ZAJEDNIČKI UVOD/KONTEKST (istu zadanu funkciju, tijelo, sliku, tekst), tretiraj ih ANALOGNO
+točki 1b: RAZDVOJI SVAKI PODZADATAK U POTPUNO SAMOSTALAN ZADATAK - ponovi zajednički uvodni kontekst
+na početku tekst_zadatka_latex svakog podzadatka, zatim dodaj specifično pitanje tog podzadatka.
+Svaki dobiva privremeni_broj nastavkom IZVORNOM oznakom podzadatka (npr. za zadatak 7 s a)/b)
+dijelovima -> "7a", "7b" - koristi izvornu oznaku iz materijala, ne proizvoljan redoslijed). Rješenje/
+konačan odgovor pridijeli analogno točki 3, zasebno za svaki podzadatak ako su dana odvojeno. IZNIMKA:
+ako podzadatak b) suštinski OVISI o brojčanom rezultatu podzadatka a) (npr. "uvrsti rezultat iz a)
+u..."), ipak ih razdvoji u zasebne retke kao gore, ali u tekst_zadatka_latex podzadatka b) eksplicitno
+navedi taj rezultat kao zadanu vrijednost (izračunaj ga sam iz konteksta ako je to jednoznačno moguće)
+tako da svaki redak ostane potpuno samostalan i rješiv bez uvida u drugi redak.
 2. Za svaki zadatak izvuci ČIST TEKST PITANJA u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, bez naredbi za formatiranje cijelog dokumenta). VAŽNO: NE uključuj ponuđene odgovore A/B/C/D u ovo polje - oni idu zasebno, vidi točku 13.
 3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
 4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
