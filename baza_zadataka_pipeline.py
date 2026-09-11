@@ -62,13 +62,29 @@ def prikazi_opcije_markdown(ponudjeni_odgovori) -> str:
     isto načelo kao formatiraj_opciju() u pages/2_test_builder.py, ali za Streamlit prikaz,
     ne za LaTeX izlaz. Zajednička funkcija za baza_zadataka_app.py (stranica 'Uredi zadatak')
     i pages/2_test_builder.py (pregled u pretrazi/odabiru) - da se prikaz opcija ne dupllicira
-    na dva mjesta i ne razmimoiđe (npr. broj podržanih slova A-?)."""
+    na dva mjesta i ne razmimoiđe (npr. broj podržanih slova A-?).
+
+    POPRAVAK (11.9.2026.): opcija se više NE omata bezuvjetno u $...$ kad nema eksplicitnog
+    $ znaka - to je uzrokovalo da običan tekst (npr. "ne postoji rješenje") KaTeX renderira
+    kao matematiku, gdje se razmaci između riječi ignoriraju (riječi se prikazuju spojene i
+    kurzivom - vidi prijavljeni bug, 11.9.2026.). Umjesto toga koristi se ista heuristika kao
+    _pretext_math_or_text/_izgleda_kao_recenica niže u ovoj datoteci (PreTeXt izlaz): ako
+    opcija izgleda kao rečenica (ima razmak i pretežno je od slova), tretira se kao OBIČAN
+    TEKST, bez $...$ omota; inače (kratak matematički izraz, npr. "3x-9" ili "√2") i dalje se
+    omata u $...$ kao dosad. Ovo je heuristika, ne savršena - za rubne slučajeve gdje
+    heuristika promaši, autor može ručno upisati $ znakove izravno u opciju (grana "$" in
+    opcija iznad uvijek ima prednost)."""
     dijelovi = []
     for i, opcija in enumerate(ponudjeni_odgovori):
         opcija = (opcija or "").strip()
         if not opcija:
             continue
-        prikaz = opcija if "$" in opcija else f"${opcija}$"
+        if "$" in opcija:
+            prikaz = opcija
+        elif _izgleda_kao_recenica(opcija):
+            prikaz = opcija
+        else:
+            prikaz = f"${opcija}$"
         slovo = SLOVA_PONUDJENIH_ODGOVORA[i] if i < len(SLOVA_PONUDJENIH_ODGOVORA) else str(i + 1)
         dijelovi.append(f"**{slovo})** {prikaz}")
     return "  ".join(dijelovi)
@@ -782,7 +798,7 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     # Ukloni "nevidljive" unicode znakove (BOM, zero-width space i sl.) koje obično .strip()
     # NE smatra whitespaceom - jedan takav znak na samom početku dovoljan je da json.loads
     # padne s "Expecting value: line 1 column 1 (char 0)" iako raw_text izgleda neprazan.
-    raw_text = raw_text.strip("﻿​‌‍")
+    raw_text = raw_text.strip("﻿‌‍")
 
     if raw_text and not raw_text.startswith(("[", "{")):
         # Claude je (unatoč uputi da odgovori ISKLJUČIVO JSON-om) ipak dodao neki uvodni tekst
