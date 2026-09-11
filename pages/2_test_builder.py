@@ -167,6 +167,7 @@ def ucitaj_potpoglavlja_po_cjelini():
 # ---------------------------------------------------------------
 
 SPECIAL_CHARS = {
+    "\\": r"\textbackslash{}",
     "&": r"\&", "%": r"\%", "#": r"\#", "_": r"\_",
     "{": r"\{", "}": r"\}",
     "~": r"\textasciitilde{}", "^": r"\textasciicircum{}",
