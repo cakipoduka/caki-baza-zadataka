@@ -24,6 +24,64 @@
 \RequirePackage{amsmath, amsfonts, amssymb}
 \RequirePackage{mathtools}
 
+% --- 3b. UNICODE MATEMATICKI ZNAKOVI UPISANI IZRAVNO U TEKST (11.9.2026.) ---
+% Zadaci/rjesenja katkad dolaze iz OCR-a (Mathpix) ili rucnog unosa u Google
+% Sheets gdje je matematicki znak upisan kao gotov Unicode znak (npr. "∪")
+% umjesto LaTeX naredbe (npr. "$\cup$"). Standardni T1+lmodern fontovi NE
+% znaju iscrtati takve znakove izravno pa pdflatex baca fatalnu gresku
+% "Unicode character ... not set up for use with LaTeX." i cijelo
+% kompajliranje padne (vidi CAKI_MASTER_BAZA §25.5 - stvarni slucaj:
+% "T∪Š=\{Matea,Andrea\}" u polju rjesenje). newunicodechar mapira svaki
+% takav znak na odgovarajucu LaTeX naredbu cim se pojavi u izvoru - radi i
+% u tekstu i u matematickom nacinu, rjesava problem u korijenu bez obzira
+% odakle znak dosao (Test Builder PDF, PreTeXt izvoz, bilo koje drugo mjesto
+% koje ucitava ovaj .sty). Popis nize pokriva najcesce znakove koji se
+% pojavljuju u srednjoskolskoj/maturalnoj matematici; ako se u praksi
+% pojavi neki novi neupareni znak, dodaje se ovdje kao nova linija.
+\RequirePackage{newunicodechar}
+\newunicodechar{∪}{\ensuremath{\cup}}
+\newunicodechar{∩}{\ensuremath{\cap}}
+\newunicodechar{∈}{\ensuremath{\in}}
+\newunicodechar{∉}{\ensuremath{\notin}}
+\newunicodechar{⊂}{\ensuremath{\subset}}
+\newunicodechar{⊆}{\ensuremath{\subseteq}}
+\newunicodechar{⊃}{\ensuremath{\supset}}
+\newunicodechar{⊇}{\ensuremath{\supseteq}}
+\newunicodechar{≤}{\ensuremath{\leq}}
+\newunicodechar{≥}{\ensuremath{\geq}}
+\newunicodechar{≠}{\ensuremath{\neq}}
+\newunicodechar{≈}{\ensuremath{\approx}}
+\newunicodechar{≡}{\ensuremath{\equiv}}
+\newunicodechar{±}{\ensuremath{\pm}}
+\newunicodechar{∓}{\ensuremath{\mp}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{÷}{\ensuremath{\div}}
+\newunicodechar{√}{\ensuremath{\surd}}
+\newunicodechar{∞}{\ensuremath{\infty}}
+\newunicodechar{→}{\ensuremath{\rightarrow}}
+\newunicodechar{←}{\ensuremath{\leftarrow}}
+\newunicodechar{↔}{\ensuremath{\leftrightarrow}}
+\newunicodechar{⇒}{\ensuremath{\Rightarrow}}
+\newunicodechar{⇐}{\ensuremath{\Leftarrow}}
+\newunicodechar{⇔}{\ensuremath{\Leftrightarrow}}
+\newunicodechar{∅}{\ensuremath{\emptyset}}
+\newunicodechar{∀}{\ensuremath{\forall}}
+\newunicodechar{∃}{\ensuremath{\exists}}
+\newunicodechar{∑}{\ensuremath{\sum}}
+\newunicodechar{∏}{\ensuremath{\prod}}
+\newunicodechar{∫}{\ensuremath{\int}}
+\newunicodechar{∂}{\ensuremath{\partial}}
+\newunicodechar{∆}{\ensuremath{\Delta}}
+\newunicodechar{°}{\ensuremath{^\circ}}
+\newunicodechar{π}{\ensuremath{\pi}}
+\newunicodechar{α}{\ensuremath{\alpha}}
+\newunicodechar{β}{\ensuremath{\beta}}
+\newunicodechar{γ}{\ensuremath{\gamma}}
+\newunicodechar{θ}{\ensuremath{\theta}}
+\newunicodechar{λ}{\ensuremath{\lambda}}
+\newunicodechar{μ}{\ensuremath{\mu}}
+\newunicodechar{…}{\ensuremath{\ldots}}
+
 % --- 4. PALETA BOJA (Moderna, profesionalna i dinamična) ---
 \RequirePackage[table, xcdraw]{xcolor}
 \definecolor{MathPrimary}{HTML}{0F172A}    % Tamno plava / Slate (Glavni tekst i naslovi)
