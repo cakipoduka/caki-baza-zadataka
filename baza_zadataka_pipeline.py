@@ -721,6 +721,56 @@ def zapisi_log_obrade(sheet, izvor_naziv, faza, status, poruka="", log=None):
         if log:
             log(f"⚠️ Upis u Log_obrade nije uspio (samo evidencija - obrada se nastavlja): {e}")
 
+# ============================================================================
+# PATCH za baza_zadataka_pipeline.py (14.9.2026.)
+# ============================================================================
+#
+# ŠTO OVO POPRAVLJA:
+# Bug otkriven 14.9.2026. - obrada ispita s podzadacima a)/b)/c) (npr. zadatak 15)
+# je znala propasti s "Extra data: line 1 column 3 (char 2)" iako je OCR bio
+# ispravan. Uzrok: Claude je (unatoč uputi da odgovori ISKLJUČIVO JSON-om) dodao
+# uvodnu rečenicu prije JSON liste, a postojeća logika za odbacivanje tog uvoda
+# (raw_text.find("[")) je tražila PRVU '[' bilo gdje u tekstu - što zna promašiti
+# ako Claude u uvodu spomene npr. "prazna lista []" (citira primjer iz samog
+# prompta), pa se tekst odreže na pogrešnom mjestu i cijeli dio ispita propadne.
+#
+# DVA ISPRAVKA U OVOJ ZAKRPI (kombinirano, jedan update):
+#   1. STRUKTURNO rješenje (primarno): "assistant prefill" - Claude se prisiljava
+#      da odgovor nastavi izravno od otvorene '[', pa fizički ne može dodati
+#      uvodni tekst prije nje. Ovo sprječava CIJELU klasu ovog buga u korijenu.
+#   2. Sigurnosna mreža (sekundarno, za rubne slučajeve): ako se ikad dogodi da
+#      raw_text ipak ne počinje s '[' ili '{', traži se prva '[' iza koje (uz
+#      eventualni razmak) slijedi '{' - jer shema UVIJEK vraća listu OBJEKATA,
+#      nikad listu golih brojeva/stringova. Puno pouzdanije od "prve [ bilo gdje".
+#
+# ŠTO ZAMIJENITI U baza_zadataka_pipeline.py:
+# Otvori datoteku na GitHubu (Edit / olovčica), pronađi ovaj komentar:
+#
+#     # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
+#
+# i sve od njega PA DO (ali NE uključujući) sljedećeg komentara:
+#
+#     # --- Slike (preuzimanje s Mathpixa, upload na Drive) ---
+#
+# označi i obriši, pa umjesto toga zalijepi CIJELI sadržaj ovog PATCH fajla
+# OD SLJEDEĆEG REDA nadalje (od "# --- Claude extrakcija ..." dolje - ovaj
+# uvodni blok komentara, do ove crte, NE kopirati u pipeline.py).
+#
+# Sve ostalo u datoteci (ZADACI_HEADERS, EXTRACTION_SYSTEM_PROMPT, Mathpix
+# funkcije, PreTeXt build, upload slika, itd.) OSTAJE POTPUNO NEDIRNUTO -
+# ova zakrpa mijenja isključivo funkcije _spasi_djelomican_json_popis i
+# extract_zadaci_with_claude. _ocisti_zadatke i _parsiraj_uzastopne_json_vrijednosti
+# (iznad _spasi_djelomican_json_popis) su OVDJE priložene NEPROMIJENJENE, samo
+# radi konteksta i da imaš cijeli blok za copy-paste u jednom komadu.
+#
+# NAPOMENA (otvoreno pitanje, v. §31 MASTER_BAZA): EXTRACTION_SYSTEM_PROMPT i
+# extract_zadaci_with_claude postoje kao DVIJE odvojene kopije - ova (GitHub,
+# koristi ju baza_zadataka_app.py / Streamlit) i posebna u Colab notebooku
+# (ćelija 12). Ova zakrpa mijenja SAMO GitHub kopiju (Streamlit put obrade).
+# Colab kopija i dalje nema ni salvage logiku ni ovaj fix - ako obrađuješ
+# ispite i preko Colaba, treba zaseban razgovor za tu kopiju.
+# ============================================================================
+
 # --- Claude extrakcija (s automatskim dijeljenjem ako se odgovor odreže) ---
 
 def _ocisti_zadatke(zadaci, log=None):
@@ -738,6 +788,7 @@ def _ocisti_zadatke(zadaci, log=None):
             f"zadatka (vjerojatno ostatak uvodnog teksta koji je slučajno valjan JSON) - "
             f"preostalih {len(ocisceno)} zadataka je u redu.")
     return ocisceno
+
 
 def _parsiraj_uzastopne_json_vrijednosti(raw_text: str, log=None):
     """Pokušaj pročitati raw_text kao NIZ UZASTOPNIH JSON vrijednosti (jedna za drugom,
@@ -773,6 +824,7 @@ def _parsiraj_uzastopne_json_vrijednosti(raw_text: str, log=None):
         idx = kraj
     return zadaci
 
+
 def _spasi_djelomican_json_popis(raw_text: str, log=None):
     """Pokušaj standardni json.loads(); ako Claudeov odgovor NIJE ispravan JSON
     (najčešće: odgovor je odrezan zbog max_tokens čak i nakon što je iscrpljen
@@ -784,10 +836,28 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
     Ako niti to ne upali (tipično kod greške "Extra data" - Claude je vratio jedan ili
     više ODVOJENIH JSON objekata umjesto jedne liste), probamo drugu strategiju:
     _parsiraj_uzastopne_json_vrijednosti - vidi njezin docstring.
-
     Vraća (zadaci, je_li_potpuno: bool). Ako se ništa ne može spasiti, ponovno
     baca originalnu json.JSONDecodeError (isto ponašanje kao prije - poziv
     gore u lancu i dalje mora znati da je obrada za ovaj dio propala)."""
+    # 🆕 (14.9.2026.) Sigurnosna mreža protiv buga otkrivenog istog dana: uz assistant
+    # prefill u extract_zadaci_with_claude (poziva ovu funkciju), raw_text bi UVIJEK trebao
+    # počinjati s '[' - ali ako se ikad dogodi da ipak ne počinje (npr. buduća izmjena
+    # zaboravi prefill, ili API promijeni ponašanje), NE koristimo naivno raw_text.find("[")
+    # (stari bug: prva '[' u tekstu zna biti dio Claudeove rečenice, npr. "prazna lista []"
+    # ili kratka lista "[5, 4.6]" citirana iz EXTRACTION_SYSTEM_PROMPT-a, umjesto stvarnog
+    # početka JSON liste zadataka - rezanje na tom mjestu ostavlja pokvaren tekst poput
+    # "[](jer...)" i json.loads odmah puca s "Extra data"). Umjesto toga tražimo prvu '['
+    # iza koje (uz eventualni whitespace) slijedi '{' - shema UVIJEK vraća listu OBJEKATA,
+    # nikad listu golih brojeva/stringova, pa je to pouzdan znak stvarnog početka.
+    if raw_text and not raw_text.startswith(("[", "{")):
+        match = re.search(r"\[\s*\{", raw_text)
+        prvi_zagrada = match.start() if match else raw_text.find("[")
+        if prvi_zagrada > 0:
+            if log:
+                log(f"⚠️ Claudeov odgovor sadrži tekst prije JSON liste "
+                    f"('{raw_text[:prvi_zagrada].strip()[:80]}') - odbacujem taj uvod.")
+            raw_text = raw_text[prvi_zagrada:]
+
     try:
         rezultat = json.loads(raw_text, strict=False)
         if isinstance(rezultat, dict):
@@ -837,6 +907,7 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
             log("❌ Nije uspjelo spasiti nijedan zadatak iz ovog odgovora - obrada ovog dijela propada.")
         raise
 
+
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
                                 sifrarnik_potpoglavlja_text="", model="claude-sonnet-5",
                                 _preostala_dubina=2, log=None, _preostali_pokusaji_praznog=2):
@@ -857,14 +928,27 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
         model=model,
         max_tokens=16000,
         system=EXTRACTION_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_content}],
+        messages=[
+            {"role": "user", "content": user_content},
+            # 🆕 (14.9.2026.) "Prefill" assistant poruke - STRUKTURNO rješenje za bug otkriven
+            # istog dana (v. povijest u _spasi_djelomican_json_popis): prisiljava Claudea da
+            # odgovor NASTAVI izravno od otvorene uglate zagrade, umjesto da mu (unatoč
+            # eksplicitnoj uputi u EXTRACTION_SYSTEM_PROMPT-u "Odgovori ISKLJUČIVO JSON
+            # listom") dopustimo da prvo napiše uvodnu rečenicu poput "Analizirat ću ispit i
+            # strukturirati zadatke..." prije same JSON liste. Anthropic API po definiciji
+            # nastavlja odgovor od zadanog assistant teksta nadalje - Claude fizički ne može
+            # ništa napisati prije '['. NAPOMENA: prefill zahtijeva da extended thinking bude
+            # isključen (v. thinking={"type": "disabled"} niže) - API ne dopušta kombinaciju.
+            {"role": "assistant", "content": "["},
+        ],
         # Claude Sonnet 5 po defaultu koristi "adaptive thinking" (effort "high"), a tokeni
         # potrošeni na razmišljanje broje se u ISTI max_tokens budžet kao i sam odgovor -
         # kod složenijih/dužih ispita to zna pojesti cijeli budžet PRIJE nego što Claude
         # uopće počne pisati JSON (stop_reason=max_tokens, sadržaj=samo "thinking" blok, bez
         # teksta - vidljivo u logovima kao "prazan odgovor" čak i nakon ponovnih pokušaja).
         # Za ovaj strukturirani JSON zadatak razmišljanje ne donosi korist, pa ga isključujemo
-        # da cijelih 16000 tokena ide na stvarni odgovor.
+        # da cijelih 16000 tokena ide na stvarni odgovor. Ovo je sad i FUNKCIONALNA nužnost
+        # (ne samo ušteda) jer je gornji assistant prefill nekompatibilan s thinkingom.
         thinking={"type": "disabled"},
     )
 
@@ -887,31 +971,21 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
         elif log:
             log("⚠️ UPOZORENJE: odgovor odrezan čak i nakon maksimalnog dijeljenja - rezultat je vjerojatno nepotpun.")
 
-    raw_text = "".join(b.text for b in response.content if b.type == "text").strip()
-    raw_text = re.sub(r"^```(json)?", "", raw_text).strip()
-    raw_text = re.sub(r"```$", "", raw_text).strip()
+    nastavak_teksta = "".join(b.text for b in response.content if b.type == "text").strip()
+    nastavak_teksta = re.sub(r"^```(json)?", "", nastavak_teksta).strip()
+    nastavak_teksta = re.sub(r"```$", "", nastavak_teksta).strip()
     # Ukloni "nevidljive" unicode znakove (BOM, zero-width space i sl.) koje obično .strip()
     # NE smatra whitespaceom - jedan takav znak na samom početku dovoljan je da json.loads
-    # padne s "Expecting value: line 1 column 1 (char 0)" iako raw_text izgleda neprazan.
-    raw_text = raw_text.strip("﻿‌‍")
+    # padne s "Expecting value: line 1 column 1 (char 0)" iako tekst izgleda neprazan.
+    nastavak_teksta = nastavak_teksta.strip("﻿‌‍")
 
-    if raw_text and not raw_text.startswith(("[", "{")):
-        # Claude je (unatoč uputi da odgovori ISKLJUČIVO JSON-om) ipak dodao neki uvodni tekst
-        # prije same JSON liste (npr. "Evo JSON odgovora:\n[...]") - potraži prvu '[' i odbaci
-        # sve prije nje, umjesto da cijeli poziv propadne zbog par riječi viška na početku.
-        prvi_zagrada = raw_text.find("[")
-        if prvi_zagrada > 0:
-            if log:
-                log(f"⚠️ Claudeov odgovor sadrži tekst prije JSON liste "
-                    f"('{raw_text[:prvi_zagrada].strip()[:80]}') - odbacujem taj uvod.")
-            raw_text = raw_text[prvi_zagrada:]
-
-    if not raw_text:
+    if not nastavak_teksta:
         # "Expecting value: line 1 column 1 (char 0)" iz json.loads() uvijek znači BAŠ ovo -
-        # Claude je vratio 0 znakova teksta (različito od odrezanog/pokvarenog JSON-a, koje
-        # rješava _spasi_djelomican_json_popis niže). Bilježimo stop_reason i tipove content
-        # blokova radi dijagnoze, i pokušavamo ponovno prije nego odustanemo - prazan odgovor
-        # je tipično prolazna stvar (API hiccup), ne stvarni problem sa sadržajem ispita.
+        # Claude je vratio 0 znakova teksta NAKON prefillane '[' (različito od odrezanog/
+        # pokvarenog JSON-a, koje rješava _spasi_djelomican_json_popis niže). Bilježimo
+        # stop_reason i tipove content blokova radi dijagnoze, i pokušavamo ponovno prije nego
+        # odustanemo - prazan odgovor je tipično prolazna stvar (API hiccup), ne stvarni
+        # problem sa sadržajem ispita.
         broj_blokova = len(response.content)
         tipovi_blokova = [b.type for b in response.content]
         if log:
@@ -931,6 +1005,11 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
             f"(stop_reason={response.stop_reason}, broj_blokova={broj_blokova})."
         )
 
+    # Vrati prefillanu '[' natrag na početak teksta - API je ne šalje nazad u response.content
+    # (mi smo je unaprijed zadali kao "assistant" poruku gore), pa je moramo sami nadodati
+    # prije json.loads/_spasi_djelomican_json_popis niže.
+    raw_text = "[" + nastavak_teksta
+
     zadaci, potpuno = _spasi_djelomican_json_popis(raw_text, log=log)
     if not potpuno and log:
         log("⚠️ POZOR: gornji zadaci su spašeni iz NEPOTPUNOG Claude odgovora - "
@@ -941,7 +1020,6 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
         latex_text = z.get("tekst_zadatka_latex", "")
         z["tekst_zadatka_mathjax"] = latex_text.replace("\\\\", "<br>")
     return zadaci
-
 # --- Slike (preuzimanje s Mathpixa, upload na Drive) ---
 
 def upload_image_to_drive(drive_service, folder_id: str, filename: str, image_bytes: bytes, mimetype: str = "image/png"):
