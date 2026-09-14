@@ -12,11 +12,15 @@ Streamlit Cloud: za pdflatex, dodaj packages.txt (vidi README.md).
 """
 import copy
 import datetime
+import hashlib
+import json
+import math
 import os
 import re
 import subprocess
 import tempfile
 
+import gspread
 import streamlit as st
 
 from baza_zadataka_pipeline import (
@@ -163,6 +167,76 @@ def ucitaj_potpoglavlja_po_cjelini():
 
 
 # ---------------------------------------------------------------
+# Predlošci testova + autospremanje nacrta (14.9.2026.) — dva nova, isključivo
+# Test-Builderova taba u ISTOM spreadsheetu kao 'Zadaci'. Namjerno definirano
+# OVDJE (ne u baza_zadataka_pipeline.py) - ne dira dijeljenu logiku/shemu, čisto
+# aditivno, izolirano na ovu stranicu. "TestBuilder_predlosci" čuva profesorove
+# imenovane, ručno spremljene odabire (za ponovnu upotrebu iz godine u godinu);
+# "TestBuilder_draft" čuva JEDAN "trenutni" redak koji se tiho prepisuje pri
+# svakoj promjeni odabira, kao zaštita od gubitka rada ako se Streamlit sesija
+# resetira (istek, hard refresh) usred slaganja testa.
+# ---------------------------------------------------------------
+
+PREDLOSCI_HEADERS = [
+    "predlozak_id", "naziv", "datum_spremanja",
+    "naslov_dokumenta", "tip_dokumenta", "prikazi_rjesenja",
+    "broj_zadataka", "sadrzaj_json",
+]
+DRAFT_HEADERS = [
+    "draft_id", "zadnja_izmjena",
+    "naslov_dokumenta", "tip_dokumenta", "prikazi_rjesenja",
+    "broj_zadataka", "sadrzaj_json",
+]
+
+
+def _dohvati_ili_kreiraj_tab(naziv, headers):
+    spreadsheet = init_spreadsheet()
+    try:
+        return spreadsheet.worksheet(naziv)
+    except gspread.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=naziv, rows=200, cols=max(len(headers), 8))
+        ws.append_row(headers)
+        return ws
+
+
+@st.cache_resource
+def init_predlosci_ws():
+    return _dohvati_ili_kreiraj_tab("TestBuilder_predlosci", PREDLOSCI_HEADERS)
+
+
+@st.cache_resource
+def init_draft_ws():
+    return _dohvati_ili_kreiraj_tab("TestBuilder_draft", DRAFT_HEADERS)
+
+
+def _stanje_za_spremanje(naslov_val, tip_dok_val, prikazi_rjesenja_val):
+    """Serijalizira TRENUTNI st.session_state.odabrani + prateće metapodatke u
+    oblik spreman za upis u Sheets red (predložak ili nacrt - isti format za oba)."""
+    return {
+        "naslov_dokumenta": naslov_val or "",
+        "tip_dokumenta": tip_dok_val or "",
+        "prikazi_rjesenja": bool(prikazi_rjesenja_val),
+        "broj_zadataka": len(st.session_state.odabrani),
+        "sadrzaj_json": json.dumps(st.session_state.odabrani, ensure_ascii=False),
+    }
+
+
+def _ucitaj_stanje(sadrzaj_json, naslov_dokumenta, tip_dokumenta, prikazi_rjesenja):
+    """Postavlja učitani predložak/nacrt u session_state. Poziv MORA odmah nakon
+    ovoga zvati st.rerun() - widgeti (naslov/tip dokumenta/rješenja) čitaju svoje
+    vrijednosti iz session_state PRI SLJEDEĆEM pokretanju skripte, ne odmah."""
+    try:
+        st.session_state.odabrani = json.loads(sadrzaj_json) if sadrzaj_json else []
+    except (json.JSONDecodeError, TypeError):
+        st.session_state.odabrani = []
+    if naslov_dokumenta:
+        st.session_state["naslov_dok"] = naslov_dokumenta
+    if tip_dokumenta in TIP_DOKUMENTA_OPCIJE:
+        st.session_state["tip_dok_sel"] = tip_dokumenta
+    st.session_state["prikazi_rjesenja_cb"] = str(prikazi_rjesenja).strip().lower() in ("true", "1", "da")
+
+
+# ---------------------------------------------------------------
 # LaTeX escape (izvan $...$ regija) — ista logika kao generate_tex.py
 # ---------------------------------------------------------------
 
@@ -286,6 +360,41 @@ def ukloni(idx):
 st.title("📝 CAKI Test Builder")
 st.caption("Odaberi zadatke iz baze ili dodaj ručne, posloži redoslijed, unesi metapodatke, generiraj PDF.")
 
+# ---------------------------------------------------------------
+# Ponuda za učitavanje spremljenog nacrta (14.9.2026.) — provjerava se JEDNOM
+# po sesiji, i SAMO ako je trenutni odabir prazan (svježa sesija) - da profesor
+# ne bude gnjavljen ponudom na svaki rerun, niti da mu se slučajno prepiše rad
+# koji je već u tijeku u OVOJ sesiji.
+# ---------------------------------------------------------------
+
+if "draft_provjera_ucinjena" not in st.session_state:
+    st.session_state["draft_provjera_ucinjena"] = True
+    if not st.session_state.odabrani:
+        try:
+            _draft_redovi = init_draft_ws().get_all_records()
+        except Exception:
+            _draft_redovi = []
+        if _draft_redovi and _draft_redovi[0].get("sadrzaj_json"):
+            st.session_state["_pronadjen_draft"] = _draft_redovi[0]
+
+if st.session_state.get("_pronadjen_draft"):
+    _d = st.session_state["_pronadjen_draft"]
+    st.info(
+        f"📥 Pronađen spremljeni nacrt od {_d.get('zadnja_izmjena', '?')} "
+        f"({_d.get('broj_zadataka', '?')} zadataka, naslov: „{_d.get('naslov_dokumenta') or '—'}”)."
+    )
+    _dcol1, _dcol2 = st.columns([1, 1])
+    if _dcol1.button("📂 Učitaj nacrt"):
+        _ucitaj_stanje(
+            _d.get("sadrzaj_json", ""), _d.get("naslov_dokumenta", ""),
+            _d.get("tip_dokumenta", ""), _d.get("prikazi_rjesenja", ""),
+        )
+        st.session_state["_pronadjen_draft"] = None
+        st.rerun()
+    if _dcol2.button("🗑️ Odbaci nacrt"):
+        st.session_state["_pronadjen_draft"] = None
+        st.rerun()
+
 col_pretraga, col_odabrano = st.columns([1, 1], gap="large")
 
 with col_pretraga:
@@ -337,12 +446,40 @@ with col_pretraga:
             or upit in (z.get("kljucne_rijeci", "") or "").lower()
         ]
 
-    st.caption(f"{len(filtrirano)} zadataka pronađeno (prikazano prvih 30)")
+    # ID-jevi zadataka koji su VEĆ u "2. Odabrani zadaci" - za kvačicu/oznaku
+    # niže i onemogućavanje ponovnog dodavanja istog zadatka (zahtjev 14.9.2026.:
+    # profesor je znao slučajno dodati isti zadatak dvaput jer ništa u popisu
+    # pretrage nije pokazivalo da je zadatak već odabran).
+    ids_odabranih = {z.get("id") for z in st.session_state.odabrani if z.get("id")}
 
-    for row in filtrirano[:30]:
+    # Paginacija umjesto tvrdog reza na prvih 30 (popravak 14.9.2026.) - stari kod je
+    # UVIJEK prikazivao samo filtrirano[:30], bez obzira koliko je zadataka stvarno
+    # zadovoljavalo filter (cjelina/potpoglavlje/težina). To je uzrokovalo TOČNO
+    # prijavljeni bug: kod filtriranja po cjelini/potpoglavlju znalo je postojati
+    # >30 podudaranja pa su zadaci iza 30. mjesta bili nevidljivi, ali kad bi se
+    # DODAO i tekstualni filtar, ukupan broj podudaranja bi pao ispod 30 i ti isti
+    # "nestali" zadaci bi se odjednom pojavili - profesor je to protumačio kao da ih
+    # pretraga po cjelini uopće ne nalazi, iako je uzrok bio isključivo prikaz prvih
+    # 30 rezultata. Sad se početnih 50 prikazuje odmah, a gumb "Prikaži još" otkriva
+    # ostatak u koracima od 50 - brojač se resetira na 50 čim se bilo koji filter
+    # promijeni (novi filter_potpis), da rezultati prošle pretrage ne "cure" u novu.
+    filter_potpis = (tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tezina)), f_tekst)
+    if st.session_state.get("tb_filter_potpis") != filter_potpis:
+        st.session_state["tb_filter_potpis"] = filter_potpis
+        st.session_state["tb_broj_prikaza"] = 50
+    broj_prikaza = st.session_state.get("tb_broj_prikaza", 50)
+
+    if len(filtrirano) > broj_prikaza:
+        st.caption(f"{len(filtrirano)} zadataka pronađeno (prikazano prvih {broj_prikaza})")
+    else:
+        st.caption(f"{len(filtrirano)} zadataka pronađeno (prikazani svi)")
+
+    for row in filtrirano[:broj_prikaza]:
         with st.container(border=True):
+            _vec_dodan = row.get("id") in ids_odabranih
+            _oznaka_dodano = "✅ " if _vec_dodan else ""
             st.markdown(
-                f"`{row.get('id','')}` · {row.get('cjelina','')} · "
+                f"{_oznaka_dodano}`{row.get('id','')}` · {row.get('cjelina','')} · "
                 f"{row.get('tezina','')} · {row.get('max_bodovi','') or '?'} bod."
             )
             st.markdown(row.get("tekst_zadatka_latex", ""))
@@ -351,15 +488,29 @@ with col_pretraga:
                 if _opc_raw:
                     st.markdown(prikazi_opcije_markdown(_opc_raw))
             if row.get("slika_zadana") == "da" and row.get("slika_putanja", "").strip():
-                if st.button("🖼️ Prikaži sliku", key=f"slika_{row.get('id')}"):
-                    _slika_bytes = dohvati_sliku_bytes(row["slika_putanja"].strip())
-                    if _slika_bytes:
-                        st.image(_slika_bytes, width=300)
-                    else:
-                        st.warning("Slika nije pronađena na Driveu (možda stari/neispravan zapis).")
-            if st.button("➕ Dodaj", key=f"add_{row.get('id')}"):
+                # Sličica izravno u popisu (popravak 14.9.2026., §25.11) - prije je
+                # trebalo kliknuti "Prikaži sliku" za SVAKI redak posebno; sad se mala
+                # sličica prikazuje odmah (Streamlitov st.image ima ugrađenu ikonu za
+                # uvećanje na hover, nije potreban zaseban gumb/klik za veći prikaz).
+                # Napomena: usporava prvi prikaz stranice ako je vidljivo mnogo
+                # zadataka sa slikama odjednom (svaka nova slika = Drive API poziv),
+                # ali dohvati_sliku_bytes je keširan 10 min pa ponovni pregled iste
+                # stranice/filtera ne ponavlja iste pozive.
+                _slika_bytes = dohvati_sliku_bytes(row["slika_putanja"].strip())
+                if _slika_bytes:
+                    st.image(_slika_bytes, width=130)
+                else:
+                    st.warning("Slika nije pronađena na Driveu (možda stari/neispravan zapis).")
+            if _vec_dodan:
+                st.button("✅ Već dodano", key=f"add_{row.get('id')}", disabled=True)
+            elif st.button("➕ Dodaj", key=f"add_{row.get('id')}"):
                 dodaj_zadatak(row)
                 st.rerun()
+
+    if len(filtrirano) > broj_prikaza:
+        if st.button(f"⬇️ Prikaži još ({min(50, len(filtrirano) - broj_prikaza)})", key="tb_prikazi_jos"):
+            st.session_state["tb_broj_prikaza"] = broj_prikaza + 50
+            st.rerun()
 
     with st.expander("➕ Dodaj ručni (ad-hoc) zadatak"):
         rucni_tekst = st.text_area("Tekst zadatka (LaTeX matematika unutar $...$)", key="rucni_tekst")
@@ -398,6 +549,73 @@ with col_pretraga:
 
 with col_odabrano:
     st.subheader(f"2. Odabrani zadaci ({len(st.session_state.odabrani)})")
+
+    with st.expander("📁 Predlošci testova (spremi/učitaj gotov odabir)"):
+        try:
+            _predlosci_redovi = init_predlosci_ws().get_all_records()
+        except Exception as _e:
+            _predlosci_redovi = []
+            st.caption(f"Ne mogu učitati predloške: {_e}")
+
+        if _predlosci_redovi:
+            _opcije_predlozaka = {
+                f"{r.get('naziv') or '(bez naziva)'} — {r.get('broj_zadataka', '?')} zad., "
+                f"{r.get('datum_spremanja', '')}": r
+                for r in _predlosci_redovi
+            }
+            _odabrani_naziv_predloska = st.selectbox(
+                "Postojeći predlošci", list(_opcije_predlozaka.keys()), key="predlozak_odabir"
+            )
+            _pcol1, _pcol2 = st.columns([1, 1])
+            if _pcol1.button("📂 Učitaj predložak"):
+                _r = _opcije_predlozaka[_odabrani_naziv_predloska]
+                _ucitaj_stanje(
+                    _r.get("sadrzaj_json", ""), _r.get("naslov_dokumenta", ""),
+                    _r.get("tip_dokumenta", ""), _r.get("prikazi_rjesenja", ""),
+                )
+                st.rerun()
+            if _pcol2.button("🗑️ Obriši predložak"):
+                _r = _opcije_predlozaka[_odabrani_naziv_predloska]
+                try:
+                    _ws_pred = init_predlosci_ws()
+                    _celija = _ws_pred.find(str(_r.get("predlozak_id", "")), in_column=1)
+                    if _celija:
+                        _ws_pred.delete_rows(_celija.row)
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Brisanje nije uspjelo: {_e}")
+        else:
+            st.caption("Još nema spremljenih predložaka.")
+
+        st.divider()
+        _novi_naziv_predloska = st.text_input("Naziv za spremanje trenutnog odabira", key="novi_naziv_predloska")
+        if st.button("💾 Spremi trenutni odabir kao predložak", disabled=not st.session_state.odabrani):
+            if not _novi_naziv_predloska.strip():
+                st.warning("Upiši naziv predloška.")
+            else:
+                try:
+                    _ws_pred = init_predlosci_ws()
+                    _postojeci_idjevi = [
+                        int(r.get("predlozak_id") or 0) for r in _ws_pred.get_all_records()
+                        if str(r.get("predlozak_id", "")).strip().isdigit()
+                    ]
+                    _novi_id = (max(_postojeci_idjevi) + 1) if _postojeci_idjevi else 1
+                    _stanje = _stanje_za_spremanje(
+                        st.session_state.get("naslov_dok", ""),
+                        st.session_state.get("tip_dok_sel", ""),
+                        st.session_state.get("prikazi_rjesenja_cb", True),
+                    )
+                    _ws_pred.append_row([
+                        str(_novi_id), _novi_naziv_predloska.strip(),
+                        datetime.datetime.now().strftime("%d.%m.%Y. %H:%M"),
+                        _stanje["naslov_dokumenta"], _stanje["tip_dokumenta"],
+                        str(_stanje["prikazi_rjesenja"]), str(_stanje["broj_zadataka"]),
+                        _stanje["sadrzaj_json"],
+                    ])
+                    st.success(f"Predložak „{_novi_naziv_predloska.strip()}” spremljen.")
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Spremanje nije uspjelo: {_e}")
 
     if not st.session_state.odabrani:
         st.info("Još nema odabranih zadataka — dodaj ih s lijeve strane.")
@@ -481,25 +699,98 @@ st.divider()
 st.subheader("3. Metapodaci i generiranje")
 
 mc1, mc2, mc3 = st.columns(3)
-naslov = mc1.text_input("Naslov dokumenta", value="Test — Kvadratna jednadžba")
+naslov = mc1.text_input("Naslov dokumenta", value="Test — Kvadratna jednadžba", key="naslov_dok")
 datum = mc2.date_input("Datum", value=datetime.date.today())
-tip_dok = mc3.selectbox("Tip dokumenta", TIP_DOKUMENTA_OPCIJE)
+tip_dok = mc3.selectbox("Tip dokumenta", TIP_DOKUMENTA_OPCIJE, key="tip_dok_sel")
 
 je_test = tip_dok == "Pisana provjera znanja"
 ukupno_bodova = ""
 if je_test:
-    try:
-        ukupno_bodova = str(sum(int(z["bodovi"]) for z in st.session_state.odabrani if str(z["bodovi"]).strip().isdigit()))
-    except Exception:
-        ukupno_bodova = ""
+    # Popravak 14.9.2026. (§25.11): stari zbroj (`int(...)` + `.isdigit()`) je TIHO
+    # preskakao svaki zadatak s praznim, decimalnim (npr. "2,5") ili na bilo koji drugi
+    # način neispravnim upisom bodova - profesor nije imao NIKAKAV signal da prikazani
+    # zbroj ne uključuje sve zadatke. Sad koristi isti broj_iz_stringa (podržava
+    # decimalni zarez, isto kao provjera kategorija) PLUS eksplicitno upozorenje koji
+    # točno zadaci nemaju valjan broj bodova, umjesto tihog izostavljanja iz zbroja.
+    _zbroj_bodova = 0.0
+    _bez_bodova = []
+    for _i_bod, _z_bod in enumerate(st.session_state.odabrani, start=1):
+        _sirovo_bod = str(_z_bod.get("bodovi", "")).strip()
+        if not _sirovo_bod:
+            _bez_bodova.append((_i_bod, _z_bod.get("id") or "ručni zadatak"))
+            continue
+        try:
+            _zbroj_bodova += broj_iz_stringa(_sirovo_bod)
+        except ValueError:
+            _bez_bodova.append((_i_bod, _z_bod.get("id") or "ručni zadatak"))
+    ukupno_bodova = f"{_zbroj_bodova:g}" if st.session_state.odabrani else ""
     st.caption(f"Ukupno bodova (automatski zbroj): **{ukupno_bodova or '—'}**")
+    if _bez_bodova:
+        st.warning(
+            f"⚠️ {len(_bez_bodova)} zadatak(a) NEMA upisan valjan broj bodova pa NIJE uračunat "
+            "u zbroj iznad: " + ", ".join(f"Zadatak {_i} ({_zid})" for _i, _zid in _bez_bodova)
+            + ". Provjeri polje 'Bodovi' uz svaki zadatak u koloni '2. Odabrani zadaci' prije generiranja."
+        )
 
-prikazi_rjesenja = st.checkbox("Uključi rješenja na kraju dokumenta", value=True)
+prikazi_rjesenja = st.checkbox("Uključi rješenja na kraju dokumenta", value=True, key="prikazi_rjesenja_cb")
 st.caption(
     "💡 Prikaz ponuđenih odgovora (A/B/C/D) za višestruki izbor, kategorije vrednovanja "
     "(UZV/RP/MK) i bodovi uređuju se **po zadatku** — vidi kontrole uz svaki zadatak u "
     "koloni '2. Odabrani zadaci' gore."
 )
+
+# Gruba procjena broja stranica (§25.11, 14.9.2026.) — NIJE točan broj (stvaran
+# raspored ovisi o pdflatexu), samo orijentir PRIJE čekanja na kompajliranje.
+# Kalibrirano na empirijski nalaz iz §25 (13 mix zadataka ≈ 2 stranice sa
+# zaglavljem/rješenjima) — "težina" po zadatku raste za dulji tekst, sliku i broj
+# ponuđenih odgovora.
+if st.session_state.odabrani:
+    _tezina_ukupno = 0.0
+    for _z_proc in st.session_state.odabrani:
+        _t = 1.0
+        if len(_z_proc.get("tekst", "") or "") > 250:
+            _t += 0.5
+        if _z_proc.get("slika_putanja"):
+            _t += 1.0
+        if _z_proc.get("tip_zadatka") == "visestruki_izbor":
+            _t += 0.15 * len(_z_proc.get("ponudjeni_odgovori") or [])
+        _tezina_ukupno += _t
+    _str_zadaci = max(1, math.ceil(_tezina_ukupno / 6.5))
+    _str_rjesenja = max(1, math.ceil(len(st.session_state.odabrani) / 15)) if prikazi_rjesenja else 0
+    _tekst_procjene = f"📄 Gruba procjena: ~{_str_zadaci} str. zadataka"
+    if _str_rjesenja:
+        _tekst_procjene += f" + ~{_str_rjesenja} str. rješenja"
+    st.caption(_tekst_procjene + " — stvarni PDF (nakon kompajliranja) može odstupati.")
+
+# ---------------------------------------------------------------
+# Autospremanje nacrta (§25.11, 14.9.2026.) — štiti od gubitka rada ako se
+# Streamlit sesija resetira (istek, hard refresh) dok profesor slaže test.
+# Sprema SAMO kad se sadržaj stvarno promijenio od zadnjeg spremanja (usporedba
+# hasha), ne na svaki rerun (npr. otvaranje/zatvaranje expandera) - da se ne
+# troši Sheets write-kvota nepotrebno (v. §12 CAKI_MASTER_BAZA, dokumentiran
+# presedan 429 grešaka kod prevelikog broja pisanja u minuti). Greška u pisanju
+# se tiho guta - autospremanje NIKAD ne smije prekinuti profesorov rad.
+# ---------------------------------------------------------------
+
+if st.session_state.odabrani:
+    _draft_stanje = _stanje_za_spremanje(naslov, tip_dok, prikazi_rjesenja)
+    _draft_potpis = hashlib.sha256(_draft_stanje["sadrzaj_json"].encode("utf-8")).hexdigest()
+    if st.session_state.get("_draft_zadnji_potpis") != _draft_potpis:
+        try:
+            _ws_draft = init_draft_ws()
+            _draft_redak = [
+                "trenutni", datetime.datetime.now().strftime("%d.%m.%Y. %H:%M"),
+                _draft_stanje["naslov_dokumenta"], _draft_stanje["tip_dokumenta"],
+                str(_draft_stanje["prikazi_rjesenja"]), str(_draft_stanje["broj_zadataka"]),
+                _draft_stanje["sadrzaj_json"],
+            ]
+            if len(_ws_draft.get_all_values()) < 2:
+                _ws_draft.append_row(_draft_redak)
+            else:
+                _ws_draft.update(range_name="A2:G2", values=[_draft_redak])
+            st.session_state["_draft_zadnji_potpis"] = _draft_potpis
+        except Exception:
+            pass
 
 dodaj_mamac = st.checkbox(
     "➕ Dodaj mamac opciju svim zadacima višestrukog izbora "
