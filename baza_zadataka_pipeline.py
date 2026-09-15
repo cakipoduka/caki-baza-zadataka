@@ -21,6 +21,9 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
+from teorija_markup import teorija_u_ptx_odlomke
+from filtriraj_zadatke_za_skriptu import filtriraj_zadatke_za_skriptu
+
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -573,32 +576,51 @@ def _build_example_lines(row, images_dir_abs, slike_izvor_dir):
     lines = [f'      <example xml:id="{zid}">'] + body_lines + ['      </example>']
     return lines, slika_ok
 
-def _build_introduction_lines(teorija_row):
+def _build_introduction_lines(teorija_row, verzija="ucenik"):
     """Gradi <introduction> blok (§27.2) iz jednog retka Teorija_potpoglavlja (dict s
     TEORIJA_HEADERS ključevima), ili None ako nema teksta (izostavlja se, bez greške).
-    Odlomci se dijele po praznom retku -> svaki odlomak zaseban <p>; $...$ matematika ide
-    kroz istu _pretext_text konverziju kao i tekst zadatka. Ako je video_url popunjen,
-    dodaje se <video> na kraju (isto sirovo kao kod zadataka - ekstrakcija ID-a je §27.4)."""
+
+    Odlomci se dijele preko teorija_markup.teorija_u_ptx_odlomke (14.9.2026., §27.5) -
+    ta funkcija prepoznaje tri konvencije koje se tipkaju izravno u tekst_teorije_latex:
+    !!isticanje!! (-> <alert>), \\pojam{Naziv} (-> <term>), i [RJESENJE]...[/RJESENJE]
+    blokove (postupak koji profesor pokazuje uživo, NE ide u učeničku verziju). $...$
+    matematika i XML-escaping i dalje idu kroz POSTOJEĆU _pretext_text - prosljeđuje se
+    kao `render` callback, primjenjuje se SAMO na običan tekst (nikad na već umetnute
+    <alert>/<term> oznake, da se one ne dvostruko-eskejpaju).
+
+    verzija="ucenik" (zadano) - [RJESENJE] blokovi se u potpunosti izbacuju iz izlaza.
+    verzija="profesor"        - [RJESENJE] blokovi ostaju, umotani u <remark>.
+
+    Ako je veza_vjezbaj popunjena, dodaje se poveznica "Vježbaj ovo" na kraju uvoda.
+    Ako je video_url popunjen, dodaje se <video> na kraju (isto sirovo kao kod zadataka -
+    ekstrakcija ID-a je §27.4)."""
     if not teorija_row:
         return None
     tekst = (teorija_row.get("tekst_teorije_latex") or "").strip()
     if not tekst:
         return None
     video_url = (teorija_row.get("video_url") or "").strip()
+    veza_vjezbaj = (teorija_row.get("veza_vjezbaj") or "").strip()
+
     lines = ['      <introduction>']
-    odlomci = re.split(r"\n\s*\n", tekst)
-    for odlomak in odlomci:
-        odlomak = odlomak.strip()
-        if not odlomak:
-            continue
-        lines.append(f'        <p>{_pretext_text(odlomak)}</p>')
+    for sadrzaj in teorija_u_ptx_odlomke(tekst, verzija=verzija, render=_pretext_text):
+        if sadrzaj.startswith("<remark>"):
+            # <remark> blok (rjesenje, samo verzija="profesor") stiže VEC potpuno
+            # omotan iz teorija_u_ptx_odlomke, s <p> tagovima oko svakog odlomka -
+            # ne dodavati jos jedan <p> omot oko cijelog bloka.
+            lines.append(f'        {sadrzaj}')
+        else:
+            lines.append(f'        <p>{sadrzaj}</p>')
+    if veza_vjezbaj:
+        lines.append(f'        <p>Vježbaj ovo: <url href="{_xml_escape(veza_vjezbaj)}">praksa.cakipoduka.com</url></p>')
     if video_url:
         lines.append(f'        <video youtube="{_xml_escape(video_url)}"/>')
     lines.append('      </introduction>')
     return lines
 
 def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir,
-                          cjelina=None, teorija_po_potpoglavlju=None):
+                          cjelina=None, teorija_po_potpoglavlju=None, verzija_teorije="ucenik",
+                          filtriraj_u_skriptu=False):
     """Vraća (lines, broj_slika) - unutrašnji sadržaj BEZ vanjskog <article>/<title> omota:
     ako je potpoglavlja_redoslijed zadan, grupira zadatke u <section> po potpoglavlju
     (redoslijedom iz šifrarnika; zadaci bez prepoznatog potpoglavlja idu u 'Ostalo' na kraju);
@@ -612,7 +634,17 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
     dobiva <introduction> na početku (prije <example>/<exercises>) AKO postoji unesena
     teorija za taj par. Izostavljanje ovih parametara (stari pozivi) ponaša se identično
     kao prije - unatrag kompatibilno. Vrijedi SAMO za sekcionirani slučaj (po potpoglavlju),
-    ne za neskecionirani blok niti za grupu bez potpoglavlja ("Ostalo")."""
+    ne za neskecionirani blok niti za grupu bez potpoglavlja ("Ostalo").
+
+    §27.5 (14.9.2026., "skripta"): filtriraj_u_skriptu=True ograničava zadaci_redovi SAMO na
+    retke gdje je stupac 'u_skriptu' = "DA" (vidi filtriraj_zadatke_za_skriptu.py) - za PDF
+    "skriptu" (tiskano, fiksan skup "zadaci za rad na satu"). Web/HTML build i dalje poziva
+    bez ovog parametra (zadano False) i prikazuje CIJELI fond, bez ikakve promjene ponašanja.
+    verzija_teorije se prosljeđuje u _build_introduction_lines (v. ondje) - zadano "ucenik"
+    je neutralno za postojeći sadržaj koji još ne koristi [RJESENJE] konvenciju."""
+    if filtriraj_u_skriptu:
+        zadaci_redovi = filtriraj_zadatke_za_skriptu(zadaci_redovi)
+
     lines = []
     broj_slika = 0
 
@@ -664,7 +696,8 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
         lines.append(f'    <section xml:id="{sec_id}">')
         lines.append(f'      <title>{_xml_escape(naslov_sekcije)}</title>')
         if cjelina and potpoglavlje and teorija_po_potpoglavlju:
-            intro_lines = _build_introduction_lines(teorija_po_potpoglavlju.get((cjelina, potpoglavlje)))
+            intro_lines = _build_introduction_lines(
+                teorija_po_potpoglavlju.get((cjelina, potpoglavlje)), verzija=verzija_teorije)
             if intro_lines:
                 lines.extend(intro_lines)
         dio, s = _dodaj_primjere_i_vjezbe(grupa, '      ')
@@ -675,13 +708,17 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
     return lines, broj_slika
 
 def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir, potpoglavlja_redoslijed=None,
-                           cjelina=None, teorija_po_potpoglavlju=None):
+                           cjelina=None, teorija_po_potpoglavlju=None, verzija_teorije="ucenik",
+                           filtriraj_u_skriptu=False):
     """Gradi samostalan PreTeXt dokument: <pretext><article>...</article></pretext>
     (root mora biti <pretext> po PreTeXt shemi - ranija verzija je to preskakala).
-    cjelina/teorija_po_potpoglavlju: v. _build_inner_content (§27.2, opcionalno)."""
+    cjelina/teorija_po_potpoglavlju: v. _build_inner_content (§27.2, opcionalno).
+    verzija_teorije/filtriraj_u_skriptu: v. _build_inner_content (§27.5, opcionalno,
+    zadano ponašanje = identično prijašnjem, bez promjene za postojeće pozive)."""
     inner_lines, broj_slika = _build_inner_content(
         zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir,
-        cjelina=cjelina, teorija_po_potpoglavlju=teorija_po_potpoglavlju)
+        cjelina=cjelina, teorija_po_potpoglavlju=teorija_po_potpoglavlju,
+        verzija_teorije=verzija_teorije, filtriraj_u_skriptu=filtriraj_u_skriptu)
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>',
              f'  <article xml:id="{_sanitize_id(xml_id_root)}">',
              f'    <title>{_xml_escape(naslov)}</title>']
