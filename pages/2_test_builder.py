@@ -13,6 +13,7 @@ Streamlit Cloud: za pdflatex, dodaj packages.txt (vidi README.md).
 import copy
 import datetime
 import hashlib
+import io
 import json
 import math
 import os
@@ -22,6 +23,7 @@ import tempfile
 
 import gspread
 import streamlit as st
+from PIL import Image
 
 from baza_zadataka_pipeline import (
     get_drive_service,
@@ -146,6 +148,27 @@ def dohvati_sliku_bytes(naziv_datoteke):
         return drive_service.files().get_media(fileId=datoteke[0]["id"], supportsAllDrives=True).execute()
     except Exception:
         return None
+
+
+def slika_valjana_za_prikaz(slika_bytes):
+    """Provjerava da su bajtovi STVARNO dekodirljiva slika prije nego se proslijede
+    Streamlitovom st.image(). Dodano 15.9.2026. nakon pada cijelog procesa
+    ('free(): corrupted unsorted chunks', bez ijednog Python tracebacka) kad je
+    odabir 2 cjeline odjednom u pretrazi prvi put u rezultate uključio veći broj
+    slika istovremeno - st.image() interno dekodira sliku preko Pillowa/C
+    biblioteka (libjpeg/libpng/libwebp), a te biblioteke na oštećenoj/nepotpunoj/
+    pogrešnoj datoteci mogu srušiti CIJELI proces umjesto da bace Python iznimku
+    - obična try/except OKO st.image() to ne bi uhvatila. Zato provjeravamo
+    PRIJE poziva, s Image.verify() (ne puno dekodiranje, ali dovoljno da otkrije
+    veliku većinu stvarnih slučajeva: kriv tip datoteke, prekinut upload...).
+    Napomena: ovo ne jamči 100% da baš svaka moguća greška u dekoderu neće nikad
+    srušiti proces, ali pokriva realne uzroke koji se stvarno događaju."""
+    try:
+        with Image.open(io.BytesIO(slika_bytes)) as _im:
+            _im.verify()
+        return True
+    except Exception:
+        return False
 
 
 @st.cache_data(ttl=300)
@@ -510,8 +533,13 @@ with col_pretraga:
                 # ali dohvati_sliku_bytes je keširan 10 min pa ponovni pregled iste
                 # stranice/filtera ne ponavlja iste pozive.
                 _slika_bytes = dohvati_sliku_bytes(row["slika_putanja"].strip())
-                if _slika_bytes:
+                if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
                     st.image(_slika_bytes, width=130)
+                elif _slika_bytes:
+                    st.warning(
+                        f"⚠️ Slika '{row['slika_putanja'].strip()}' izgleda oštećena/neispravna "
+                        "(nije uspjelo dekodiranje) - provjeri original na Driveu."
+                    )
                 else:
                     st.warning("Slika nije pronađena na Driveu (možda stari/neispravan zapis).")
             if _vec_dodan:
@@ -659,8 +687,13 @@ with col_odabrano:
                     )
                 if z.get("slika_putanja"):
                     _slika_bytes = dohvati_sliku_bytes(z["slika_putanja"])
-                    if _slika_bytes:
+                    if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
                         st.image(_slika_bytes, width=220)
+                    elif _slika_bytes:
+                        st.warning(
+                            f"⚠️ Slika '{z['slika_putanja']}' izgleda oštećena/neispravna "
+                            "(nije uspjelo dekodiranje) - provjeri original na Driveu."
+                        )
                     else:
                         st.warning(f"⚠️ Slika '{z['slika_putanja']}' nije pronađena na Driveu.")
                 z["bodovi"] = st.text_input("Bodovi", value=z["bodovi"], key=f"bod_{idx}")
