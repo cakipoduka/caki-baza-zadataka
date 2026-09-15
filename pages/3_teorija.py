@@ -1,17 +1,31 @@
 """
 CAKI Matematika - pages/3_teorija.py
-Streamlit stranica za unos/uređivanje teorije po potpoglavlju (§27.2) - jednokratni
-unos, izmjene rijetke (pol/godišnje). Sprema se u tab 'Teorija_potpoglavlja' (jedan
-redak = jedno (cjelina, potpoglavlje), overwrite pri spremanju - nema povijesti verzija).
+
+IZMJENE (14.9.2026, u odnosu na prethodnu verziju):
+  1. Dodane konvencije za pisanje u tekst_teorije_latex, obradjuje ih novi modul
+     teorija_markup.py: !!isticanje!! , \\pojam{Naziv} , [RJESENJE]...[/RJESENJE]
+  2. Pregled je sada DVOSTRUKI (Ucenik / Profesor) - koristi teorija_markup da Caki
+     odmah vidi hoce li ucenik vidjeti rjesenje ili ne, PRIJE spremanja.
+  3. Novo polje "Veza za vjezbanje" (veza_vjezbaj) - rucno zalijepljen link na
+     praksa.cakipoduka.com za tu cjelinu/potpoglavlje, koristi se za "Vjezbaj ovo"
+     poveznicu u PreTeXt izlazu.
+
+VAZNO - PRIJE PRVOG KORISTENJA OVE VERZIJE:
+  - U baza_zadataka_pipeline.py, TEORIJA_HEADERS MORA dobiti novi element "veza_vjezbaj"
+    (redoslijed po zelji, npr. odmah iza "geogebra_material_id", prije "zadnja_izmjena").
+  - U samom Google Sheetu, tab "Teorija_potpoglavlja" mora dobiti STUPAC s tocno istim
+    nazivom zaglavlja "veza_vjezbaj" na istom mjestu kao u TEORIJA_HEADERS.
+    Bez ovoga se novo polje NECE spremati (tiho ce se izgubiti pri snimanju).
+  - teorija_markup.py mora biti u istom repou (uz baza_zadataka_pipeline.py).
 
 Izvor teorije: direktan LaTeX paste (preporučeno, isti $...$ zapis kao u ostatku baze),
 ILI upload PDF-a/slike -> Mathpix OCR kao POLAZNI predložak koji se OBAVEZNO pregleda/
 uredi prije spremanja (OCR ovdje NIKAD ne sprema izravno, samo puni tekstualno polje).
 
 Prikaz u PreTeXt izlazu (Korak 3.1): <introduction> na početku sekcije potpoglavlja,
-prije <example>/<exercises> - vidi _build_introduction_lines u baza_zadataka_pipeline.py.
-GeoGebra (geogebra_material_id) se ovdje samo UNOSI/sprema - PreTeXt embed generiranje
-za nju čeka §27.4 (točna sintaksa još nije potvrđena, ne pogađa se unaprijed).
+prije <example>/<exercises> - vidi _build_introduction_lines u baza_zadataka_pipeline.py,
+koja sada za sadrzaj paragrafa treba pozvati teorija_markup.teorija_u_ptx_odlomke() -
+vidi UPUTA_integracija_teorija.md za tocan nacin.
 """
 import json
 from datetime import datetime
@@ -27,6 +41,7 @@ from baza_zadataka_pipeline import (
     get_teorija_po_potpoglavlju,
     mathpix_ocr_datoteka,
 )
+from teorija_markup import ukloni_markup_za_pregled
 
 st.set_page_config(page_title="CAKI Teorija", page_icon="📖", layout="wide")
 
@@ -81,7 +96,7 @@ def _teorija_worksheet():
     return get_or_create_worksheet(init_sheet(), "Teorija_potpoglavlja", TEORIJA_HEADERS)
 
 
-def _spremi_teoriju(cjelina, potpoglavlje, tekst, video_url, geogebra_material_id):
+def _spremi_teoriju(cjelina, potpoglavlje, tekst, video_url, geogebra_material_id, veza_vjezbaj):
     """Upisuje/ažurira TOČNO JEDAN redak za (cjelina, potpoglavlje) - traži postojeći
     redak po tom paru, ažurira ga preko batch_update ako postoji, inače dodaje novi."""
     ws = _teorija_worksheet()
@@ -105,14 +120,15 @@ def _spremi_teoriju(cjelina, potpoglavlje, tekst, video_url, geogebra_material_i
         "tekst_teorije_latex": tekst,
         "video_url": video_url,
         "geogebra_material_id": geogebra_material_id,
+        "veza_vjezbaj": veza_vjezbaj,
         "zadnja_izmjena": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
     if redak_broj is None:
-        ws.append_row([vrijednosti[h] for h in TEORIJA_HEADERS])
+        ws.append_row([vrijednosti.get(h, "") for h in TEORIJA_HEADERS])
     else:
         azuriranja = [
-            {"range": f"{_col_letter(h, headers=TEORIJA_HEADERS)}{redak_broj}", "values": [[vrijednosti[h]]]}
+            {"range": f"{_col_letter(h, headers=TEORIJA_HEADERS)}{redak_broj}", "values": [[vrijednosti.get(h, "")]]}
             for h in TEORIJA_HEADERS
         ]
         ws.batch_update(azuriranja)
@@ -130,6 +146,30 @@ st.caption(
     "(polugodišnje/godišnje) - ako ne diraš postojeći unos, PreTeXt build i dalje koristi "
     "zadnje spremljeno stanje bez ikakve dodatne akcije."
 )
+
+with st.expander("🖊️ Kako pisati teoriju (konvencije za tipkanje)"):
+    st.markdown(
+        """
+Ovo su tri oznake koje možeš koristiti izravno u tekstu ispod, slobodno kombinirane:
+
+- `!!vazan tekst ili formula!!` — istaknuto (npr. crvenom bojom) u konačnom izlazu.
+- `\\pojam{Naziv pojma}` — obavezno omotaj **sam naziv pojma koji definiraš**, ne
+  formulu iza njega. Primjer: `\\pojam{Nultočka funkcije} je vrijednost argumenta x
+  za koju je f(x) = 0.` (a ne `\\pojam{f(x)=0}`). Ovo se koristi i za automatski
+  pojmovnik.
+- `[RJESENJE]` ... `[/RJESENJE]` — svaki marker na svom retku. Sve između se u
+  učeničkoj verziji u potpunosti briše, a u profesorskoj ostaje, jasno označeno.
+  Primjer:
+
+```
+Primjer 8. Nacrtajmo graf funkcije f(x) = -2x + 3.
+
+[RJESENJE]
+Za x = 0 dobivamo f(0) = 3, a za x = 1 dobivamo f(1) = 1.
+[/RJESENJE]
+```
+        """
+    )
 
 if st.button("🔄 Osvježi", key="osvjezi_teorija"):
     _ucitaj_sifrarnik_potpoglavlja.clear()
@@ -169,7 +209,9 @@ with st.expander("📄 Učitaj iz PDF-a/slike (OCR) kao polazni predložak - opc
         "OCR (Mathpix, isti pipeline kao za zadatke) ovdje NIKAD ne sprema izravno - samo "
         "predloži tekst u polje ispod, koje MORAŠ pregledati i po potrebi ispraviti prije "
         "spremanja (formule iz OCR-a znaju biti krivo pročitane). Word dokument prvo spremi/"
-        "izvezi kao PDF - OCR ovdje podržava isključivo PDF i slike, isto kao kod obrade ispita."
+        "izvezi kao PDF - OCR ovdje podržava isključivo PDF i slike, isto kao kod obrade ispita. "
+        "OCR ne poznaje konvencije !!...!!, \\pojam{} ni [RJESENJE] - te oznake dodaješ ručno "
+        "nakon OCR-a."
     )
     ocr_datoteka = st.file_uploader(
         "PDF ili slika teorije", type=["pdf", "png", "jpg", "jpeg", "gif", "webp"], key=f"ocr_upload_{tekst_key}",
@@ -197,13 +239,18 @@ novi_tekst = st.text_area(
 )
 
 if novi_tekst.strip():
-    with st.expander("👁️ Pregled (renderirano, ne sirovi LaTeX)", expanded=True):
-        for odlomak in novi_tekst.split("\n\n"):
-            odlomak = odlomak.strip()
-            if odlomak:
+    verzija_pregleda = st.radio(
+        "👁️ Pregled za:", ["ucenik", "profesor"], horizontal=True,
+        format_func=lambda v: "Učenik (bez rješenja)" if v == "ucenik" else "Profesor (s rješenjima)",
+        key=f"teorija_pregled_verzija_{cjelina}_{potpoglavlje}",
+    )
+    with st.expander(f"👁️ Pregled — {verzija_pregleda}", expanded=True):
+        pregled = ukloni_markup_za_pregled(novi_tekst, verzija=verzija_pregleda)
+        for odlomak in pregled.split("\n\n"):
+            if odlomak.strip():
                 st.write(odlomak)
 
-st.subheader("3. Video / GeoGebra (opcionalno)")
+st.subheader("3. Video / GeoGebra / vježba (opcionalno)")
 video_url = st.text_input(
     "YouTube video (video_url)", value=postojeci.get("video_url", ""),
     key=f"teorija_video_{cjelina}_{potpoglavlje}",
@@ -217,10 +264,23 @@ geogebra_material_id = st.text_input(
         "(točna sintaksa GeoGebra embeda u PreTeXt-u nije potvrđena, ne pogađa se unaprijed)."
     ),
 )
+veza_vjezbaj = st.text_input(
+    "Veza za vježbanje na praksa.cakipoduka.com (veza_vjezbaj)",
+    value=postojeci.get("veza_vjezbaj", ""),
+    key=f"teorija_vjezbaj_{cjelina}_{potpoglavlje}",
+    help=(
+        "Ručno zalijepljen link na relevantnu stranicu/cjelinu u Baza Zadataka. Prikazuje se "
+        "kao 'Vježbaj ovo' poveznica na kraju teorije u PreTeXt izlazu. Prazno polje = "
+        "poveznica se jednostavno ne prikazuje."
+    ),
+)
 
 st.divider()
 if st.button("💾 Spremi teoriju", type="primary", key=f"spremi_teorija_{cjelina}_{potpoglavlje}"):
-    novi = _spremi_teoriju(cjelina, potpoglavlje, novi_tekst.strip(), video_url.strip(), geogebra_material_id.strip())
+    novi = _spremi_teoriju(
+        cjelina, potpoglavlje, novi_tekst.strip(), video_url.strip(),
+        geogebra_material_id.strip(), veza_vjezbaj.strip(),
+    )
     st.success(("✅ Dodan novi redak" if novi else "✅ Ažuriran postojeći redak") + f" za {cjelina} → {potpoglavlje}.")
     _ucitaj_teoriju.clear()
     st.rerun()
