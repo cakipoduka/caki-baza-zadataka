@@ -54,6 +54,16 @@ ZADACI_HEADERS = [
     # dupliciraju se na oba mjesta). DODAN NA KRAJU popisa (isti razlog kao
     # redoslijed_u_potpoglavlju gore) - fizički dodaj kao NOVI zadnji stupac u tabu 'Zadaci'.
     "koristi_kao_primjer_na_satu",
+    # 🆕 (§27.5, 15.9.2026.) "DA" (prazno = ne ulazi) - zadatak za SAMOSTALAN rad učenika na
+    # satu koji ulazi u TISKANU skriptu, kao FIKSNI skup (isti zadaci na istom mjestu svaki
+    # put kad se skripta printa). Koristi ga filtriraj_zadatke_za_skriptu() SAMO na
+    # print/skripta grani builda (Korak 3.1b) - web/HTML (praksa.cakipoduka.com) i redovni
+    # PDF (Korak 3.1) uvijek prikazuju CIJELI fond, neovisno o ovom stupcu. Razlikuje se od
+    # koristi_kao_primjer_na_satu iznad (koji profesor rješava uživo, ne učenik samostalno).
+    # Uređuje se kvačicom "🖨️ Skripta" na stranici "📑 Redoslijed zadataka po potpoglavlju".
+    # DODAN NA KRAJU popisa (isti razlog kao gornja dva polja) - fizički dodaj kao NOVI
+    # zadnji stupac u tabu 'Zadaci'.
+    "u_skriptu",
 ]
 
 SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
