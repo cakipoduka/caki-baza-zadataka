@@ -303,7 +303,7 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
 
 TEORIJA_HEADERS = [
     "cjelina", "potpoglavlje", "tekst_teorije_latex", "video_url",
-    "geogebra_material_id", "zadnja_izmjena",
+    "geogebra_material_id", "zadnja_izmjena","veza_vjezbaj",
 ]
 
 def get_or_create_worksheet(sheet, title: str, headers: list, rows: int = 500):
