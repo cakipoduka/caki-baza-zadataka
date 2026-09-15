@@ -759,6 +759,37 @@ def _forma_uredi_zadatak(row, broj_retka, idx):
         st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
 
     # ------------------------------------------------------------------
+    # Sekcija 2b: Brisanje zadatka (dodano 15.9.2026. na korisnikov zahtjev)
+    # ------------------------------------------------------------------
+    # NAMJERNO stavljeno OVDJE (prije sekcije "Slika"), ne na kraj funkcije - sekcija
+    # "Slika" ima `if not nova_slika: return` odmah nakon file_uploadera (linija ~794),
+    # pa bi bilo što stavljeno iza njega izvršavalo samo kad je profesor upravo
+    # uploadao novu sliku. Ovako se gumb za brisanje uvijek prikazuje.
+    st.divider()
+    st.subheader("🗑️ Brisanje zadatka")
+    st.warning(
+        "Brisanje je TRAJNO - cijeli redak se briše iz baze (Google Sheets), nema undo. "
+        "Koristi samo za zadatke koji su duplikat, netočni ili greškom uneseni."
+    )
+    potvrda_brisanja = st.checkbox(
+        f"Potvrđujem da želim trajno izbrisati zadatak #{get(row, 'id') or broj_retka}",
+        key=f"potvrdi_brisanje_{broj_retka}",
+    )
+    if st.button(
+        "🗑️ IZBRISI ZADATAK", key=f"izbrisi_{broj_retka}", disabled=not potvrda_brisanja,
+    ):
+        with st.spinner("Brišem zadatak..."):
+            try:
+                ws_zadaci.delete_rows(broj_retka)
+            except Exception as e:
+                st.error(f"Greška: {e}")
+                st.stop()
+        st.success(f"🗑️ Zadatak #{get(row, 'id') or broj_retka} izbrisan.")
+        st.session_state["provjera_uredi_broj_retka"] = None
+        _ucitaj_zadatke_za_pretragu.clear()
+        st.rerun()
+
+    # ------------------------------------------------------------------
     # Sekcija 3: Slika
     # ------------------------------------------------------------------
     st.divider()
