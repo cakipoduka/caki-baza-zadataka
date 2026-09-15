@@ -913,8 +913,8 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
         )
         zad_lines.append("")
         if ukljuci_rjesenja:
-            rjesenje_raw = (z.get("rjesenje") or "").strip()
-            konacan_raw = (z.get("konacan_odgovor") or "").strip()
+            rjesenje_raw = str(z.get("rjesenje") or "").strip()
+            konacan_raw = str(z.get("konacan_odgovor") or "").strip()
             if rjesenje_raw or konacan_raw:
                 rjesenje_tex = escape_outside_math(rjesenje_raw) if rjesenje_raw else "\\textit{Puni postupak nije unesen u bazu.}"
                 konacan_tex = escape_outside_math(konacan_raw)
@@ -928,8 +928,13 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
 
 def broj_dolara(text):
     """Broji '$' znakove koji NISU escapirani (\\$) - koristi se za provjeru
-    parnosti prije slanja u LaTeX. Neparan broj = zadatak će razbiti kompajliranje."""
-    return len(re.findall(r"(?<!\\)\$", text or ""))
+    parnosti prije slanja u LaTeX. Neparan broj = zadatak će razbiti kompajliranje.
+
+    NAPOMENA (15.9.2026.): neka polja (konacan_odgovor, rjesenje) znaju stići kao
+    broj (int/float) umjesto string - stari kod (`text or ""`) je takvu vrijednost
+    slao izravno u re.findall, što baca TypeError. str() to ispravlja bez obzira
+    na tip; None i prazan string i dalje daju 0."""
+    return len(re.findall(r"(?<!\\)\$", str(text) if text is not None else ""))
 
 
 def pronadji_neuparene_dolare(zadaci_odabrani):
