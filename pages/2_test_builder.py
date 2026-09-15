@@ -474,6 +474,19 @@ with col_pretraga:
     else:
         st.caption(f"{len(filtrirano)} zadataka pronađeno (prikazani svi)")
 
+    # Masovno dodavanje (15.9.2026., UX prijedlog - stavka 3) - dodaje sve TRENUTNO
+    # PRIKAZANE (do broj_prikaza) zadatke koji još nisu u "2. Odabrani zadaci" u jednom
+    # potezu, umjesto pojedinačnog "➕ Dodaj" po zadatku. Namjerno ograničeno na
+    # prikazane (ne na CIJELI filtrirano skup) - da profesor uvijek zna točno koliko
+    # će i kojih zadataka dodati, bez iznenađenja ako filter vrati npr. 200 podudaranja
+    # - suzi filter (ili klikni "Prikaži još") ako treba dodati više odjednom.
+    _neprikazani_dodani = [row for row in filtrirano[:broj_prikaza] if row.get("id") not in ids_odabranih]
+    if _neprikazani_dodani:
+        if st.button(f"➕ Dodaj sve prikazane ({len(_neprikazani_dodani)})", key="tb_dodaj_sve_prikazane"):
+            for row in _neprikazani_dodani:
+                dodaj_zadatak(row)
+            st.rerun()
+
     for row in filtrirano[:broj_prikaza]:
         with st.container(border=True):
             _vec_dodan = row.get("id") in ids_odabranih
@@ -620,6 +633,14 @@ with col_odabrano:
     if not st.session_state.odabrani:
         st.info("Još nema odabranih zadataka — dodaj ih s lijeve strane.")
 
+    # Redoslijed preko brojeva pozicija (15.9.2026., UX prijedlog - stavka 2) - dopuna
+    # uz postojeće ⬆️/⬇️ strelice (ostaju, za brzo fino-podešavanje za 1 mjesto), korisno
+    # kad treba premjestiti zadatak npr. s pozicije 2 na poziciju 15 u dužoj listi bez
+    # 13 uzastopnih klikova. Isti obrazac (broj pozicije + gumb "Primijeni") kao stranica
+    # "Redoslijed zadataka po potpoglavlju" u baza_zadataka_app.py - stabilno sortiranje,
+    # izvorni indeks kao tie-breaker kod jednakih upisanih pozicija.
+    _nove_pozicije = []
+
     for idx, z in enumerate(st.session_state.odabrani):
         if "kategorije" not in z:
             z["kategorije"] = {}
@@ -661,25 +682,39 @@ with col_odabrano:
                         else:
                             z["kategorije"].pop(kod, None)
 
-                # Uživo upozorenje (rano upozorenje dok profesor još uređuje) - zbroj
-                # bodova po kategorijama MORA odgovarati ukupnim bodovima zadatka;
-                # ovo je samo prikaz, stvarno BLOKIRANJE generiranja PDF-a radi
-                # provjeri_zbroj_kategorija() niže, pozvana na klik "Generiraj PDF".
-                if z["kategorije"] and str(z["bodovi"]).strip():
-                    try:
-                        zbroj_kat = sum(
-                            broj_iz_stringa(v) for v in z["kategorije"].values() if str(v).strip()
-                        )
-                        ukupno_zad = broj_iz_stringa(z["bodovi"])
-                        if abs(zbroj_kat - ukupno_zad) > 1e-9:
-                            st.caption(
-                                f"❌ Zbroj bodova po kategorijama ({zbroj_kat:g}) "
-                                f"mora odgovarati bodovima zadatka ({ukupno_zad:g}) — "
-                                f"generiranje PDF-a bit će blokirano dok se ne uskladi."
+                # Kompaktan, UVIJEK vidljiv status zbroja (15.9.2026., UX prijedlog -
+                # stavka 6) - prije se poruka prikazivala SAMO kad je zbroj neispravan
+                # (i.f. na klik "Generiraj PDF"), pa profesor nije imao NIKAKVU potvrdu
+                # da je zbroj već ispravan dok ga ručno ne izbroji ili ne pokuša
+                # generirati PDF. Sad je status vidljiv odmah, u sva tri stanja
+                # (nedostaju bodovi zadatka / neispravno / uskladeno). Stvarno
+                # BLOKIRANJE generiranja PDF-a i dalje radi provjeri_zbroj_kategorija()
+                # niže, pozvana na klik "Generiraj PDF" - ovo je samo prikaz uživo.
+                if z["kategorije"]:
+                    if not str(z["bodovi"]).strip():
+                        st.caption("➖ Upiši ukupne bodove zadatka da provjerim zbroj po kategorijama.")
+                    else:
+                        try:
+                            zbroj_kat = sum(
+                                broj_iz_stringa(v) for v in z["kategorije"].values() if str(v).strip()
                             )
-                    except ValueError:
-                        st.caption("❌ Bodovi po kategoriji moraju biti brojevi.")
+                            ukupno_zad = broj_iz_stringa(z["bodovi"])
+                            if abs(zbroj_kat - ukupno_zad) > 1e-9:
+                                st.caption(
+                                    f"❌ Zbroj po kategorijama: {zbroj_kat:g} / {ukupno_zad:g} bod. — "
+                                    f"generiranje PDF-a blokirano dok se ne uskladi."
+                                )
+                            else:
+                                st.caption(f"✅ Zbroj po kategorijama: {zbroj_kat:g} / {ukupno_zad:g} bod.")
+                        except ValueError:
+                            st.caption("❌ Bodovi po kategoriji moraju biti brojevi.")
             with c2:
+                _nove_pozicije.append(st.number_input(
+                    "Poz.", min_value=1, max_value=len(st.session_state.odabrani),
+                    value=idx + 1, step=1, key=f"pozicija_{idx}",
+                    label_visibility="collapsed",
+                    help="Nova pozicija - upiši broj i klikni 'Primijeni novi redoslijed' ispod liste.",
+                ))
                 if st.button("⬆️", key=f"up_{idx}", disabled=(idx == 0)):
                     pomakni(idx, -1)
                     st.rerun()
@@ -689,6 +724,13 @@ with col_odabrano:
                 if st.button("🗑️", key=f"del_{idx}"):
                     ukloni(idx)
                     st.rerun()
+
+    if len(st.session_state.odabrani) > 1:
+        if st.button("🔀 Primijeni novi redoslijed (prema upisanim pozicijama)", key="tb_primijeni_redoslijed"):
+            _parovi = list(zip(_nove_pozicije, range(len(st.session_state.odabrani)), st.session_state.odabrani))
+            _parovi.sort(key=lambda p: (p[0], p[1]))  # stabilno: izvorni indeks kao tie-breaker
+            st.session_state.odabrani = [z for _, _, z in _parovi]
+            st.rerun()
 
 st.divider()
 
