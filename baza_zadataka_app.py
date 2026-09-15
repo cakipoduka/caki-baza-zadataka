@@ -869,13 +869,23 @@ def _forma_uredi_zadatak(row, broj_retka, idx):
 # NEIZMIJENJEN kod (vidi _forma_uredi_zadatak iznad) - ova funkcija samo bira KOJI zadatak mu
 # se proslijedi, preko dijeljenog st.session_state["provjera_uredi_broj_retka"] koji postavljaju
 # ILI selectbox pretrage ILI gumb "✏️ Uredi →" u popisu za provjeru.
+#
+# 14.9.2026. (UX prijedlozi, stavke 1/3/4/5) - lijeva kolona nadograđena: (1) filteri
+# cjelina/potpoglavlje/tip prije pretrage teksta, (3) renderirani pretpregled odabranog
+# zadatka ispod selectboxa (selectbox label ne može prikazati LaTeX/markdown - Streamlit
+# ograničenje), (4) checkbox "samo za provjeru" unutar iste pretrage, plus poznata
+# 30-rezultata-cap zamijenjena punom "Prikaži još" paginacijom (isti obrazac kao §25.10 u
+# Test Builderu). Stavka (5) - gumb "Uredi →" i selectbox pretrage sad pune i
+# st.session_state["provjera_lista_redoslijeda"] (popis brojeva redaka trenutno prikazanog
+# skupa), a desna kolona ispod čita taj popis za ⬅️/➡️ navigaciju bez povratka lijevo.
 
 def stranica_provjera_i_uredi():
     st.title("🔍✏️ Provjera i uređivanje zadataka")
     st.caption(
-        "Lijevo: pretraži bilo koji zadatak, ili pregledaj popis zadataka koje je Claude "
-        "označio za ručnu provjeru tijekom OCR-a/strukturiranja. Desno: formular za "
-        "uređivanje trenutno odabranog zadatka - klikni zadatak lijevo da ga ovdje otvoriš."
+        "Lijevo: pretraži bilo koji zadatak (uz filtere cjelina/potpoglavlje/tip), ili pregledaj "
+        "popis zadataka koje je Claude označio za ručnu provjeru tijekom OCR-a/strukturiranja. "
+        "Desno: formular za uređivanje trenutno odabranog zadatka - klikni zadatak lijevo da ga "
+        "ovdje otvoriš."
     )
 
     if st.button("🔄 Osvježi popis zadataka", key="osvjezi_uredi_provjera"):
@@ -900,22 +910,117 @@ def stranica_provjera_i_uredi():
 
     with col_lijevo:
         st.subheader("🔍 Pretraga")
+
+        # (14.9.2026., stavka 1) - filteri cjelina/potpoglavlje/tip iz šifrarnika, isti izvor
+        # kao sekcija kategorizacije u _forma_uredi_zadatak, da opcije budu usklađene s bazom.
+        _, sifrarnik_potpoglavlja_po_cjelini = _ucitaj_sifrarnik()
+
+        sve_cjeline_baza = sorted({get(r, "cjelina") for r in redovi if get(r, "cjelina")})
+        svi_tipovi_baza = sorted({get(r, "tip_zadatka") for r in redovi if get(r, "tip_zadatka")})
+
+        fc1, fc2 = st.columns(2)
+        f_cjelina = fc1.multiselect("Cjelina", sve_cjeline_baza, key="filter_cjelina_uredi")
+        if f_cjelina:
+            _opcije_potpog = []
+            for _c in f_cjelina:
+                for _p, _ in sifrarnik_potpoglavlja_po_cjelini.get(_c, []):
+                    if _p and _p not in _opcije_potpog:
+                        _opcije_potpog.append(_p)
+            if not _opcije_potpog:
+                # Šifrarnik nema unosa za odabranu cjelinu - fallback na stvarna potpoglavlja
+                # koja se pojavljuju u bazi (isti obrazac kao filter u Test Builderu, §25.3).
+                _opcije_potpog = sorted({
+                    get(r, "potpoglavlje") for r in redovi
+                    if get(r, "cjelina") in f_cjelina and get(r, "potpoglavlje")
+                })
+        else:
+            _opcije_potpog = sorted({get(r, "potpoglavlje") for r in redovi if get(r, "potpoglavlje")})
+        f_potpoglavlje = fc2.multiselect("Potpoglavlje", _opcije_potpog, key="filter_potpoglavlje_uredi")
+
+        fc3, fc4 = st.columns(2)
+        f_tip = fc3.multiselect("Tip zadatka", svi_tipovi_baza, key="filter_tip_uredi")
+        f_samo_provjera = fc4.checkbox(
+            "⚠️ Samo za provjeru", key="filter_samo_provjera_uredi",
+            help="Prikaži samo zadatke koje je Claude označio za ručnu provjeru (isti kriterij "
+            "kao popis '⚠️ Zadaci za provjeru' ispod, ali unutar ove pretrage/filtera).",
+        )
+
         upit = st.text_input("Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
 
-        if upit.strip():
-            _, podudaranja = _pretrazi_zadatke(headers, redovi, upit)
-            if not podudaranja:
-                st.warning("Nema podudaranja. Pokušaj drugi pojam za pretragu.")
+        _filtri_aktivni = bool(f_cjelina or f_potpoglavlje or f_tip or f_samo_provjera or upit.strip())
+
+        if not _filtri_aktivni:
+            st.caption(
+                "Upiši dio ID-a/teksta, odaberi filter, ili odaberi zadatak iz popisa za provjeru ispod."
+            )
+        else:
+            _upit_lower = upit.strip().lower()
+            _rezultati = []
+            for _broj_retka, _row in enumerate(redovi, start=2):
+                if f_cjelina and get(_row, "cjelina") not in f_cjelina:
+                    continue
+                if f_potpoglavlje and get(_row, "potpoglavlje") not in f_potpoglavlje:
+                    continue
+                if f_tip and get(_row, "tip_zadatka") not in f_tip:
+                    continue
+                if f_samo_provjera and not get(_row, "status_provjere").strip():
+                    continue
+                if _upit_lower and _upit_lower not in get(_row, "id").lower() \
+                        and _upit_lower not in get(_row, "tekst_zadatka_latex").lower():
+                    continue
+                _rezultati.append((_broj_retka, _row))
+
+            if not _rezultati:
+                st.warning("Nema podudaranja. Pokušaj drugi pojam ili suzi/proširi filtere.")
             else:
-                if len(podudaranja) == 30:
-                    st.caption("Prikazano prvih 30 podudaranja - suzi pretragu ako ne vidiš traženi zadatak.")
+                # (14.9.2026.) - puna paginacija umjesto tvrdog capa na 30 rezultata, isti
+                # obrazac kao §25.10 u Test Builderu: signatura filtera/upita se uspoređuje
+                # svaki rerun, promjena resetira brojač na 30 da nova pretraga uvijek počne
+                # od početka.
+                _filter_potpis = (
+                    tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tip)),
+                    f_samo_provjera, _upit_lower,
+                )
+                if st.session_state.get("uredi_filter_potpis") != _filter_potpis:
+                    st.session_state["uredi_filter_potpis"] = _filter_potpis
+                    st.session_state["uredi_broj_prikaza"] = 30
+                _broj_prikaza = st.session_state.get("uredi_broj_prikaza", 30)
+
+                if len(_rezultati) > _broj_prikaza:
+                    st.caption(f"{len(_rezultati)} zadataka pronađeno (prikazano prvih {_broj_prikaza})")
+                else:
+                    st.caption(f"{len(_rezultati)} zadataka pronađeno (prikazani svi)")
+
+                _prikazani = _rezultati[:_broj_prikaza]
                 broj_odabran, _ = st.selectbox(
-                    "Odaberi zadatak", podudaranja, format_func=lambda par: _oznaci_zadatak(par, idx),
+                    "Odaberi zadatak", _prikazani, format_func=lambda par: _oznaci_zadatak(par, idx),
                     key="odabir_uredi",
                 )
                 st.session_state["provjera_uredi_broj_retka"] = broj_odabran
-        else:
-            st.caption("Upiši dio ID-a ili dio teksta zadatka, ili odaberi zadatak iz popisa za provjeru ispod.")
+                # (stavka 5) - dijeljeni popis za ⬅️/➡️ navigaciju u desnoj koloni.
+                st.session_state["provjera_lista_redoslijeda"] = [br for br, _ in _prikazani]
+
+                if len(_rezultati) > _broj_prikaza:
+                    if st.button(
+                        f"⬇️ Prikaži još ({min(30, len(_rezultati) - _broj_prikaza)})",
+                        key="uredi_prikazi_jos",
+                    ):
+                        st.session_state["uredi_broj_prikaza"] = _broj_prikaza + 30
+                        st.rerun()
+
+                # (14.9.2026., stavka 3) - renderirani pretpregled odabranog zadatka ispod
+                # selectboxa: st.selectbox label je čist tekst (Streamlit ne renderira
+                # markdown/LaTeX unutar opcija dropdowna), pa se puni tekst zadatka (koji JE
+                # markdown/LaTeX preko $...$) prikazuje ovdje preko st.markdown - vidljivo je
+                # točno koji je zadatak odabran prije nego se otvori cijeli formular desno.
+                _odabrani_par = next((par for par in _prikazani if par[0] == broj_odabran), None)
+                if _odabrani_par:
+                    with st.container(border=True):
+                        st.caption("Pretpregled odabranog zadatka:")
+                        _tekst_pregled = get(_odabrani_par[1], "tekst_zadatka_latex")
+                        st.markdown(
+                            (_tekst_pregled[:300] + "…") if len(_tekst_pregled) > 300 else _tekst_pregled
+                        )
 
         st.divider()
         st.subheader("⚠️ Zadaci za provjeru")
@@ -953,6 +1058,9 @@ def stranica_provjera_i_uredi():
                     with cp1:
                         if st.button("✏️ Uredi →", key=f"otvori_uredi_{broj_retka_p}"):
                             st.session_state["provjera_uredi_broj_retka"] = broj_retka_p
+                            # (stavka 5) - navigacija ⬅️/➡️ u desnoj koloni kreće se kroz
+                            # CIJELI popis "za provjeru", ne samo kroz ovaj jedan redak.
+                            st.session_state["provjera_lista_redoslijeda"] = [br for br, _ in za_provjeru]
                             st.rerun()
                     with cp2:
                         if st.button("✅ Provjereno", type="primary", key=f"provjereno_{broj_retka_p}"):
@@ -981,6 +1089,27 @@ def stranica_provjera_i_uredi():
                 )
                 st.session_state["provjera_uredi_broj_retka"] = None
             else:
+                # (14.9.2026., stavka 5) - ⬅️/➡️ navigacija kroz trenutni popis (rezultati
+                # pretrage ili "Zadaci za provjeru", ovisno odakle je zadatak odabran) bez
+                # povratka u lijevu kolonu za svaki sljedeći zadatak - ubrzava QA prolazak
+                # kroz duži popis (npr. sve zadatke za provjeru redom).
+                _lista_nav = st.session_state.get("provjera_lista_redoslijeda") or []
+                if odabrani_broj_retka in _lista_nav:
+                    _idx_nav = _lista_nav.index(odabrani_broj_retka)
+                    _navcol1, _navcol2, _navcol3 = st.columns([1, 1, 3])
+                    with _navcol1:
+                        if st.button("⬅️ Prethodni", key="nav_prethodni", disabled=(_idx_nav == 0)):
+                            st.session_state["provjera_uredi_broj_retka"] = _lista_nav[_idx_nav - 1]
+                            st.rerun()
+                    with _navcol2:
+                        if st.button(
+                            "➡️ Sljedeći", key="nav_sljedeci", disabled=(_idx_nav >= len(_lista_nav) - 1)
+                        ):
+                            st.session_state["provjera_uredi_broj_retka"] = _lista_nav[_idx_nav + 1]
+                            st.rerun()
+                    with _navcol3:
+                        st.caption(f"Zadatak {_idx_nav + 1} od {len(_lista_nav)} u trenutnom popisu.")
+
                 odabrani_row = redovi[_pozicija]
                 _forma_uredi_zadatak(odabrani_row, odabrani_broj_retka, idx)
 
