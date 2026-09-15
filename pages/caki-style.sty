@@ -81,6 +81,15 @@
 \newunicodechar{λ}{\ensuremath{\lambda}}
 \newunicodechar{μ}{\ensuremath{\mu}}
 \newunicodechar{…}{\ensuremath{\ldots}}
+% --- 15.9.2026.: otvorena/zatvorena zagrada intervala (npr. "⟨-∞,-2⟩", hrvatska
+% notacija otvorenog intervala) izazvala je "! Missing $ inserted" fatalnu gresku
+% u pdflatex kompajliranju (Test Builder). Uzrok: formatiraj_opciju() u
+% pages/2_test_builder.py opciju bez $/\/^/_ znakova salje kao OBICAN TEKST (ne
+% kao matematiku), pa su ⟨/⟩ izasli izravno u .tex IZVAN $...$, bez mape ovdje -
+% pdflatex ih ne zna iscrtati izvan matematickog nacina. Dodano isto kao svi
+% ostali znakovi u ovom popisu.
+\newunicodechar{⟨}{\ensuremath{\langle}}
+\newunicodechar{⟩}{\ensuremath{\rangle}}
 
 % --- 3c. LUK IZNAD SLOVA (\overparen) - NIJE STVARNA amsmath NAREDBA (11.9.2026.) ---
 % Zadaci s kruznim lukovima (npr. "\overparenAB", oznaka duljine luka AB) katkad
