@@ -344,6 +344,56 @@ def get_teorija_po_potpoglavlju(sheet) -> dict:
         rezultat[(cjelina, potpoglavlje)] = {h: _get(row, h) for h in TEORIJA_HEADERS}
     return rezultat
 
+# --- Zahtjevi za "skriptu" (§27.5, 15.9.2026.) ---
+#
+# Odluka 15.9.2026.: sam PDF build (PreTeXt -> xelatex) OSTAJE u Colabu (kao i dosad) -
+# xelatex/TeX Live je pretezka/prespora infrastruktura za lagani Streamlit Cloud hosting
+# koji SVAKODNEVNO koriste profesori (Test Builder) i Caki (unos zadataka), pa bi njeno
+# ubacivanje u tu istu aplikaciju riskiralo usporiti ili srusiti je za sve. Umjesto toga,
+# Streamlit stranica (pages/4_skripta.py) SAMO bira parametre (cjelina, verzija_teorije,
+# filtriraj_u_skriptu) i zapisuje ih ovdje kao "zahtjev" - poput poštanskog sandučića.
+# Colab (Korak 3.1) prije poziva build_pretext_article ucita POSLJEDNJI zahtjev preko
+# ucitaj_zadnji_zahtjev_skripte() i proslijedi ta tri parametra u build_pretext_article -
+# vidi UPUTA_skripta_streamlit_colab.md za tocan redak koji treba dodati u tu celiju.
+# Ova stranica NIKAD sama ne pokrece build - samo priprema, Caki i dalje rucno pokrece
+# Colab kad zeli, isto kao dosad za obicni build.
+
+SKRIPTA_ZAHTJEVI_HEADERS = ["cjelina", "verzija_teorije", "filtriraj_u_skriptu", "vrijeme"]
+
+def spremi_zahtjev_skripte(sheet, cjelina: str, verzija_teorije: str = "ucenik",
+                            filtriraj_u_skriptu: bool = True) -> None:
+    """Dodaje NOV redak u tab 'Skripta_zahtjevi' (uvijek append, nikad prepisivanje - stari
+    zahtjevi ostaju kao povijest, Colab uvijek cita samo POSLJEDNJI, v.
+    ucitaj_zadnji_zahtjev_skripte)."""
+    from datetime import datetime
+    ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
+    ws.append_row([
+        cjelina, verzija_teorije, "DA" if filtriraj_u_skriptu else "NE",
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+    ])
+
+def ucitaj_zadnji_zahtjev_skripte(sheet):
+    """Vraca dict {cjelina, verzija_teorije, filtriraj_u_skriptu (bool), vrijeme} za
+    POSLJEDNJI zapisan zahtjev, ili None ako tab ne postoji/je prazan. Poziva se iz Colaba
+    (Korak 3.1) neposredno prije build_pretext_article poziva - v. gornju napomenu."""
+    ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
+    all_values = ws.get_all_values()
+    if len(all_values) < 2:
+        return None
+    headers, zadnji = all_values[0], all_values[-1]
+    idx = {h: i for i, h in enumerate(headers)}
+
+    def _get(col):
+        i = idx.get(col)
+        return zadnji[i] if i is not None and i < len(zadnji) else ""
+
+    return {
+        "cjelina": _get("cjelina"),
+        "verzija_teorije": _get("verzija_teorije") or "ucenik",
+        "filtriraj_u_skriptu": _get("filtriraj_u_skriptu").strip().upper() == "DA",
+        "vrijeme": _get("vrijeme"),
+    }
+
 # --- PreTeXt XML generiranje (Korak 3.1) ---
 #
 # Prebačeno iz Colab bilježnice (Faza 1, 1.9.2026.) da postoji JEDAN izvor istine za ovu
