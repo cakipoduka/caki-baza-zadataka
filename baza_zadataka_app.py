@@ -1147,13 +1147,14 @@ def stranica_redoslijed_zadataka():
     st.title("📑 Redoslijed zadataka po potpoglavlju")
     st.caption(
         "Odredi kojim redoslijedom se zadaci prikazuju unutar JEDNOG potpoglavlja u generiranom "
-        "PreTeXt skriptu (Korak 3.1), i koji zadaci idu kao '📌 primjer na satu' (riješen primjer "
+        "PreTeXt skriptu (Korak 3.1), koji zadaci idu kao '📌 primjer na satu' (riješen primjer "
         "koji profesor demonstrira, prikazuje se PRIJE vježbi, s odmah vidljivim rješenjem) umjesto "
-        "u standardne vježbe (rješenje sakriveno/na klik). Prikaz ispod odgovara stvarnom izlazu: "
-        "zadaci se prvo grupiraju po težini (🟢 lako → 🟠 srednje → 🔴 teško), a TEK unutar iste "
-        "težine sortiraju po broju koji upišeš dolje (manji broj = ranije; prazno = ide na kraj "
-        "svoje grupe). Preporuka: koristi razmake od 10 (10, 20, 30…) da kasnije možeš ubaciti "
-        "zadatak između dva postojeća bez pretipkavanja svih brojeva."
+        "u standardne vježbe (rješenje sakriveno/na klik), i koji zadaci idu u '🖨️ skriptu' "
+        "(fiksni skup za tiskanu skriptu, §27.5 - vidi objašnjenje (i) uz kvačicu ispod). Prikaz "
+        "ispod odgovara stvarnom izlazu: zadaci se prvo grupiraju po težini (🟢 lako → 🟠 srednje → "
+        "🔴 teško), a TEK unutar iste težine sortiraju po broju koji upišeš dolje (manji broj = "
+        "ranije; prazno = ide na kraj svoje grupe). Preporuka: koristi razmake od 10 (10, 20, "
+        "30…) da kasnije možeš ubaciti zadatak između dva postojeća bez pretipkavanja svih brojeva."
     )
 
     if st.button("🔄 Osvježi popis zadataka", key="osvjezi_redoslijed"):
@@ -1176,6 +1177,13 @@ def stranica_redoslijed_zadataka():
             "`redoslijed_u_potpoglavlju`) - vidi ZADACI_HEADERS u baza_zadataka_pipeline.py."
         )
         return
+    if "u_skriptu" not in idx:
+        st.info(
+            "ℹ️ Stupac 'u_skriptu' još ne postoji u tabu 'Zadaci', pa kvačica '🖨️ Skripta' "
+            "ispod NEĆE biti prikazana dok ga ne dodaš (novi zadnji stupac, zaglavlje točno: "
+            "`u_skriptu`). Sve ostalo na ovoj stranici (redoslijed, primjer na satu) i dalje "
+            "radi normalno - ovo ne blokira stranicu, samo tu jednu kvačicu."
+        )
 
     _, potpoglavlja_po_cjelini = _ucitaj_sifrarnik()
     if not potpoglavlja_po_cjelini:
@@ -1206,15 +1214,25 @@ def stranica_redoslijed_zadataka():
 
     stavke.sort(key=_prikaz_sort_key)
 
+    _ima_uskriptu = "u_skriptu" in idx
+
     st.caption(f"{len(stavke)} zadataka u **{cjelina} → {potpoglavlje}**. Poredak ispod = poredak u izlazu.")
     st.caption(
         "📌 Čekiraj 'Primjer' za zadatke koje profesor rješava UŽIVO na satu (idu u <example> "
         "blok prije vježbi, rješenje odmah vidljivo) - ostali idu kao standardne vježbe "
         "(<exercises>, rješenje sakriveno/na klik)."
     )
+    if _ima_uskriptu:
+        st.caption(
+            "🖨️ Čekiraj 'Skripta' za zadatke koje učenici rade SAMOSTALNO na satu i koji ulaze "
+            "u TISKANU skriptu - fiksni skup, isti zadaci na istom mjestu svaki put kad se "
+            "skripta printa (za razliku od weba, koji uvijek prikazuje cijeli fond zadataka). "
+            "Zadrži pokazivač miša na (i) pored kvačice za podsjetnik čemu točno služi."
+        )
 
     c_redoslijed = _col_letter("redoslijed_u_potpoglavlju")
     c_primjer = _col_letter("koristi_kao_primjer_na_satu")
+    c_uskriptu = _col_letter("u_skriptu") if _ima_uskriptu else None
 
     if st.button(
         "🔢 Popuni prazne (10, 20, 30… prema trenutnom prikazu)", key="auto_redoslijed",
@@ -1240,10 +1258,14 @@ def stranica_redoslijed_zadataka():
     with st.form("forma_redoslijeda"):
         unosi = {}
         primjer_unosi = {}
+        skripta_unosi = {}
         for broj_retka, row in stavke:
             oznaka_tezine = _TEZINA_OZNAKA_UI.get((_get_polje(row, idx, "tezina") or "").strip().lower(), "⚪")
             fragment = _get_polje(row, idx, "tekst_zadatka_latex")[:80]
-            c1, c2, c3 = st.columns([1, 1, 5])
+            if _ima_uskriptu:
+                c1, c2, c3, c4 = st.columns([1, 1, 1, 5])
+            else:
+                c1, c2, c4 = st.columns([1, 1, 5])
             with c1:
                 unosi[broj_retka] = st.text_input(
                     "Redoslijed", value=_get_polje(row, idx, "redoslijed_u_potpoglavlju").strip(),
@@ -1254,8 +1276,23 @@ def stranica_redoslijed_zadataka():
                     "📌 Primjer",
                     value=_get_polje(row, idx, "koristi_kao_primjer_na_satu").strip().lower() == "da",
                     key=f"primjer_{broj_retka}",
+                    help="Profesor rješava UŽIVO na satu, rješenje odmah vidljivo (<example>).",
                 )
-            with c3:
+            if _ima_uskriptu:
+                with c3:
+                    skripta_unosi[broj_retka] = st.checkbox(
+                        "🖨️ Skripta",
+                        value=_get_polje(row, idx, "u_skriptu").strip().upper() == "DA",
+                        key=f"skripta_{broj_retka}",
+                        help=(
+                            "Zadatak za SAMOSTALAN rad učenika na satu koji ulazi u TISKANU "
+                            "skriptu (fiksni skup, isti svaki put kad se skripta printa). "
+                            "Web (praksa.cakipoduka.com) uvijek prikazuje SVE zadatke bez "
+                            "obzira na ovu kvačicu - ona utječe samo na printanu skriptu. "
+                            "Razlikuje se od '📌 Primjer' (koji rješava profesor, ne učenik)."
+                        ),
+                    )
+            with c4:
                 st.caption(
                     f"{oznaka_tezine} #{_get_polje(row, idx, 'id')} "
                     f"({_get_polje(row, idx, 'godina') or '—'}) — {fragment}..."
@@ -1281,6 +1318,15 @@ def stranica_redoslijed_zadataka():
             postojeci_primjer = _get_polje(row, idx, "koristi_kao_primjer_na_satu").strip().lower() or "ne"
             if nova_primjer_str != postojeci_primjer:
                 azuriranja.append({"range": f"{c_primjer}{broj_retka}", "values": [[nova_primjer_str]]})
+
+            if _ima_uskriptu:
+                # Namjerno "DA"/"" (prazno), NE "da"/"ne" kao kod primjera iznad - ovo je
+                # ustaljena konvencija ovog stupca (vidi filtriraj_zadatke_za_skriptu.py i
+                # UPUTA_skripta_streamlit_colab.md): prazno = ne ulazi u skriptu.
+                nova_skripta_str = "DA" if skripta_unosi[broj_retka] else ""
+                postojeci_skripta = _get_polje(row, idx, "u_skriptu").strip().upper()
+                if nova_skripta_str != postojeci_skripta:
+                    azuriranja.append({"range": f"{c_uskriptu}{broj_retka}", "values": [[nova_skripta_str]]})
 
         if nevaljano:
             st.error(
