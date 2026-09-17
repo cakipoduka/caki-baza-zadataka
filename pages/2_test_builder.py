@@ -270,6 +270,37 @@ SPECIAL_CHARS = {
     "~": r"\textasciitilde{}", "^": r"\textasciicircum{}",
 }
 
+# 17.9.2026. - pad kompajliranja "! LaTeX Error: Unicode character ̇ (U+0307)
+# not set up for use with LaTeX" na tekstu poput "iz intervala [-0.13̇, -0.13]".
+# U+0307 (COMBINING DOT ABOVE) je Mathpix OCR-ov zapis PERIODIČKOG decimalnog
+# broja (znamenka koja se ponavlja u periodu ima tocku iznad, npr. "0,1̇3" =
+# 0,1333...) - dva odvojena Unicode znaka (znamenka + kombinirajuca tocka), gdje
+# se drugi "lijepi" na prvi VIZUALNO, ali pdflatex (8-bit OT1/T1 fontovi, ne
+# xelatex/lualatex) ne znaju prikazati samostalan U+0307 nijednom obicnom
+# naredbom/paketom - baca Fatal error i RUSI CIJELO kompajliranje (ne samo taj
+# zadatak). SPECIAL_CHARS gore ne moze ovo rijesiti (znak-po-znak, nema pojma
+# o PRETHODNOM znaku) - treba par (znak + U+0307) zamijeniti CIJELIM, vec
+# ispravnim LaTeX math naglaskom \dot{znak} (standardni LaTeX2e math accent,
+# radi bez dodatnih paketa) PRIJE escapiranja, da se { } iz \dot{...} slucajno
+# ne escapiraju istim prolazom.
+KOMBINIRAJUCA_TOCKA_IZNAD = "̇"
+
+
+def _escape_plain_segment(segment: str) -> str:
+    """Escapira SPECIAL_CHARS znak-po-znak kao dosad, ali PRIJE toga izdvaja
+    parove (bilo koji znak + KOMBINIRAJUCA_TOCKA_IZNAD) u already-LaTeX
+    "$\\dot{znak}$" komad koji se NE escapira (mora ostati literalan LaTeX)."""
+    if KOMBINIRAJUCA_TOCKA_IZNAD not in segment:
+        return "".join(SPECIAL_CHARS.get(ch, ch) for ch in segment)
+    komadi = re.split(r"(.̇)", segment)
+    out = []
+    for komad in komadi:
+        if len(komad) == 2 and komad[1] == KOMBINIRAJUCA_TOCKA_IZNAD:
+            out.append(f"$\\dot{{{komad[0]}}}$")
+        else:
+            out.append("".join(SPECIAL_CHARS.get(ch, ch) for ch in komad))
+    return "".join(out)
+
 
 def escape_outside_math(text: str) -> str:
     if not text:
@@ -280,7 +311,7 @@ def escape_outside_math(text: str) -> str:
         if i % 2 == 1:
             out.append(part)
         else:
-            out.append("".join(SPECIAL_CHARS.get(ch, ch) for ch in part))
+            out.append(_escape_plain_segment(part))
     return "".join(out)
 
 
@@ -806,6 +837,37 @@ if je_test:
             "u zbroj iznad: " + ", ".join(f"Zadatak {_i} ({_zid})" for _i, _zid in _bez_bodova)
             + ". Provjeri polje 'Bodovi' uz svaki zadatak u koloni '2. Odabrani zadaci' prije generiranja."
         )
+
+    # Dodano 15.9.2026. (otvoreno pitanje iz §25.1 CAKI_MASTER_BAZA) - kategorizacija
+    # (UZV/RP/MK) je i dalje opcionalna PO ZADATKU, ali ako je profesor kategorizirao
+    # SAMO DIO odabranih zadataka, zaglavlje testa (\cakiispithead #5, izgradi_kategorije_redovi)
+    # prikazuje "Ostvareno"/"Ocjena" PO KATEGORIJI čiji zbroj bodova NEĆE se poklapati s
+    # ukupnim bodovima cijelog testa iznad - bodovi nekategoriziranih zadataka ostaju
+    # "izvan" svake kategorije. Ovo je posljedica dizajna, ne bug, ali profesor prije
+    # nije imao NIKAKAV signal o tome dok ne bi ručno zbrojio papir - sad se javlja
+    # uživo, prije generiranja. Ne blokira generiranje (provjeri_zbroj_kategorija()
+    # niže i dalje blokira samo STVARNU grešku - neusklađen zbroj UNUTAR zadatka).
+    _koristi_neku_kategoriju = any(_z_kat.get("kategorije") for _z_kat in st.session_state.odabrani)
+    if _koristi_neku_kategoriju:
+        _bez_kategorije = []
+        _bodova_bez_kategorije = 0.0
+        for _z_kat in st.session_state.odabrani:
+            if not _z_kat.get("kategorije"):
+                _bez_kategorije.append(_z_kat.get("id") or "ručni zadatak")
+                try:
+                    _bodova_bez_kategorije += broj_iz_stringa(_z_kat.get("bodovi", ""))
+                except ValueError:
+                    pass
+        if _bez_kategorije:
+            st.warning(
+                f"ℹ️ {len(_bez_kategorije)} od {len(st.session_state.odabrani)} zadatka nema "
+                "dodijeljenu nijednu kategoriju vrednovanja (UZV/RP/MK): "
+                + ", ".join(str(_zid) for _zid in _bez_kategorije)
+                + f". Njihovih {_bodova_bez_kategorije:g} bod. neće ući NI U JEDAN kategorijski "
+                "zbroj u zaglavlju testa - zbroj 'Ostvareno'/'Ocjena' po kategoriji tamo NEĆE se "
+                "poklapati s ukupnim bodovima testa iznad. Ako je namjerno, ignoriraj; inače "
+                "kategoriziraj i te zadatke prije generiranja."
+            )
 
 prikazi_rjesenja = st.checkbox("Uključi rješenja na kraju dokumenta", value=True, key="prikazi_rjesenja_cb")
 st.caption(
