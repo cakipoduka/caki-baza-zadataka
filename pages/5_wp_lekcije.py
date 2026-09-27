@@ -274,9 +274,14 @@ WP_REQUEST_HEADERS = {
 # ---------------------------------------------------------------
 
 def objavi_lekciju_na_wp(lesson_post_id: str, html_sadrzaj: str) -> tuple:
-    """Vraća (uspjeh: bool, poruka: str). GET pa PUT natrag CIJELI lesson objekt
-    (isti GET+PUT obrazac kao /courses/{id}/settings - v. learnings-and-workflow.md) -
-    NEPOTVRĐENO izvana za /lessons/ endpoint, prvi test raditi oprezno na jednoj lekciji."""
+    """Vraća (uspjeh: bool, poruka: str). GET trenutni lesson pa POST natrag SAMO
+    poznati whitelist polja - obrazac potvrđen 27.9.2026. presretanjem stvarnog
+    zahtjeva koji Course Builder UI šalje (XHR sniff u Browser pane-u na lekciji
+    7624/course 7623): metoda je POST (ne PUT), i UI NIKAD ne šalje audio_type /
+    audio_required_progress natrag (ta polja GET vraća samo za čitanje - ako se
+    pošalju natrag kao null, write validator vraća "The Audio Type is not a valid
+    option"). Raniji pristup (blind GET-pa-PUT cijelog objekta) je bio pogrešan
+    baš zbog toga - v. learnings-and-workflow.md."""
     wp_url, auth = wp_auth_iz_secreta()
     if not wp_url:
         return False, "WP_URL / WP_API_USER / WP_API_APP_PASSWORD nisu postavljeni u Secrets."
@@ -287,9 +292,25 @@ def objavi_lekciju_na_wp(lesson_post_id: str, html_sadrzaj: str) -> tuple:
         r.raise_for_status()
         data = r.json()
         lesson = data.get("lesson", data)
-        lesson["content"] = html_sadrzaj
-        lesson["preview"] = True
-        r2 = requests.put(lessons_url, auth=auth, json=lesson, headers=WP_REQUEST_HEADERS, timeout=20)
+
+        # Whitelist točno kao stvarni Course Builder POST (bez audio_type/audio_required_progress)
+        body = {
+            "id": lesson.get("id", lesson_post_id),
+            "title": lesson.get("title", ""),
+            "content": html_sadrzaj,
+            "video_captions": lesson.get("video_captions", []),
+            "pdf_file": lesson.get("pdf_file", []),
+            "duration": lesson.get("duration"),
+            "preview": True,
+            "excerpt": lesson.get("excerpt"),
+            "pdf_file_ids": lesson.get("pdf_file_ids", "a:0:{}"),
+            "pdf_read_all": lesson.get("pdf_read_all", False),
+            "custom_fields": {},
+            "type": lesson.get("type", "text"),
+            "files": lesson.get("files", []),
+            "start_time": None,
+        }
+        r2 = requests.post(lessons_url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
         r2.raise_for_status()
         return True, "Objavljeno."
     except requests.exceptions.RequestException as e:
