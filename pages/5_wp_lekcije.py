@@ -290,7 +290,16 @@ def objavi_lekciju_na_wp(lesson_post_id: str, html_sadrzaj: str) -> tuple:
     try:
         r = requests.get(lessons_url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
         r.raise_for_status()
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError:
+            # Prazan/nevaljan JSON odgovor (npr. tranzitorni hosting/WAF hiccup) -
+            # pokaži status+sirovi tekst umjesto kriptične "Expecting value" greške.
+            return False, (
+                f"GET /lessons/{lesson_post_id} vratio status {r.status_code} "
+                f"ali odgovor nije valjan JSON (prvih 300 znakova): {r.text[:300]!r}. "
+                "Vjerojatno prolazni hosting hiccup - pokušaj ponovno za par sekundi."
+            )
         lesson = data.get("lesson", data)
 
         # Whitelist točno kao stvarni Course Builder POST (bez audio_type/audio_required_progress)
