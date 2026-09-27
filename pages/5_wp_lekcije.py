@@ -274,14 +274,17 @@ WP_REQUEST_HEADERS = {
 # ---------------------------------------------------------------
 
 def objavi_lekciju_na_wp(lesson_post_id: str, html_sadrzaj: str) -> tuple:
-    """Vraća (uspjeh: bool, poruka: str). GET trenutni lesson pa POST natrag SAMO
-    poznati whitelist polja - obrazac potvrđen 27.9.2026. presretanjem stvarnog
-    zahtjeva koji Course Builder UI šalje (XHR sniff u Browser pane-u na lekciji
-    7624/course 7623): metoda je POST (ne PUT), i UI NIKAD ne šalje audio_type /
-    audio_required_progress natrag (ta polja GET vraća samo za čitanje - ako se
-    pošalju natrag kao null, write validator vraća "The Audio Type is not a valid
-    option"). Raniji pristup (blind GET-pa-PUT cijelog objekta) je bio pogrešan
-    baš zbog toga - v. learnings-and-workflow.md."""
+    """Vraća (uspjeh: bool, poruka: str). GET trenutni lesson pa PUT natrag SAMO
+    poznati whitelist polja (bez audio_type/audio_required_progress - GET ih vraća
+    samo za čitanje, write validator odbija null vrijednost s "The Audio Type is
+    not a valid option", potvrđeno presretanjem stvarnog Course Builder zahtjeva
+    27.9.2026.). METODA JE PUT, NE POST - iako Course Builder UI (nonce/cookie
+    sesija) interno koristi POST za isti endpoint, isti taj POST poziv autentificiran
+    preko Application Passworda (Basic Auth) dosljedno vraća "rest_no_route" 404,
+    dok PUT s Basic Auth uredno stiže do MasterStudy logike (vraća prave poslovne
+    greške - audio_type, ownership itd.). Najvjerojatniji uzrok: SiteGroundov
+    sigurnosni sloj/WAF ima pravilo koje specifično cilja POST+Basic-Auth
+    kombinaciju na wp-json rute, a PUT mu promakne - v. learnings-and-workflow.md."""
     wp_url, auth = wp_auth_iz_secreta()
     if not wp_url:
         return False, "WP_URL / WP_API_USER / WP_API_APP_PASSWORD nisu postavljeni u Secrets."
@@ -329,7 +332,7 @@ def objavi_lekciju_na_wp(lesson_post_id: str, html_sadrzaj: str) -> tuple:
             "files": lesson.get("files", []),
             "start_time": None,
         }
-        r2 = requests.post(lessons_url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
+        r2 = requests.put(lessons_url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
         r2.raise_for_status()
         return True, "Objavljeno."
     except requests.exceptions.RequestException as e:
