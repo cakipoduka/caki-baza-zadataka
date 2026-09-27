@@ -101,6 +101,15 @@ def wp_auth_iz_secreta():
     return wp_url, HTTPBasicAuth(user, app_pw)
 
 
+# Neki hosting/sigurnosni pluginovi (Wordfence i sl.) blokiraju zahtjeve sa zadanim
+# "python-requests/x.x" User-Agentom kao sumnjive/bot - šaljemo običan browser UA da
+# se to izbjegne (otkriveno 27.9.2026. - "Forbidden!" greška identična na više ruta).
+WP_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+}
+
+
 _TRANSLIT = str.maketrans({
     "č": "c", "ć": "c", "đ": "dj", "š": "s", "ž": "z",
     "Č": "c", "Ć": "c", "Đ": "dj", "Š": "s", "Ž": "z",
@@ -114,13 +123,13 @@ def slugify(tekst: str) -> str:
 
 
 def dohvati_kategorije(wp_url, auth):
-    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/course-categories", auth=auth, timeout=20)
+    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/course-categories", auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     return r.json().get("categories", [])
 
 
 def dohvati_curriculum(course_id, wp_url, auth) -> dict:
-    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/curriculum", auth=auth, timeout=20)
+    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/curriculum", auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -143,7 +152,7 @@ def izvuci_id(data: dict, *kljucevi_kandidati):
 def kreiraj_tecaj(wp_url, auth, naslov, category_id):
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/courses/create"
     body = {"title": naslov, "slug": slugify(naslov), "category": [category_id]}
-    r = requests.post(url, auth=auth, json=body, timeout=20)
+    r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
     return izvuci_id(data, "id", "course_id", "post_id"), data
@@ -152,7 +161,7 @@ def kreiraj_tecaj(wp_url, auth, naslov, category_id):
 def kreiraj_sekciju(wp_url, auth, course_id, naslov=""):
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/curriculum/section"
     body = {"title": naslov, "order": 1}
-    r = requests.post(url, auth=auth, json=body, timeout=20)
+    r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
     return izvuci_id(data, "id", "section_id"), data
@@ -164,7 +173,7 @@ def kreiraj_lekciju(wp_url, auth, course_id, section_id, naslov, order):
         "title": naslov, "section_id": section_id, "lesson_type": "text",
         "type": "text", "order": order,
     }
-    r = requests.post(url, auth=auth, json=body, timeout=20)
+    r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
     post_id = izvuci_id(data, "post_id")
@@ -174,11 +183,11 @@ def kreiraj_lekciju(wp_url, auth, course_id, section_id, naslov, order):
 
 def postavi_preview(wp_url, auth, post_id):
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons/{post_id}"
-    r = requests.get(url, auth=auth, timeout=20)
+    r = requests.get(url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     lesson = r.json().get("lesson", r.json())
     lesson["preview"] = True
-    r2 = requests.put(url, auth=auth, json=lesson, timeout=20)
+    r2 = requests.put(url, auth=auth, json=lesson, headers=WP_REQUEST_HEADERS, timeout=20)
     r2.raise_for_status()
 
 

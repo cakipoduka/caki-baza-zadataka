@@ -258,6 +258,16 @@ def wp_auth_iz_secreta():
     return wp_url, HTTPBasicAuth(user, app_pw)
 
 
+# Neki hosting/sigurnosni pluginovi (Wordfence i sl.) blokiraju zahtjeve sa zadanim
+# "python-requests/x.x" User-Agentom kao sumnjive/bot - šaljemo običan browser UA da
+# se to izbjegne (otkriveno 27.9.2026. - "Forbidden!" greška identična na više ruta,
+# nije specifično za jednu rutu/permission_callback, nego na razini requesta).
+WP_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+}
+
+
 # ---------------------------------------------------------------
 # WP objava (Application Password - v. napomena na vrhu datoteke)
 # ---------------------------------------------------------------
@@ -272,13 +282,13 @@ def objavi_lekciju_na_wp(lesson_post_id: str, html_sadrzaj: str) -> tuple:
 
     lessons_url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons/{lesson_post_id}"
     try:
-        r = requests.get(lessons_url, auth=auth, timeout=20)
+        r = requests.get(lessons_url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
         r.raise_for_status()
         data = r.json()
         lesson = data.get("lesson", data)
         lesson["content"] = html_sadrzaj
         lesson["preview"] = True
-        r2 = requests.put(lessons_url, auth=auth, json=lesson, timeout=20)
+        r2 = requests.put(lessons_url, auth=auth, json=lesson, headers=WP_REQUEST_HEADERS, timeout=20)
         r2.raise_for_status()
         return True, "Objavljeno."
     except requests.exceptions.RequestException as e:
@@ -318,7 +328,7 @@ def je_prazan_sadrzaj(html: str, naslov: str = "") -> bool:
 
 def dohvati_course_naslov(course_id: str, wp_url: str, auth) -> str:
     try:
-        r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/settings", auth=auth, timeout=20)
+        r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/settings", auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
         r.raise_for_status()
         course = r.json().get("course", {})
         return course.get("post_title") or course.get("title") or ""
@@ -327,13 +337,13 @@ def dohvati_course_naslov(course_id: str, wp_url: str, auth) -> str:
 
 
 def dohvati_curriculum(course_id: str, wp_url: str, auth) -> list:
-    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/curriculum", auth=auth, timeout=20)
+    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/curriculum", auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     return r.json().get("materials", [])
 
 
 def dohvati_lesson_sadrzaj(post_id, wp_url: str, auth) -> str:
-    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/lessons/{post_id}", auth=auth, timeout=20)
+    r = requests.get(f"{wp_url}/wp-json/masterstudy-lms/v2/lessons/{post_id}", auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     lesson = r.json().get("lesson", r.json())
     return lesson.get("content") or ""
