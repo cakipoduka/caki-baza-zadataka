@@ -286,6 +286,16 @@ def objavi_lekciju_na_wp(lesson_post_id: str, html_sadrzaj: str) -> tuple:
     if not wp_url:
         return False, "WP_URL / WP_API_USER / WP_API_APP_PASSWORD nisu postavljeni u Secrets."
 
+    # Normalizacija: lesson_post_id može stići kao "7624.0" (float iz Google Sheeta)
+    # ili s razmakom (ručni unos) - WP ruta zahtijeva strogo \d+, inače tiho puca
+    # sa "rest_no_route" 404 (potvrđeno 27.9.2026. testom u browseru).
+    cisti_id = str(lesson_post_id).strip()
+    if cisti_id.endswith(".0"):
+        cisti_id = cisti_id[:-2]
+    if not cisti_id.isdigit():
+        return False, f"Neispravan lesson_post_id: {lesson_post_id!r} (mora biti čisti broj, npr. 7624)."
+    lesson_post_id = cisti_id
+
     lessons_url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons/{lesson_post_id}"
     try:
         r = requests.get(lessons_url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
