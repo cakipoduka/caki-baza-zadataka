@@ -101,12 +101,14 @@ def wp_auth_iz_secreta():
     return wp_url, HTTPBasicAuth(user, app_pw)
 
 
-# Neki hosting/sigurnosni pluginovi (Wordfence i sl.) blokiraju zahtjeve sa zadanim
-# "python-requests/x.x" User-Agentom kao sumnjive/bot - šaljemo običan browser UA da
-# se to izbjegne (otkriveno 27.9.2026. - "Forbidden!" greška identična na više ruta).
+# Otkriveno 27.9.2026.: SiteGround WAF je prvo blokirao zadani "python-requests/x.x"
+# User-Agent kao sumnjiv/bot. Kad smo ga zamijenili STATIČNIM Chrome UA stringom,
+# SiteGround tehnicka podrska (ticket 5139836) je potvrdila da WAF BAS TAJ konkretan
+# static Chrome/124.0.0.0 string prepoznaje kao potpis poznat po bot/scanner alatima
+# i zato ga i dalje blokira. Njihova preporuka: koristiti CUSTOM, prepoznatljiv UA
+# (ne pretvarati se da smo browser) - to WAF ne blokira.
 WP_REQUEST_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    "User-Agent": "CakiPodukaWPSync/1.0 (+https://cakipoduka.com; info@cakipoduka.com)"
 }
 
 
