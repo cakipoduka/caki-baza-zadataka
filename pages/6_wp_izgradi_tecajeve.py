@@ -109,6 +109,12 @@ svih 5 novih lekcija i preview-PUT na postojeću 7624 vratili HTTP 422):
      poruka o grešci to eksplicitno navodi (post_id se vidi) da se može ručno
      obrisati/spojiti u Course Builderu, alat ga sam NE briše (pravilo 2 - ništa se
      ne briše bez odobrenja).
+  4. RIJEŠENO u DRUGOM krugu istog dana (opet zahvaljujući opis_greske() na sljedeći
+     stvarni test): prva pretpostavka za `POST /lessons` body (samo title/slug) je
+     vratila `{"errors":{"type":["The Type field is required"]}}`. Dodano
+     `"type": "text"` (ista vrijednost koja se već šalje u curriculum/material).
+     Još uvijek nije potvrđeno je li ovo KOMPLETAN popis obaveznih polja za
+     ovaj endpoint - sljedeći test će to pokazati.
 """
 
 import json
@@ -298,12 +304,16 @@ def kreiraj_lekciju_post(wp_url, auth, naslov):
     Pravi WP post prvo treba stvoriti odvojeno - GET /wp-json/ je otkrio (read-only,
     preko Browser pane) rutu `POST /masterstudy-lms/v2/lessons` (postoji, OPTIONS
     potvrđuje methods:["POST"], args:[] - isti obrazac "plugin parsira JSON ručno" kao
-    courses/create) koja to vjerojatno radi. Tijelo NIJE potvrđeno uživo (ista situacija
-    kao courses/create prije prvog testa) - šalje se najbliža pretpostavka po analogiji
-    s kreiraj_tecaj() (title/slug). Ako i ovo vrati validacijsku grešku, opis_greske()
-    će je odmah pokazati - NE nagađati dalje bez tog odgovora."""
+    courses/create) koja to vjerojatno radi.
+
+    28.9.2026., DRUGI krug: prva pretpostavka (samo title/slug) je vratila novu, jasnu
+    grešku zahvaljujući opis_greske() - `{"errors":{"type":["The Type field is
+    required"]}}`. Dodano `"type": "text"` (ISTA vrijednost koja se već šalje u
+    curriculum/material - v. kreiraj_lekciju niže). I dalje NIJE uživo potvrđeno da je
+    OVO cijeli popis obaveznih polja - ako se pojavi još jedna nedostajuća polja,
+    opis_greske() će je odmah pokazati."""
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons"
-    body = {"title": naslov, "slug": slugify(naslov)}
+    body = {"title": naslov, "slug": slugify(naslov), "type": "text"}
     r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
