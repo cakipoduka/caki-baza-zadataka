@@ -113,8 +113,12 @@ svih 5 novih lekcija i preview-PUT na postojeću 7624 vratili HTTP 422):
      stvarni test): prva pretpostavka za `POST /lessons` body (samo title/slug) je
      vratila `{"errors":{"type":["The Type field is required"]}}`. Dodano
      `"type": "text"` (ista vrijednost koja se već šalje u curriculum/material).
-     Još uvijek nije potvrđeno je li ovo KOMPLETAN popis obaveznih polja za
-     ovaj endpoint - sljedeći test će to pokazati.
+  5. RIJEŠENO u TREĆEM krugu istog dana: sljedeća greška -
+     `{"errors":{"content":["The Content field is required"]}}`. Dodan
+     `<p>{naslov}</p>` kao content - isti placeholder format koji MasterStudy sam
+     upiše kad se lekcija stvori kroz Course Builder UI (v. je_prazan_sadrzaj() u
+     pages/5_wp_lekcije.py). Još uvijek nije potvrđeno je li ovo KOMPLETAN popis
+     obaveznih polja za `POST /lessons` - sljedeći test će to pokazati.
 """
 
 import json
@@ -309,11 +313,22 @@ def kreiraj_lekciju_post(wp_url, auth, naslov):
     28.9.2026., DRUGI krug: prva pretpostavka (samo title/slug) je vratila novu, jasnu
     grešku zahvaljujući opis_greske() - `{"errors":{"type":["The Type field is
     required"]}}`. Dodano `"type": "text"` (ISTA vrijednost koja se već šalje u
-    curriculum/material - v. kreiraj_lekciju niže). I dalje NIJE uživo potvrđeno da je
-    OVO cijeli popis obaveznih polja - ako se pojavi još jedna nedostajuća polja,
-    opis_greske() će je odmah pokazati."""
+    curriculum/material - v. kreiraj_lekciju niže).
+
+    28.9.2026., TREĆI krug: sljedeća greška - `{"errors":{"content":["The Content
+    field is required"]}}`. Dodan `<p>{naslov}</p>` kao sadržaj - NIJE proizvoljna
+    pretpostavka, nego ISTI placeholder format koji MasterStudy sam po sebi upisuje
+    kad se nova lekcija stvori kroz Course Builder UI (potvrđeno 27.9.2026., v.
+    je_prazan_sadrzaj() u pages/5_wp_lekcije.py koja upravo taj oblik prepoznaje kao
+    "prazno/za popuniti"), pa je i logičan default ovdje - stvarni sadržaj lekcije se
+    popunjava kasnije kroz pages/5_wp_lekcije.py. I dalje nije uživo potvrđeno da je
+    ovo kompletan popis obaveznih polja - ako se pojavi još nešto, opis_greske() će
+    ga odmah pokazati."""
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons"
-    body = {"title": naslov, "slug": slugify(naslov), "type": "text"}
+    body = {
+        "title": naslov, "slug": slugify(naslov), "type": "text",
+        "content": f"<p>{naslov}</p>",
+    }
     r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
