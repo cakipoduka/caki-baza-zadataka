@@ -91,6 +91,24 @@ svih 5 novih lekcija i preview-PUT na postojeću 7624 vratili HTTP 422):
      se čuva iz GET-a, mijenja se SAMO `preview`). Ovo je razlog 422 na
      `/lessons/7624` u prvom testu - treba biti riješeno; kreiranje NOVIH lekcija
      (`kreiraj_lekciju()`, `curriculum/material`) ostaje otvoreno, v. točku 1 gore.
+  3. RIJEŠENO isto istog dana zahvaljujući točki 1: `opis_greske()` je odmah otkrio
+     stvarni uzrok 422 na `curriculum/material` - `{"errors":{"post_id":["The Post
+     Id field is required"]}}`. Znači: taj endpoint NE stvara WP post za lekciju,
+     nego samo POVEZUJE VEĆ POSTOJEĆI post (po post_id) u kurikulum sekcije. Pravi
+     WP post treba stvoriti odvojeno - GET /wp-json/ (read-only, Browser pane) je
+     otkrio rutu `POST /masterstudy-lms/v2/lessons` (OPTIONS potvrđuje
+     methods:["POST"], isti "plugin parsira JSON ručno" obrazac kao courses/create).
+     Tok je sad DVOKORAČAN: `kreiraj_lekciju_post()` (novo, POST .../lessons) stvara
+     post pa `kreiraj_lekciju()` (izmijenjeno, prima post_id) ga povezuje u kurikulum.
+     ⚠️ Tijelo za kreiraj_lekciju_post() NIJE potvrđeno uživo (isto stanje kao
+     courses/create prije prvog testa) - šalje najbližu pretpostavku po analogiji
+     (title/slug). Ako i ovo vrati grešku, opis_greske() će je odmah pokazati -
+     SLJEDEĆI test treba paziti da li se OVA nova pretpostavka pokaže točnom.
+     Napomena: ako korak 2 (povezivanje) padne NAKON što je korak 1 (stvaranje
+     posta) uspio, WP post ostaje kao siroče (kreiran, ali nije u kurikulumu) -
+     poruka o grešci to eksplicitno navodi (post_id se vidi) da se može ručno
+     obrisati/spojiti u Course Builderu, alat ga sam NE briše (pravilo 2 - ništa se
+     ne briše bez odobrenja).
 """
 
 import json
@@ -272,16 +290,38 @@ def kreiraj_sekciju(wp_url, auth, course_id, naslov=""):
     return izvuci_id(data, "id", "section_id"), data
 
 
-def kreiraj_lekciju(wp_url, auth, course_id, section_id, naslov, order):
+def kreiraj_lekciju_post(wp_url, auth, naslov):
+    """28.9.2026., NOVO nakon stvarne dijagnoze: prvi pravi test je otkrio (zahvaljujući
+    opis_greske()) da POST .../curriculum/material vraća `{"errors":{"post_id":
+    ["The Post Id field is required"]}}` - taj endpoint dakle NE stvara sam WP post za
+    lekciju, nego samo POVEZUJE VEĆ POSTOJEĆI post (po post_id) u kurikulum sekcije.
+    Pravi WP post prvo treba stvoriti odvojeno - GET /wp-json/ je otkrio (read-only,
+    preko Browser pane) rutu `POST /masterstudy-lms/v2/lessons` (postoji, OPTIONS
+    potvrđuje methods:["POST"], args:[] - isti obrazac "plugin parsira JSON ručno" kao
+    courses/create) koja to vjerojatno radi. Tijelo NIJE potvrđeno uživo (ista situacija
+    kao courses/create prije prvog testa) - šalje se najbliža pretpostavka po analogiji
+    s kreiraj_tecaj() (title/slug). Ako i ovo vrati validacijsku grešku, opis_greske()
+    će je odmah pokazati - NE nagađati dalje bez tog odgovora."""
+    url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons"
+    body = {"title": naslov, "slug": slugify(naslov)}
+    r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
+    r.raise_for_status()
+    data = r.json()
+    post_id = izvuci_id(data, "id", "post_id", "lesson_id")
+    return post_id, data
+
+
+def kreiraj_lekciju(wp_url, auth, course_id, section_id, post_id, naslov, order):
+    """28.9.2026., IZMIJENJENO: sad prima VEĆ POSTOJEĆI post_id (v. kreiraj_lekciju_post
+    iznad) i samo ga povezuje u kurikulum - v. napomenu gore o pravom dvokoračnom toku."""
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/curriculum/material"
     body = {
         "title": naslov, "section_id": section_id, "lesson_type": "text",
-        "type": "text", "order": order,
+        "type": "text", "order": order, "post_id": post_id,
     }
     r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
-    post_id = izvuci_id(data, "post_id")
     material_id = izvuci_id(data, "id", "material_id")
     return post_id, material_id, data
 
@@ -521,11 +561,24 @@ if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not oda
             status_box.write(f"Sekcija: section_id {section_id}")
 
         for n, potpoglavlje in enumerate(odabrana_potpoglavlja, start=1):
-            status_box.write(f"Kreiram lekciju '{potpoglavlje}'...")
+            # 28.9.2026.: DVOKORAČNO (v. napomena u kreiraj_lekciju_post) - prvo stvori
+            # sam WP post za lekciju, tek onda ga poveži u kurikulum sekcije.
+            status_box.write(f"Kreiram WP post za lekciju '{potpoglavlje}'...")
             try:
-                post_id, material_id, raw = kreiraj_lekciju(wp_url, auth, course_id, section_id, potpoglavlje, n)
+                post_id, raw_post = kreiraj_lekciju_post(wp_url, auth, potpoglavlje)
             except requests.exceptions.RequestException as e:
-                rezultati.append({"potpoglavlje": potpoglavlje, "status": f"GREŠKA: {opis_greske(e)}"})
+                rezultati.append({"potpoglavlje": potpoglavlje, "status": f"GREŠKA (korak 1 - stvaranje posta): {opis_greske(e)}"})
+                continue
+            if not post_id:
+                rezultati.append({"potpoglavlje": potpoglavlje, "status": "post kreiran, ali post_id nepoznat - v. JSON"})
+                st.json(raw_post, expanded=False)
+                continue
+
+            status_box.write(f"Povezujem lekciju '{potpoglavlje}' (post_id {post_id}) u kurikulum...")
+            try:
+                post_id, material_id, raw = kreiraj_lekciju(wp_url, auth, course_id, section_id, post_id, potpoglavlje, n)
+            except requests.exceptions.RequestException as e:
+                rezultati.append({"potpoglavlje": potpoglavlje, "status": f"GREŠKA (korak 2 - povezivanje u kurikulum, WP post {post_id} JE kreiran): {opis_greske(e)}"})
                 continue
             if not post_id:
                 rezultati.append({"potpoglavlje": potpoglavlje, "status": "kreirano, ali post_id nepoznat - v. JSON"})
