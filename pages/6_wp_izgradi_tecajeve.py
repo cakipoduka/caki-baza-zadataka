@@ -69,6 +69,28 @@ sad prolaze bez mrežnog blokiranja):
   izgradnje za cjelinu "Realni brojevi", ručno odznači "Skupovi" iz popisa (ili
   preimenuj postojeću lekciju u Course Builderu u točno "Skupovi") da se ne stvori
   duplikat.
+
+IZMJENE 28.9.2026. (nakon PRVOG stvarnog testa uživo, course 7623 "Realni brojevi" -
+svih 5 novih lekcija i preview-PUT na postojeću 7624 vratili HTTP 422):
+  1. NOVO: `opis_greske()` - dosad su se greške prikazivale kao generički
+     `str(HTTPError)` (npr. "422 Client Error: Unprocessable Entity for url: ...")
+     koji NE sadrži stvarni razlog iz tijela odgovora. `requests` veže pravi
+     Response objekt na svaku RequestException iz `raise_for_status()` kao
+     `.response` - opis_greske() sad izvlači `.response.text` i dodaje ga u poruku,
+     posvuda gdje se greška prikazuje Cakiju. Ovo je preduvjet za stvarnu dijagnozu
+     422 na `courses/{id}/curriculum/material` (kreiranje lekcije) - taj odgovor
+     NIKAD prije nije stvarno viđen uspješan ili neuspješan s tijelom, pa se
+     ISPRAVNA struktura tijela zahtjeva NE smije nagađati dok se ne vidi stvarna
+     poruka servera na sljedećem pokušaju.
+  2. ISPRAVLJENO (potvrđeni uzrok, ne nagađanje): `postavi_preview()` je slao NATRAG
+     CIJELI GET objekt lekcije (uključujući `audio_type`/`audio_required_progress`,
+     koja MasterStudy vraća SAMO za čitanje) - ISTI poznati bug koji je već bio
+     ispravljen 27.9.2026. u pages/5_wp_lekcije.py - `objavi_lekciju_na_wp()`, ali
+     je ovdje ostao stari, neispravljeni obrazac. Sad koristi identičan potvrđeni
+     whitelist PUT body kao ta funkcija (samo bez mijenjanja sadržaja - `content`
+     se čuva iz GET-a, mijenja se SAMO `preview`). Ovo je razlog 422 na
+     `/lessons/7624` u prvom testu - treba biti riješeno; kreiranje NOVIH lekcija
+     (`kreiraj_lekciju()`, `curriculum/material`) ostaje otvoreno, v. točku 1 gore.
 """
 
 import json
@@ -146,6 +168,24 @@ WP_REQUEST_HEADERS = {
 }
 
 
+def opis_greske(e):
+    """28.9.2026.: `raise_for_status()` baca HTTPError čiji str() je samo
+    '422 Client Error: Unprocessable Entity for url: ...' - NE sadrži stvarni razlog
+    koji MasterStudy vrati u tijelu odgovora (npr. koje polje nedostaje/je nevaljano).
+    Prvi pravi test (28.9.2026., course 7623) je upravo zapeo na ovome - sve nove
+    lekcije i preview-PUT vratili 422 bez da se vidi ZAŠTO. requests veže stvarni
+    Response objekt na iznimku kao `.response` kod svake RequestException iz
+    raise_for_status - izvlačimo `.text` odatle da se stvarni razlog vidi u
+    aplikaciji umjesto da se nagađa."""
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            return f"{e} | odgovor servera: {resp.text[:1500]}"
+        except Exception:
+            pass
+    return str(e)
+
+
 _TRANSLIT = str.maketrans({
     "č": "c", "ć": "c", "đ": "dj", "š": "s", "ž": "z",
     "Č": "c", "Ć": "c", "Đ": "dj", "Š": "s", "Ž": "z",
@@ -220,7 +260,7 @@ def postavi_status_tecaja(wp_url, auth, course_id, status="draft"):
         r2.raise_for_status()
         return True, r2.json()
     except requests.exceptions.RequestException as e:
-        return False, {"error": str(e)}
+        return False, {"error": opis_greske(e)}
 
 
 def kreiraj_sekciju(wp_url, auth, course_id, naslov=""):
@@ -250,18 +290,42 @@ def postavi_preview(wp_url, auth, post_id):
     """Postavlja preview=true na lekciju. Vraća (uspjeh: bool, poruka: str) umjesto
     da baca iznimku - 27.9.2026. promijenjeno iz tihog "except: pass" jer je "sve
     lekcije u pretpregledu" sad eksplicitan zahtjev, ne samo nice-to-have, pa
-    neuspjeh treba biti vidljiv Cakiju, ne tiho progutan."""
+    neuspjeh treba biti vidljiv Cakiju, ne tiho progutan.
+
+    28.9.2026., ISPRAVLJENO: prvi pravi test (course 7623/lekcija 7624) je vratio
+    422 na baš ovaj PUT. Uzrok: slanje CIJELOG GET objekta natrag (uključujući
+    audio_type/audio_required_progress, koja MasterStudy vraća SAMO za čitanje)
+    je TOČNO isti poznati bug kao u pages/5_wp_lekcije.py - objavi_lekciju_na_wp()
+    (v. njen docstring, ispravljeno 27.9.2026. istog dana za taj file, ali ovdje
+    je ostao stari, neispravljeni obrazac). Sad koristi ISTI potvrđeni whitelist
+    PUT body kao ta funkcija, samo bez mijenjanja sadržaja (content se čuva iz
+    GET-a, mijenja se SAMO preview)."""
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons/{post_id}"
     try:
         r = requests.get(url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
         r.raise_for_status()
         lesson = r.json().get("lesson", r.json())
-        lesson["preview"] = True
-        r2 = requests.put(url, auth=auth, json=lesson, headers=WP_REQUEST_HEADERS, timeout=20)
+        body = {
+            "id": lesson.get("id", post_id),
+            "title": lesson.get("title", ""),
+            "content": lesson.get("content", ""),
+            "video_captions": lesson.get("video_captions", []),
+            "pdf_file": lesson.get("pdf_file", []),
+            "duration": lesson.get("duration"),
+            "preview": True,
+            "excerpt": lesson.get("excerpt"),
+            "pdf_file_ids": lesson.get("pdf_file_ids", "a:0:{}"),
+            "pdf_read_all": lesson.get("pdf_read_all", False),
+            "custom_fields": {},
+            "type": lesson.get("type", "text"),
+            "files": lesson.get("files", []),
+            "start_time": None,
+        }
+        r2 = requests.put(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
         r2.raise_for_status()
         return True, "ok"
     except requests.exceptions.RequestException as e:
-        return False, str(e)
+        return False, opis_greske(e)
 
 
 # ---------------------------------------------------------------
@@ -417,7 +481,7 @@ if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not oda
                 st.json(raw, expanded=False)
             except requests.exceptions.RequestException as e:
                 status_box.update(label="Greška pri kreiranju tečaja", state="error")
-                st.error(f"Greška: {e}")
+                st.error(f"Greška: {opis_greske(e)}")
                 st.stop()
             if not course_id:
                 status_box.update(label="Nisam prepoznao course_id u odgovoru", state="error")
@@ -438,7 +502,7 @@ if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not oda
                     section_id = sekcije[0].get("id")
             except requests.exceptions.RequestException as e:
                 status_box.update(label="Greška pri dohvatu postojećeg tečaja", state="error")
-                st.error(f"Greška: {e}")
+                st.error(f"Greška: {opis_greske(e)}")
                 st.stop()
 
         if not section_id:
@@ -448,7 +512,7 @@ if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not oda
                 st.json(raw, expanded=False)
             except requests.exceptions.RequestException as e:
                 status_box.update(label="Greška pri kreiranju sekcije", state="error")
-                st.error(f"Greška: {e}")
+                st.error(f"Greška: {opis_greske(e)}")
                 st.stop()
             if not section_id:
                 status_box.update(label="Nisam prepoznao section_id u odgovoru", state="error")
@@ -461,7 +525,7 @@ if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not oda
             try:
                 post_id, material_id, raw = kreiraj_lekciju(wp_url, auth, course_id, section_id, potpoglavlje, n)
             except requests.exceptions.RequestException as e:
-                rezultati.append({"potpoglavlje": potpoglavlje, "status": f"GREŠKA: {e}"})
+                rezultati.append({"potpoglavlje": potpoglavlje, "status": f"GREŠKA: {opis_greske(e)}"})
                 continue
             if not post_id:
                 rezultati.append({"potpoglavlje": potpoglavlje, "status": "kreirano, ali post_id nepoznat - v. JSON"})
