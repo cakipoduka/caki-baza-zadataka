@@ -35,6 +35,40 @@ Isti principi kao pages/5_wp_lekcije.py: ista APP_PASSWORD lozinka, isti WP_URL/
 WP_API_USER/WP_API_APP_PASSWORD secreti - ali ova stranica je namjerno SAMO za Caki-ja
 (ADMIN_NAMES niže) jer stvara novi javni sadržaj (tečajeve), ne samo popunjava
 postojeće lekcije.
+
+IZMJENE 27.9.2026. (nakon što je SiteGround ticket 5139836 riješen - sgcaptcha/AI
+Anti-Bot sustav isključen za cakipoduka.com, v. CAKI_MASTER_BAZA §32 - REST pozivi
+sad prolaze bez mrežnog blokiranja):
+  1. NOVO: podrška za "tečaj neobjavljen (draft)" - Caki je zatražio da novoizgrađeni
+     tečajevi PO CJELINI ostanu neobjavljeni dok se ne popune stvarnim sadržajem.
+     `kreiraj_tecaj()` sad šalje `status`/`post_status` u create body, i dodana je
+     nova `postavi_status_tecaja()` (GET pa PUT flat na /courses/{id}/settings -
+     ISTI potvrđeni obrazac kao u CAKI_matura_kalendar_embed dokumentu za course
+     content/description) kao pouzdaniji backup poziv odmah nakon kreiranja, te kao
+     zaseban gumb za VEĆ POSTOJEĆI tečaj (npr. 7623, kreiran ranije danas ručno kroz
+     UI prije nego je ova funkcija postojala).
+     ⚠️ NEPOTVRĐENO: točan naziv polja (`status` vs `post_status`) za MasterStudy
+     course model nije bio moguće provjeriti uživo u trenutku pisanja - Browser pane
+     sesija (koja bi to potvrdila preko GET/courses/{id}/settings s pravim nonce-om)
+     odjavila se usred provjere, a cloud/device shell nemaju mrežni pristup do
+     cakipoduka.com (nevezano za SiteGround - v. §32 - ovo je ORGANIZACIJSKI/sandbox
+     egress allowlist, druga stvar). Funkcija šalje OBA kandidatska naziva odjednom
+     (bezopasno - nepoznato polje se u pravilu samo ignorira) i UVIJEK prikazuje
+     sirovi odgovor - PRVI STVARNI POZIV mora se provjeriti uživo (Course Builder +
+     javna stranica tečaja) prije nego se na njega osloni za ostale cjeline.
+  2. NOVO: nakon izgradnje/dopune tečaja, alat sad automatski postavlja `preview: true`
+     na SVE lekcije tog tečaja u tom trenutku - ne samo na one koje je upravo sam
+     kreirao u ovom pozivu, nego i na već postojeće (npr. lekcija "Skupovi brojeva",
+     post_id 7624, kreirana ranije danas ručno) - ovo odgovara Cakijevom zahtjevu
+     "sve lekcije da ih stavimo na pretpregled". Rezultat po lekciji (uspjeh/greška)
+     sad se prikazuje eksplicitno umjesto da se greška tiho guta.
+  ⚠️ OTVORENO, NIJE AUTOMATSKI RIJEŠENO OVIM PROLAZOM: postojeća lekcija "Skupovi
+  brojeva" (post_id 7624) ima naziv koji se NE poklapa točno s nazivom potpoglavlja
+  "Skupovi" iz Sifrarnik_potpoglavlja (v. napomena o exact-string matchingu niže u
+  kodu) - multiselect je NEĆE automatski isključiti kao duplikat. Prije pokretanja
+  izgradnje za cjelinu "Realni brojevi", ručno odznači "Skupovi" iz popisa (ili
+  preimenuj postojeću lekciju u Course Builderu u točno "Skupovi") da se ne stvori
+  duplikat.
 """
 
 import json
@@ -151,13 +185,42 @@ def izvuci_id(data: dict, *kljucevi_kandidati):
     return None
 
 
-def kreiraj_tecaj(wp_url, auth, naslov, category_id):
+def kreiraj_tecaj(wp_url, auth, naslov, category_id, status=None):
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/courses/create"
     body = {"title": naslov, "slug": slugify(naslov), "category": [category_id]}
+    if status:
+        # Nepotvrđen naziv polja (v. napomena na vrhu datoteke) - šaljemo oba
+        # kandidata, neiskorišteni se u pravilu samo ignorira.
+        body["status"] = status
+        body["post_status"] = status
     r = requests.post(url, auth=auth, json=body, headers=WP_REQUEST_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
     return izvuci_id(data, "id", "course_id", "post_id"), data
+
+
+def postavi_status_tecaja(wp_url, auth, course_id, status="draft"):
+    """GET pa PUT flat na /courses/{id}/settings - isti potvrđeni obrazac kao za
+    course content/description (v. CAKI_matura_kalendar_embed dokument). Backup/
+    samostalan poziv za slučaj da courses/create ignorira status u create body-ju,
+    i jedini put za tečaj koji već postoji (kreiran prije ove funkcije). NEPOTVRĐENO
+    27.9.2026. da MasterStudy uopće poštuje jedno od ova dva polja - v. napomena na
+    vrhu datoteke. Vraća (uspjeh: bool, sirovi_odgovor: dict) - poziv NIKAD ne baca
+    iznimku dalje (status-postavljanje je "nice to have", ne smije prekinuti ostatak
+    toka gradnje tečaja/lekcija) - pozivatelj odlučuje kako prikazati rezultat."""
+    url = f"{wp_url}/wp-json/masterstudy-lms/v2/courses/{course_id}/settings"
+    try:
+        r = requests.get(url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        course = data.get("course", data)
+        course["status"] = status
+        course["post_status"] = status
+        r2 = requests.put(url, auth=auth, json=course, headers=WP_REQUEST_HEADERS, timeout=20)
+        r2.raise_for_status()
+        return True, r2.json()
+    except requests.exceptions.RequestException as e:
+        return False, {"error": str(e)}
 
 
 def kreiraj_sekciju(wp_url, auth, course_id, naslov=""):
@@ -184,13 +247,21 @@ def kreiraj_lekciju(wp_url, auth, course_id, section_id, naslov, order):
 
 
 def postavi_preview(wp_url, auth, post_id):
+    """Postavlja preview=true na lekciju. Vraća (uspjeh: bool, poruka: str) umjesto
+    da baca iznimku - 27.9.2026. promijenjeno iz tihog "except: pass" jer je "sve
+    lekcije u pretpregledu" sad eksplicitan zahtjev, ne samo nice-to-have, pa
+    neuspjeh treba biti vidljiv Cakiju, ne tiho progutan."""
     url = f"{wp_url}/wp-json/masterstudy-lms/v2/lessons/{post_id}"
-    r = requests.get(url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
-    r.raise_for_status()
-    lesson = r.json().get("lesson", r.json())
-    lesson["preview"] = True
-    r2 = requests.put(url, auth=auth, json=lesson, headers=WP_REQUEST_HEADERS, timeout=20)
-    r2.raise_for_status()
+    try:
+        r = requests.get(url, auth=auth, headers=WP_REQUEST_HEADERS, timeout=20)
+        r.raise_for_status()
+        lesson = r.json().get("lesson", r.json())
+        lesson["preview"] = True
+        r2 = requests.put(url, auth=auth, json=lesson, headers=WP_REQUEST_HEADERS, timeout=20)
+        r2.raise_for_status()
+        return True, "ok"
+    except requests.exceptions.RequestException as e:
+        return False, str(e)
 
 
 # ---------------------------------------------------------------
@@ -282,10 +353,18 @@ if not course_id_input.strip():
     try:
         kategorije = dohvati_kategorije(wp_url, auth)
         opcije_kat = {f"{k['name']} (id {k['id']})": k["id"] for k in kategorije}
+        popis_kat = list(opcije_kat.keys())
+        # 27.9.2026.: Caki potvrdio kategoriju za nove tečajeve "po cjelini" (matematika) -
+        # "Instrukcije za srednju školu", id 26 (potvrđeno uživo preko javnog filtera na
+        # /pripreme/ - checkbox name="category[]" value="26"). Samo default odabir u
+        # dropdownu - Caki i dalje može ručno promijeniti za bilo koji drugi predmet/slučaj.
+        default_index = next(
+            (i for i, naziv in enumerate(popis_kat) if opcije_kat[naziv] == 26), 0
+        )
         odabrana_kat = st.selectbox(
-            "Kategorija (potrebna za NOVI tečaj - nijedna trenutna kategorija nije "
-            "napravljena baš za ovaj tip 'tečaj po cjelini', odaberi privremeno najbližu)",
-            list(opcije_kat.keys()), key="kategorija_izgradi",
+            "Kategorija (za matematičke cjeline: 'Instrukcije za srednju školu', id 26 - "
+            "potvrđeno s Cakijem 27.9.2026. i predodabrano niže; promijeni ručno za drugi slučaj)",
+            popis_kat, index=default_index, key="kategorija_izgradi",
         )
         kategorija_id = opcije_kat[odabrana_kat]
     except requests.exceptions.RequestException as e:
@@ -308,6 +387,23 @@ odabrana_potpoglavlja = st.multiselect(
 )
 
 st.divider()
+
+neobjavljen = st.checkbox(
+    "Tečaj neobjavljen (draft) - eksperimentalno, 27.9.2026.: naziv polja koje MasterStudy "
+    "stvarno poštuje NIJE potvrđen uživo (v. napomena na vrhu datoteke) - provjeri rezultat "
+    "u Course Builderu/na javnoj stranici nakon prvog pokretanja",
+    value=True, key="draft_izgradi",
+)
+
+if course_id_input.strip():
+    if st.button("🔒 Postavi POSTOJEĆI tečaj (course_id gore) kao draft - bez diranja lekcija"):
+        uspjeh, raw = postavi_status_tecaja(wp_url, auth, course_id_input.strip(), "draft")
+        st.json(raw, expanded=False)
+        if uspjeh:
+            st.success("Poziv je prošao (HTTP 200) - provjeri uživo je li tečaj stvarno draft, jer polje nije unaprijed potvrđeno.")
+        else:
+            st.error("Poziv nije uspio - v. JSON iznad.")
+
 if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not odabrana_potpoglavlja):
     course_id = course_id_input.strip()
     section_id = None
@@ -328,6 +424,12 @@ if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not oda
                 st.error("Tečaj je možda kreiran, ali nisam uspio pročitati njegov ID iz odgovora (v. JSON iznad). Provjeri ručno u Course Builderu i upiši course_id gore da nastaviš.")
                 st.stop()
             status_box.write(f"Tečaj kreiran: course_id {course_id}")
+            if neobjavljen:
+                status_box.write("Postavljam tečaj kao draft (backup poziv na /settings)...")
+                uspjeh_draft, raw_draft = postavi_status_tecaja(wp_url, auth, course_id, "draft")
+                st.json(raw_draft, expanded=False)
+                if not uspjeh_draft:
+                    status_box.write("⚠️ Draft-poziv nije uspio - tečaj je vjerojatno objavljen, postavi ručno u Course Builderu.")
         else:
             try:
                 curr = dohvati_curriculum(course_id, wp_url, auth)
@@ -365,21 +467,45 @@ if st.button("🏗️ Izgradi / dopuni tečaj", type="primary", disabled=not oda
                 rezultati.append({"potpoglavlje": potpoglavlje, "status": "kreirano, ali post_id nepoznat - v. JSON"})
                 st.json(raw, expanded=False)
                 continue
-            try:
-                postavi_preview(wp_url, auth, post_id)
-            except requests.exceptions.RequestException:
-                pass  # nije kritično - profesor može kasnije ručno uključiti preview
             ws_tecajevi.append_row([
                 cjelina, potpoglavlje, str(course_id), cjelina, str(section_id),
                 str(post_id), potpoglavlje, "prazno", datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ])
             rezultati.append({"potpoglavlje": potpoglavlje, "status": f"✅ kreirano (post_id {post_id})"})
 
+        # 27.9.2026.: nakon izgradnje/dopune, postavi preview:true na SVE lekcije
+        # ovog tečaja u ovom trenutku - ne samo one koje je OVAJ poziv kreirao, nego
+        # i već postojeće (npr. lekcije napravljene ranije ručno kroz Course Builder,
+        # v. napomena na vrhu datoteke o "Skupovi brojeva"/post_id 7624). Odgovara
+        # Cakijevom zahtjevu "sve lekcije da ih stavimo na pretpregled".
+        status_box.write("Postavljam pretpregled (preview) na sve lekcije ovog tečaja...")
+        preview_rezultati = []
+        try:
+            svi_materijali = dohvati_curriculum(course_id, wp_url, auth).get("materials", [])
+        except requests.exceptions.RequestException as e:
+            svi_materijali = []
+            status_box.write(f"⚠️ Ne mogu ponovno dohvatiti curriculum za pregled pretpregleda: {e}")
+        for m in svi_materijali:
+            pid = m.get("post_id")
+            if not pid:
+                continue
+            uspjeh_prev, poruka_prev = postavi_preview(wp_url, auth, pid)
+            preview_rezultati.append({
+                "lekcija": m.get("title"), "post_id": pid,
+                "pretpregled": "✅" if uspjeh_prev else f"❌ {poruka_prev}",
+            })
+
         status_box.update(label="Gotovo.", state="complete")
 
     ucitaj_tecajevi_mapping.clear()
-    st.subheader("Rezultat")
+    st.subheader("Rezultat — nove/dopunjene lekcije")
     st.dataframe(rezultati)
+    if preview_rezultati:
+        st.subheader("Rezultat — pretpregled (preview) na svim lekcijama tečaja")
+        st.dataframe(preview_rezultati)
+        neuspjesi = [p for p in preview_rezultati if "❌" in str(p["pretpregled"])]
+        if neuspjesi:
+            st.warning(f"{len(neuspjesi)} lekcija/a nije uspjelo postaviti pretpregled - v. tablicu iznad, provjeri ručno u Course Builderu.")
     if course_id:
         st.success(
             f"Provjeri uživo: https://www.cakipoduka.com/user-account-2/edit-course/{course_id}/curriculum/"
