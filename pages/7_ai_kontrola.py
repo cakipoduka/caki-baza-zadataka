@@ -56,7 +56,9 @@ TZ = ZoneInfo("Europe/Zagreb")
 ZADANI_FOLDER_ID = "0B5HA0YxLCZWPejRYX0o1Z2xWZTA"  # MATEMATIKA A razina (00_INBOX_PDF/matura)
 MD_PODFOLDER = "_mathpix_md"
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
-MODELI = ["deepseek-reasoner", "deepseek-chat"]
+# Nazivi modela po DeepSeek dokumentaciji (listopad 2026.): v4-pro = jači (bez vida), flash = brži/jeftiniji.
+# Oba su po zadanom u "thinking" načinu (razmišljaju prije odgovora) - to želimo za provjeru računa.
+MODELI = ["deepseek-v4-pro", "deepseek-flash"]
 
 DOZVOLJENA_POLJA = [
     "tekst_zadatka_latex", "ponudjeni_odgovori", "konacan_odgovor",
@@ -368,8 +370,6 @@ def pozovi_deepseek(model, korisnicka_poruka, max_tokens, log):
         "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
-    if model == "deepseek-chat":
-        tijelo["temperature"] = 0.0
     zadnja_greska = None
     for pokusaj in range(1, 4):
         try:
@@ -551,9 +551,9 @@ with tab_obrada:
         )
 
         c1, c2, c3 = st.columns(3)
-        model = c1.selectbox("Model", MODELI, help="reasoner = sporiji, ali bolje provjerava računanje")
+        model = c1.selectbox("Model", MODELI, help="v4-pro = jači i pouzdaniji za provjeru računa; flash = brži i jeftiniji")
         max_tokens = c2.number_input("Max. duljina odgovora (tokeni)", 2000, 64000,
-                                     32000 if model == "deepseek-reasoner" else 8000, step=1000)
+                                     32000, step=1000)
         ponovno = c3.checkbox("Ponovno obradi i već obrađene", value=False)
 
         if st.button("▶️ Pokreni obradu označenih", type="primary"):
