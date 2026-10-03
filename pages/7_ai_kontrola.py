@@ -73,7 +73,7 @@ MAX_RJESENJE_ZNAKOVA = 2500
 PRIJEDLOZI_HEADERS = [
     "prijedlog_id", "vrijeme", "serija", "id_zadatka", "polje", "staro", "novo",
     "vrsta", "razlog", "sigurnost", "izvor_prijedloga", "status", "odlucio",
-    "vrijeme_odluke", "model",
+    "vrijeme_odluke", "model", "isjecak_originala",
 ]
 SERIJE_HEADERS = [
     "serija", "vrijeme", "status", "broj_zadataka_u_bazi", "broj_prijedloga",
@@ -128,7 +128,16 @@ def init_drive():
 
 
 def ws_prijedlozi():
-    return get_or_create_worksheet(init_spreadsheet(), "AI_kontrola_prijedlozi", PRIJEDLOZI_HEADERS, rows=2000)
+    ws = get_or_create_worksheet(init_spreadsheet(), "AI_kontrola_prijedlozi", PRIJEDLOZI_HEADERS, rows=2000)
+    # Tab napravljen prije dodavanja stupca "isjecak_originala" - dopiši zaglavlje na kraj (jednom po sesiji).
+    if not st.session_state.get("_ai_hdr_ok"):
+        hdr = ws.row_values(1)
+        if "isjecak_originala" not in hdr:
+            if ws.col_count < len(hdr) + 1:
+                ws.add_cols(1)
+            ws.update_cell(1, len(hdr) + 1, "isjecak_originala")
+        st.session_state["_ai_hdr_ok"] = True
+    return ws
 
 
 def ws_serije():
@@ -328,7 +337,8 @@ ODGOVORI ISKLJUČIVO JSON OBJEKTOM ovog oblika (bez teksta prije/poslije, bez ``
     {"id": "...", "polje": "tekst_zadatka_latex|ponudjeni_odgovori|konacan_odgovor|rjesenje|tip_zadatka|max_bodovi",
      "novo": "...", "vrsta": "ocr_greska|nedostaje_tekst|format_konvencija|kriv_odgovor|kriva_opcija|kriv_tip|ostalo",
      "razlog": "kratko, s brojem zadatka u originalu", "sigurnost": "visoka|srednja|niska",
-     "izvor_prijedloga": "original|kljuc|ai_izracun"}
+     "izvor_prijedloga": "original|kljuc|ai_izracun",
+     "isjecak_originala": "DOSLOVNO prepisan dio OCR teksta originala ili ključa na kojem temeljiš ispravak (najviše ~300 znakova; prazno za ai_izracun)"}
   ],
   "nedostaju_u_bazi": [{"broj_u_originalu": "15", "kratki_opis": "..."}],
   "napomene": [{"id": "...", "napomena": "..."}]
@@ -431,10 +441,10 @@ def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id
     vrijeme = sada()
     prijedlozi = []
 
-    def novi(id_z, polje, staro, novo, vrsta, razlog, sigurnost, izvor):
+    def novi(id_z, polje, staro, novo, vrsta, razlog, sigurnost, izvor, isjecak=""):
         prijedlozi.append([
             uuid.uuid4().hex[:10], vrijeme, izvor_naziv, id_z, polje, staro, novo,
-            vrsta, razlog, sigurnost, izvor, "novo", "", "", model,
+            vrsta, razlog, sigurnost, izvor, "novo", "", "", model, str(isjecak or "")[:2000],
         ])
 
     for p in podaci.get("prijedlozi", []) or []:
@@ -447,7 +457,7 @@ def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id
         if novo.strip() == staro.strip():
             continue
         novi(id_z, polje, staro, novo, p.get("vrsta", ""), p.get("razlog", ""),
-             p.get("sigurnost", ""), p.get("izvor_prijedloga", ""))
+             p.get("sigurnost", ""), p.get("izvor_prijedloga", ""), p.get("isjecak_originala", ""))
 
     for n in podaci.get("napomene", []) or []:
         id_z = str(n.get("id", "")).strip()
@@ -611,12 +621,73 @@ with tab_obrada:
 
 # ======================= TAB 2: PREGLED =======================
 
-def prikazi_diff(staro, novo):
-    d = difflib.unified_diff(staro.splitlines() or [""], novo.splitlines() or [""],
-                             "baza", "prijedlog", lineterm="", n=0)
-    tekst = "\n".join(list(d)[2:])
-    if tekst:
-        st.code(tekst, language="diff")
+# --- Pregledan prikaz razlika ---------------------------------------------------
+# Usporedba po "tokenima" (LaTeX naredba, broj, riječ, pojedini znak) umjesto po cijelim
+# retcima - tako se vidi točno ŠTO se mijenja (npr. samo "+6" -> "-6"), a dugi nepromijenjeni
+# dijelovi skraćuju se na "…". Crveno precrtano = briše se, zeleno = dodaje se.
+
+_TOKEN_RE = re.compile(r"\\[A-Za-z]+|\d+(?:[.,]\d+)?|[A-Za-zČĆŠĐŽčćšđž]+|\s+|.", re.S)
+_HTML_ESC = {"&": "&amp;", "<": "&lt;", ">": "&gt;", "$": "&#36;", "\\": "&#92;", "*": "&#42;",
+             "_": "&#95;", "`": "&#96;", "\n": "<br>", "#": "&#35;", "[": "&#91;", "]": "&#93;"}
+
+
+def _esc(t):
+    return "".join(_HTML_ESC.get(c, c) for c in t)
+
+
+def _html_kutija(sadrzaj):
+    return ('<div style="font-family:monospace;font-size:0.95rem;line-height:1.7;'
+            'white-space:pre-wrap;padding:8px 10px;border:1px solid #ddd;border-radius:6px;">'
+            f"{sadrzaj}</div>")
+
+
+def html_diff(staro, novo, kontekst=40):
+    return _html_kutija(html_diff_inline(staro, novo, kontekst))
+
+
+def html_diff_inline(staro, novo, kontekst=40):
+    a, b = _TOKEN_RE.findall(staro or ""), _TOKEN_RE.findall(novo or "")
+    dijelovi = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op == "equal":
+            t = "".join(a[i1:i2])
+            if len(t) > 2 * kontekst:
+                t = (t[:kontekst] if dijelovi else "") + " … " + t[-kontekst:]
+            dijelovi.append(_esc(t))
+            continue
+        if i2 > i1:
+            dijelovi.append('<span style="background:#ffd1d1;color:#a00000;text-decoration:line-through;'
+                            f'border-radius:3px;padding:0 2px;">{_esc("".join(a[i1:i2]))}</span>')
+        if j2 > j1:
+            dijelovi.append('<span style="background:#c8f2c8;color:#005a00;font-weight:700;'
+                            f'border-radius:3px;padding:0 2px;">{_esc("".join(b[j1:j2]))}</span>')
+    return "".join(dijelovi)
+
+
+def prikazi_promjenu(p):
+    """Glavni prikaz jednog prijedloga, prilagođen vrsti polja."""
+    staro, novo, polje = p["staro"], p["novo"], p["polje"]
+    if polje in ("konacan_odgovor", "tip_zadatka", "max_bodovi", "broj_u_izvoru"):
+        st.markdown(
+            _html_kutija(f'<span style="color:#a00000;text-decoration:line-through;">{_esc(staro) or "(prazno)"}</span>'
+                         f'&nbsp;&nbsp;➜&nbsp;&nbsp;<span style="color:#005a00;font-weight:700;font-size:1.15rem;">'
+                         f'{_esc(novo) or "(prazno)"}</span>'),
+            unsafe_allow_html=True)
+    elif polje == "ponudjeni_odgovori":
+        so = [o.strip() for o in staro.split("||")]
+        no = [o.strip() for o in novo.split("||")]
+        redovi = []
+        for i in range(max(len(so), len(no))):
+            o1 = so[i] if i < len(so) else ""
+            o2 = no[i] if i < len(no) else ""
+            slovo = chr(65 + i)
+            if o1 == o2:
+                redovi.append(f"<b>{slovo}</b>&nbsp; {_esc(o1)}")
+            else:
+                redovi.append(f"<b>{slovo}</b>&nbsp; ⚠️ {html_diff_inline(o1, o2)}")
+        st.markdown(_html_kutija("<br>".join(redovi)), unsafe_allow_html=True)
+    else:
+        st.markdown(html_diff(staro, novo), unsafe_allow_html=True)
 
 
 with tab_pregled:
@@ -645,19 +716,24 @@ with tab_pregled:
             odluke = {}
             for p in lista:
                 pid = p["prijedlog_id"]
-                st.markdown(f"#### `{p['id_zadatka'] or '—'}` · **{p['polje']}** · {p['vrsta']} · "
-                            f"sigurnost: *{p['sigurnost'] or '-'}* · izvor: {p['izvor_prijedloga']}")
+                boja = {"visoka": "🟢", "srednja": "🟠", "niska": "🔴"}.get(p.get("sigurnost", ""), "⚪")
+                st.markdown(f"#### {boja} `{p['id_zadatka'] or '—'}` · {p['polje']} · *{p['vrsta']}*")
                 if p["razlog"]:
-                    st.markdown(f"💬 {p['razlog']}")
+                    st.markdown(f"**💬 {p['razlog']}**")
+                if p.get("isjecak_originala"):
+                    st.caption("📄 Original (iz PDF-a):")
+                    st.info(p["isjecak_originala"])
                 if p["polje"] not in ("-", "status_provjere"):
-                    a, b = st.columns(2)
-                    a.markdown("**U bazi:**")
-                    a.markdown(p["staro"] or "*(prazno)*")
-                    b.markdown("**Prijedlog:**")
-                    b.markdown(p["novo"] or "*(prazno)*")
-                    prikazi_diff(p["staro"], p["novo"])
-                    novo_uredeno = st.text_area("Nova vrijednost (možeš urediti)", p["novo"],
-                                                key=f"tx_{pid}", height=90)
+                    st.caption("🔍 Promjena (crveno = briše se, zeleno = dodaje se):")
+                    prikazi_promjenu(p)
+                    with st.expander("Prikaz formula prije / poslije i ručna izmjena"):
+                        a, b = st.columns(2)
+                        a.markdown("**U bazi:**")
+                        a.markdown(p["staro"] or "*(prazno)*")
+                        b.markdown("**Prijedlog:**")
+                        b.markdown(p["novo"] or "*(prazno)*")
+                        novo_uredeno = st.text_area("Nova vrijednost (možeš urediti prije prihvaćanja)",
+                                                    p["novo"], key=f"tx_{pid}", height=90)
                 else:
                     novo_uredeno = p["novo"]
                 odluka = st.radio("Odluka", ["⏸️ kasnije", "✅ prihvati", "❌ odbij"],
