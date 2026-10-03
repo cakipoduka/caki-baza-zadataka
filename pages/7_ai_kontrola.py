@@ -33,6 +33,7 @@ Opcionalno:
 import difflib
 import io
 import json
+import os
 import re
 import time
 import uuid
@@ -48,6 +49,10 @@ from baza_zadataka_pipeline import (
     get_gspread_client,
     get_or_create_worksheet,
     mathpix_ocr_datoteka,
+    prikazi_opcije_markdown,
+)
+from ai_prijedlozi import (
+    RAZDVOJI, naslov_prijedloga, primijeni_razdvajanje, prikazi_kontekst_prijedloga, prikazi_promjenu,
 )
 
 st.set_page_config(page_title="CAKI — AI kontrola zadataka", page_icon="🔎", layout="wide")
@@ -95,7 +100,8 @@ def provjeri_lozinku() -> bool:
             st.session_state.get("lozinka_unos_ai") == st.secrets.get("APP_PASSWORD")
         )
 
-    if st.session_state.get("autoriziran_ai"):
+    if st.session_state.get("autoriziran_ai") or st.session_state.get("autoriziran"):
+        st.session_state["autoriziran"] = True  # i glavna stranica (skok u "Provjera i uređivanje")
         return True
     st.title("🔎 CAKI — AI kontrola zadataka")
     st.text_input("Lozinka", type="password", key="lozinka_unos_ai", on_change=na_unos)
@@ -312,6 +318,12 @@ CILJ: pronaći greške u bazi usporedbom s originalom. Ti NE mijenjaš bazu - sa
 PRAVILA:
 1. Upari svaki zadatak iz baze s brojem zadatka u originalu (npr. "7", "7a", "15b").
    Napomena: zadaci s podzadacima a), b), c) u bazi su NAMJERNO razdvojeni u zasebne zadatke i svaki ponavlja zajednički uvod - to NIJE greška.
+1b. Ako JEDAN redak u bazi sadrži VIŠE podzadataka spojenih u jedan tekst (npr. 25.1, 25.2, 25.3 ili a., b., c.),
+   NIKAKO ne predlaži skraćivanje teksta (izgubili bi se podzadaci). Umjesto toga navedi taj redak u "razdvajanja":
+   svaki dio kao POTPUNO SAMOSTALAN zadatak koji ponavlja zajednički uvod (formulu, zadane podatke) + svoje pitanje,
+   s vlastitim tip_zadatka, konacan_odgovor (iz ključa), max_bodovi i rjesenje (ako ga ključ daje). Ako podzadatak
+   ovisi o rezultatu prethodnog, taj rezultat navedi kao zadan podatak. Prvi dio zamijenit će postojeći redak, ostali
+   postaju novi redci. Za takav redak NE šalji druge prijedloge za tekst_zadatka_latex.
 2. Predlaži ispravak SAMO kad postoji stvarna razlika prema originalu ili ključu: OCR greška (krivi broj, znak, eksponent, indeks, razlomak, nestali minus, zamijenjena slova), nedostaje ili je višak dio teksta/podatka, krive ili ispremiještane ponuđene opcije, kriv konačan odgovor, kriv tip zadatka, neuparen ili pogrešno postavljen $.
    NE mijenjaj stil, formulaciju ni interpunkciju ako je sadržaj isti. NE "uljepšavaj".
 3. Konvencije zapisa u bazi (novo MORA ih poštivati):
@@ -339,6 +351,11 @@ ODGOVORI ISKLJUČIVO JSON OBJEKTOM ovog oblika (bez teksta prije/poslije, bez ``
      "razlog": "kratko, s brojem zadatka u originalu", "sigurnost": "visoka|srednja|niska",
      "izvor_prijedloga": "original|kljuc|ai_izracun",
      "isjecak_originala": "DOSLOVNO prepisan dio OCR teksta originala ili ključa na kojem temeljiš ispravak (najviše ~300 znakova; prazno za ai_izracun)"}
+  ],
+  "razdvajanja": [
+    {"id": "...", "razlog": "...", "isjecak_originala": "...",
+     "dijelovi": [{"oznaka": "25.1", "tekst_zadatka_latex": "...", "tip_zadatka": "kratki_odgovor",
+                   "konacan_odgovor": "...", "max_bodovi": "", "rjesenje": ""}]}
   ],
   "nedostaju_u_bazi": [{"broj_u_originalu": "15", "kratki_opis": "..."}],
   "napomene": [{"id": "...", "napomena": "..."}]
@@ -414,7 +431,10 @@ def pozovi_deepseek(model, korisnicka_poruka, max_tokens, log):
 # ---------------------------------------------------------------
 
 def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id, md_postojeci,
-                  model, max_tokens, log):
+                  model, max_tokens, log, vec_postojeci=None):
+    """vec_postojeci: skup (id, polje, novo) prijedloga koji već postoje u tabu (bilo kojeg
+    statusa) - kod PONOVNE obrade iste mature isti prijedlog se ne dodaje dvaput."""
+    vec_postojeci = vec_postojeci or set()
     datoteke_nazivi = ", ".join(d["name"] for d in grupa["ispit"] + grupa["rjesenja"])
     ispit_md = "\n\n---\n\n".join(ocr_s_cacheom(d, md_folder_id, md_postojeci, log) for d in grupa["ispit"])
     rj_md = "\n\n---\n\n".join(ocr_s_cacheom(d, md_folder_id, md_postojeci, log) for d in grupa["rjesenja"])
@@ -442,13 +462,29 @@ def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id
     prijedlozi = []
 
     def novi(id_z, polje, staro, novo, vrsta, razlog, sigurnost, izvor, isjecak=""):
+        if (id_z, polje, str(novo).strip()) in vec_postojeci:
+            return
         prijedlozi.append([
             uuid.uuid4().hex[:10], vrijeme, izvor_naziv, id_z, polje, staro, novo,
             vrsta, razlog, sigurnost, izvor, "novo", "", "", model, str(isjecak or "")[:2000],
         ])
 
+    za_razdvojiti = set()
+    for r in podaci.get("razdvajanja", []) or []:
+        id_z = str(r.get("id", "")).strip()
+        dijelovi = [d for d in (r.get("dijelovi") or []) if str(d.get("tekst_zadatka_latex", "")).strip()]
+        if id_z not in po_id or len(dijelovi) < 2:
+            log(f"⚠️ Odbačeno neispravno razdvajanje: {id_z}")
+            continue
+        za_razdvojiti.add(id_z)
+        novi(id_z, RAZDVOJI, po_id[id_z].get("tekst_zadatka_latex", ""),
+             json.dumps(dijelovi, ensure_ascii=False), "razdvajanje", r.get("razlog", ""),
+             "visoka", "original", r.get("isjecak_originala", ""))
+
     for p in podaci.get("prijedlozi", []) or []:
         id_z, polje = str(p.get("id", "")).strip(), str(p.get("polje", "")).strip()
+        if id_z in za_razdvojiti and polje == "tekst_zadatka_latex":
+            continue  # tekst tog retka rješava razdvajanje
         if id_z not in po_id or polje not in DOZVOLJENA_POLJA:
             log(f"⚠️ Odbačen prijedlog s nepoznatim id/poljem: {id_z} / {polje}")
             continue
@@ -582,6 +618,9 @@ with tab_obrada:
                 md_postojeci = {d["name"]: d["id"] for d in drive_popis(md_folder_id)}
                 napredak = st.progress(0.0)
                 ukupno_prijedloga = 0
+                _, _svi_p = ucitaj_tab_kao_dictove(ws_prijedlozi())
+                vec_postojeci = {(x.get("id_zadatka", ""), x.get("polje", ""), x.get("novo", "").strip())
+                                 for x in _svi_p}
 
                 for i, red in enumerate(odabrane, start=1):
                     g = grupe[red["ispit"]]
@@ -596,7 +635,8 @@ with tab_obrada:
                     else:
                         try:
                             rez = obradi_seriju(g, izv, redovi_z, st.session_state["ai_header_z"],
-                                                md_folder_id, md_postojeci, model, int(max_tokens), log)
+                                                md_folder_id, md_postojeci, model, int(max_tokens), log,
+                                                vec_postojeci=vec_postojeci)
                             if rez["prijedlozi"]:
                                 ws_prijedlozi().append_rows(rez["prijedlozi"], value_input_option="RAW")
                             ws_serije().append_row([
@@ -621,78 +661,57 @@ with tab_obrada:
 
 # ======================= TAB 2: PREGLED =======================
 
-# --- Pregledan prikaz razlika ---------------------------------------------------
-# Usporedba po "tokenima" (LaTeX naredba, broj, riječ, pojedini znak) umjesto po cijelim
-# retcima - tako se vidi točno ŠTO se mijenja (npr. samo "+6" -> "-6"), a dugi nepromijenjeni
-# dijelovi skraćuju se na "…". Crveno precrtano = briše se, zeleno = dodaje se.
+# --- Slika zadatka (isti 02_SLIKE folder kao Test Builder i "Provjera i uređivanje") ---
 
-_TOKEN_RE = re.compile(r"\\[A-Za-z]+|\d+(?:[.,]\d+)?|[A-Za-zČĆŠĐŽčćšđž]+|\s+|.", re.S)
-_HTML_ESC = {"&": "&amp;", "<": "&lt;", ">": "&gt;", "$": "&#36;", "\\": "&#92;", "*": "&#42;",
-             "_": "&#95;", "`": "&#96;", "\n": "<br>", "#": "&#35;", "[": "&#91;", "]": "&#93;"}
-
-
-def _esc(t):
-    return "".join(_HTML_ESC.get(c, c) for c in t)
-
-
-def _html_kutija(sadrzaj):
-    return ('<div style="font-family:monospace;font-size:0.95rem;line-height:1.7;'
-            'white-space:pre-wrap;padding:8px 10px;border:1px solid #ddd;border-radius:6px;">'
-            f"{sadrzaj}</div>")
-
-
-def html_diff(staro, novo, kontekst=40):
-    return _html_kutija(html_diff_inline(staro, novo, kontekst))
-
-
-def html_diff_inline(staro, novo, kontekst=40):
-    a, b = _TOKEN_RE.findall(staro or ""), _TOKEN_RE.findall(novo or "")
-    dijelovi = []
-    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
-        if op == "equal":
-            t = "".join(a[i1:i2])
-            if len(t) > 2 * kontekst:
-                t = (t[:kontekst] if dijelovi else "") + " … " + t[-kontekst:]
-            dijelovi.append(_esc(t))
-            continue
-        if i2 > i1:
-            dijelovi.append('<span style="background:#ffd1d1;color:#a00000;text-decoration:line-through;'
-                            f'border-radius:3px;padding:0 2px;">{_esc("".join(a[i1:i2]))}</span>')
-        if j2 > j1:
-            dijelovi.append('<span style="background:#c8f2c8;color:#005a00;font-weight:700;'
-                            f'border-radius:3px;padding:0 2px;">{_esc("".join(b[j1:j2]))}</span>')
-    return "".join(dijelovi)
+@st.cache_data(ttl=600, show_spinner=False)
+def dohvati_sliku(naziv):
+    if not naziv:
+        return None
+    try:
+        drive = init_drive()
+        q_naziv = naziv.replace("'", "\\'")
+        res = drive.files().list(
+            q=f"name='{q_naziv}' and '{st.secrets['SLIKE_FOLDER_ID']}' in parents and trashed=false",
+            fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True,
+        ).execute().get("files", [])
+        if not res:
+            return None
+        bajtovi = drive.files().get_media(fileId=res[0]["id"], supportsAllDrives=True).execute()
+        from PIL import Image  # provjera PRIJE st.image (oštećena slika može srušiti proces, v. Test Builder)
+        with Image.open(io.BytesIO(bajtovi)) as im:
+            im.verify()
+        return bajtovi
+    except Exception:
+        return None
 
 
-def prikazi_promjenu(p):
-    """Glavni prikaz jednog prijedloga, prilagođen vrsti polja."""
-    staro, novo, polje = p["staro"], p["novo"], p["polje"]
-    if polje in ("konacan_odgovor", "tip_zadatka", "max_bodovi", "broj_u_izvoru"):
-        st.markdown(
-            _html_kutija(f'<span style="color:#a00000;text-decoration:line-through;">{_esc(staro) or "(prazno)"}</span>'
-                         f'&nbsp;&nbsp;➜&nbsp;&nbsp;<span style="color:#005a00;font-weight:700;font-size:1.15rem;">'
-                         f'{_esc(novo) or "(prazno)"}</span>'),
-            unsafe_allow_html=True)
-    elif polje == "ponudjeni_odgovori":
-        so = [o.strip() for o in staro.split("||")]
-        no = [o.strip() for o in novo.split("||")]
-        redovi = []
-        for i in range(max(len(so), len(no))):
-            o1 = so[i] if i < len(so) else ""
-            o2 = no[i] if i < len(no) else ""
-            slovo = chr(65 + i)
-            if o1 == o2:
-                redovi.append(f"<b>{slovo}</b>&nbsp; {_esc(o1)}")
-            else:
-                redovi.append(f"<b>{slovo}</b>&nbsp; ⚠️ {html_diff_inline(o1, o2)}")
-        st.markdown(_html_kutija("<br>".join(redovi)), unsafe_allow_html=True)
-    else:
-        st.markdown(html_diff(staro, novo), unsafe_allow_html=True)
+def prikazi_zadatak_iz_baze(z):
+    putanja = os.path.basename((z.get("slika_putanja") or "").strip())
+    if putanja:
+        slika = dohvati_sliku(putanja)
+        if slika:
+            st.image(slika, width=380, caption="Slika zadatka")
+        else:
+            st.warning(f"Zadatak ima sliku ({putanja}), ali nije pronađena na Driveu.")
+    elif z.get("slika_zadana") == "da":
+        st.warning("Zadatak je označen da ima sliku, ali slika nije povezana (slika_putanja je prazna).")
+    with st.expander("📝 Cijeli zadatak (kako je trenutno u bazi)"):
+        st.markdown(z.get("tekst_zadatka_latex") or "*(prazno)*")
+        opcije = [o.strip() for o in (z.get("ponudjeni_odgovori") or "").split("||") if o.strip()]
+        if opcije:
+            st.markdown(prikazi_opcije_markdown(opcije))
+        if z.get("konacan_odgovor"):
+            st.caption(f"Konačan odgovor: {z['konacan_odgovor']}")
 
 
 with tab_pregled:
     if st.button("🔄 Osvježi prijedloge"):
         st.session_state.pop("ai_prijedlozi_cache", None)
+        st.session_state.pop("ai_zadaci_po_id", None)
+    if "ai_zadaci_po_id" not in st.session_state:
+        _, _rz = ucitaj_tab_kao_dictove(init_spreadsheet().worksheet("Zadaci"))
+        st.session_state["ai_zadaci_po_id"] = {r.get("id", ""): r for r in _rz}
+    zadaci_po_id = st.session_state["ai_zadaci_po_id"]
     if "ai_prijedlozi_cache" not in st.session_state:
         st.session_state["ai_prijedlozi_cache"] = ucitaj_tab_kao_dictove(ws_prijedlozi())
     header_p, prijedlozi = st.session_state["ai_prijedlozi_cache"]
@@ -712,18 +731,30 @@ with tab_pregled:
         st.caption("Za svaki prijedlog odaberi odluku. 'Novo' polje možeš i ručno doraditi prije primjene. "
                    "Napomene se dopisuju u status_provjere, a 'nedostaje u bazi' se samo označava pregledanim.")
 
+        ids_serije = list(dict.fromkeys(p["id_zadatka"] for p in lista if p.get("id_zadatka")))
+        if ids_serije:
+            oc1, oc2 = st.columns([2, 1])
+            id_otvori = oc1.selectbox("✏️ Otvori zadatak u uređivanju (cijeli zadatak, slika i AI prijedlozi uz njega)",
+                                      ids_serije, key="ai_otvori_sel")
+            oc2.write("")
+            if oc2.button("Otvori u 'Provjera i uređivanje' →"):
+                st.session_state["ai_otvori_id"] = id_otvori
+                st.session_state["ai_otvori_lista"] = ids_serije
+                st.session_state["glavna_stranica"] = "🔍✏️ Provjera i uređivanje zadataka"
+                st.switch_page("baza_zadataka_app.py")
+
         with st.form(f"forma_{serija}"):
             odluke = {}
             for p in lista:
                 pid = p["prijedlog_id"]
-                boja = {"visoka": "🟢", "srednja": "🟠", "niska": "🔴"}.get(p.get("sigurnost", ""), "⚪")
-                st.markdown(f"#### {boja} `{p['id_zadatka'] or '—'}` · {p['polje']} · *{p['vrsta']}*")
-                if p["razlog"]:
-                    st.markdown(f"**💬 {p['razlog']}**")
-                if p.get("isjecak_originala"):
-                    st.caption("📄 Original (iz PDF-a):")
-                    st.info(p["isjecak_originala"])
-                if p["polje"] not in ("-", "status_provjere"):
+                st.markdown(f"#### {naslov_prijedloga(p)}")
+                prikazi_kontekst_prijedloga(p)
+                if p.get("id_zadatka") in zadaci_po_id:
+                    prikazi_zadatak_iz_baze(zadaci_po_id[p["id_zadatka"]])
+                if p["polje"] == RAZDVOJI:
+                    prikazi_promjenu(p)
+                    novo_uredeno = p["novo"]
+                elif p["polje"] not in ("-", "status_provjere"):
                     st.caption("🔍 Promjena (crveno = briše se, zeleno = dodaje se):")
                     prikazi_promjenu(p)
                     with st.expander("Prikaz formula prije / poslije i ručna izmjena"):
@@ -758,6 +789,15 @@ with tab_pregled:
                 if odluka.startswith("⏸️"):
                     continue
                 novi_status = "odbijeno"
+                if odluka.startswith("✅") and p["polje"] == RAZDVOJI:
+                    st_r = primijeni_razdvajanje(init_spreadsheet(), ws_z, p, odlucio)  # sam zapisuje status
+                    if st_r == "primijenjeno":
+                        br_primijenjeno += 1
+                    elif st_r == "zastarjelo":
+                        br_zastarjelo += 1
+                    else:
+                        st.warning(f"Razdvajanje {p['id_zadatka']}: {st_r}")
+                    continue
                 if odluka.startswith("✅"):
                     if p["polje"] == "-":
                         novi_status = "pregledano"
@@ -793,6 +833,7 @@ with tab_pregled:
             if izmjene_p:
                 ws_prijedlozi().batch_update(izmjene_p, value_input_option="RAW")
             st.session_state.pop("ai_prijedlozi_cache", None)
+            st.session_state.pop("ai_zadaci_po_id", None)
             st.success(f"Primijenjeno: {br_primijenjeno} · odbijeno: {br_odbijeno} · "
                        f"zastarjelo (baza se u međuvremenu promijenila): {br_zastarjelo}")
             st.button("Nastavi")

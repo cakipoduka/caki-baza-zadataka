@@ -41,6 +41,16 @@ from baza_zadataka_pipeline import (
     zapisi_log_obrade,
 )
 
+# 🤖 AI prijedlozi ispravaka (pages/7_ai_kontrola.py, 3.10.2026.) - okvir uz formular za
+# uređivanje + filter. Import je zaštićen: ako ai_prijedlozi.py nedostaje, ostatak
+# aplikacije radi normalno, samo bez AI okvira (lekcija 15.9.2026. - neuspio import ne
+# smije srušiti cijelu aplikaciju).
+try:
+    from ai_prijedlozi import otvoreni_prijedlozi, prikazi_ai_prijedloge_za_zadatak
+    _AI_OK = True
+except Exception:
+    _AI_OK = False
+
 # Tipovi datoteka koje uploaderi za OCR ulaz prihvaćaju - PDF i uobičajeni formati slika
 # (npr. screenshot zaslona zadataka/rješenja). Mathpix OCR grana se automatski po ekstenziji
 # u pipeline.mathpix_ocr_datoteka() - ovdje samo dopuštamo oba u Streamlit file_upload widgetu.
@@ -903,6 +913,24 @@ def stranica_provjera_i_uredi():
     def get(row, col):
         return _get_polje(row, idx, col)
 
+    # 🤖 ID-evi zadataka s otvorenim AI prijedlozima (tab AI_kontrola_prijedlozi)
+    _ai_ids = set()
+    if _AI_OK:
+        try:
+            _ai_ids = {p.get("id_zadatka") for p in otvoreni_prijedlozi(sheet) if p.get("id_zadatka")}
+        except Exception:
+            _ai_ids = set()
+
+    # Skok sa stranice AI kontrole (gumb "Otvori u 'Provjera i uređivanje'") - otvori taj
+    # zadatak desno, a ⬅️/➡️ ide kroz sve zadatke te serije koji imaju AI prijedloge.
+    _skok_id = st.session_state.pop("ai_otvori_id", None)
+    if _skok_id:
+        _lista_ids = st.session_state.pop("ai_otvori_lista", None) or [_skok_id]
+        _red_po_id = {get(r, "id"): br for br, r in enumerate(redovi, start=2)}
+        if _skok_id in _red_po_id:
+            st.session_state["provjera_uredi_broj_retka"] = _red_po_id[_skok_id]
+            st.session_state["provjera_lista_redoslijeda"] = [_red_po_id[i] for i in _lista_ids if i in _red_po_id]
+
     if "provjera_uredi_broj_retka" not in st.session_state:
         st.session_state["provjera_uredi_broj_retka"] = None
 
@@ -945,9 +973,15 @@ def stranica_provjera_i_uredi():
             "kao popis '⚠️ Zadaci za provjeru' ispod, ali unutar ove pretrage/filtera).",
         )
 
+        f_samo_ai = st.checkbox(
+            f"🤖 Samo s otvorenim AI prijedlozima ({len(_ai_ids)})", key="filter_samo_ai_uredi",
+            disabled=not _ai_ids,
+            help="Zadaci za koje AI kontrola (DeepSeek) ima prijedloge ispravaka koji još čekaju odluku.",
+        )
+
         upit = st.text_input("Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
 
-        _filtri_aktivni = bool(f_cjelina or f_potpoglavlje or f_tip or f_samo_provjera or upit.strip())
+        _filtri_aktivni = bool(f_cjelina or f_potpoglavlje or f_tip or f_samo_provjera or f_samo_ai or upit.strip())
 
         if not _filtri_aktivni:
             st.caption(
@@ -965,6 +999,8 @@ def stranica_provjera_i_uredi():
                     continue
                 if f_samo_provjera and not get(_row, "status_provjere").strip():
                     continue
+                if f_samo_ai and get(_row, "id") not in _ai_ids:
+                    continue
                 if _upit_lower and _upit_lower not in get(_row, "id").lower() \
                         and _upit_lower not in get(_row, "tekst_zadatka_latex").lower():
                     continue
@@ -979,7 +1015,7 @@ def stranica_provjera_i_uredi():
                 # od početka.
                 _filter_potpis = (
                     tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tip)),
-                    f_samo_provjera, _upit_lower,
+                    f_samo_provjera, f_samo_ai, _upit_lower,
                 )
                 if st.session_state.get("uredi_filter_potpis") != _filter_potpis:
                     st.session_state["uredi_filter_potpis"] = _filter_potpis
@@ -1111,6 +1147,17 @@ def stranica_provjera_i_uredi():
                         st.caption(f"Zadatak {_idx_nav + 1} od {len(_lista_nav)} u trenutnom popisu.")
 
                 odabrani_row = redovi[_pozicija]
+                if _AI_OK and get(odabrani_row, "id") in _ai_ids:
+                    def _nakon_ai_izmjene(_br=odabrani_broj_retka):
+                        _ucitaj_zadatke_za_pretragu.clear()
+                        # Polja formulara imaju key="..._{broj_retka}" - obriši ih da se ponovno
+                        # popune iz baze; inače bi ostala stara vrijednost, a "Spremi" bi je vratio.
+                        for _k in [k for k in list(st.session_state.keys())
+                                   if isinstance(k, str) and k.endswith(f"_{_br}")]:
+                            del st.session_state[_k]
+                    prikazi_ai_prijedloge_za_zadatak(
+                        sheet, ws_zadaci, get(odabrani_row, "id"), nakon_izmjene=_nakon_ai_izmjene,
+                    )
                 _forma_uredi_zadatak(odabrani_row, odabrani_broj_retka, idx)
 
 
@@ -1354,6 +1401,7 @@ stranica = st.sidebar.radio(
         "🔍✏️ Provjera i uređivanje zadataka",
         "📑 Redoslijed zadataka po potpoglavlju",
     ],
+    key="glavna_stranica",  # postavlja ga i AI kontrola kod skoka u "Provjera i uređivanje"
 )
 
 if stranica == "📄 Obradi novi ispit":
