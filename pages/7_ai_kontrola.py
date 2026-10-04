@@ -52,7 +52,8 @@ from baza_zadataka_pipeline import (
     prikazi_opcije_markdown,
 )
 from ai_prijedlozi import (
-    RAZDVOJI, naslov_prijedloga, primijeni_razdvajanje, prikazi_kontekst_prijedloga, prikazi_promjenu,
+    RAZDVOJI, UPOZORENJE_SKRACIVANJE, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
+    primijeni_razdvajanje, prikazi_kontekst_prijedloga, prikazi_promjenu, uredi_razdvajanje,
 )
 
 st.set_page_config(page_title="CAKI — AI kontrola zadataka", page_icon="🔎", layout="wide")
@@ -323,7 +324,8 @@ PRAVILA:
    svaki dio kao POTPUNO SAMOSTALAN zadatak koji ponavlja zajednički uvod (formulu, zadane podatke) + svoje pitanje,
    s vlastitim tip_zadatka, konacan_odgovor (iz ključa), max_bodovi i rjesenje (ako ga ključ daje). Ako podzadatak
    ovisi o rezultatu prethodnog, taj rezultat navedi kao zadan podatak. Prvi dio zamijenit će postojeći redak, ostali
-   postaju novi redci. Za takav redak NE šalji druge prijedloge za tekst_zadatka_latex.
+   postaju novi redci. Za takav redak NE šalji druge prijedloge za tekst_zadatka_latex, a te podzadatke
+   NE navodi u "nedostaju_u_bazi" (nisu nestali, nego su spojeni - rješava ih razdvajanje).
 2. Predlaži ispravak SAMO kad postoji stvarna razlika prema originalu ili ključu: OCR greška (krivi broj, znak, eksponent, indeks, razlomak, nestali minus, zamijenjena slova), nedostaje ili je višak dio teksta/podatka, krive ili ispremiještane ponuđene opcije, kriv konačan odgovor, kriv tip zadatka, neuparen ili pogrešno postavljen $.
    NE mijenjaj stil, formulaciju ni interpunkciju ako je sadržaj isti. NE "uljepšavaj".
 3. Konvencije zapisa u bazi (novo MORA ih poštivati):
@@ -501,7 +503,13 @@ def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id
             novi(id_z, "status_provjere", po_id[id_z].get("status_provjere", ""),
                  f"AI: {n['napomena']}", "napomena", n["napomena"], "", "ai")
 
+    oznake_razdvojenih = {
+        str(d.get("oznaka", "")).strip()
+        for r in podaci.get("razdvajanja", []) or [] for d in (r.get("dijelovi") or [])
+    } - {""}
     for n in podaci.get("nedostaju_u_bazi", []) or []:
+        if str(n.get("broj_u_originalu", "")).strip() in oznake_razdvojenih:
+            continue  # podzadatak je dio razdvajanja, nije stvarno nestao
         novi("", "-", "", "", "nedostaje_u_bazi",
              f"Zad. {n.get('broj_u_originalu', '?')}: {n.get('kratki_opis', '')}", "", "original")
 
@@ -519,6 +527,49 @@ def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id
         "broj_zadataka": len(zadaci), "tokeni_ulaz": odg["tokeni_ulaz"],
         "tokeni_izlaz": odg["tokeni_izlaz"], "uparivanje": uparivanje,
     }
+
+
+def ocr_serije(izvor_naziv, folder_id):
+    """(ispit_md, rjesenja_md) iz spremljenih Mathpix .md datoteka za već obrađenu seriju
+    (nazivi PDF-ova čitaju se iz taba AI_kontrola_serije, stupac 'datoteke')."""
+    _, serije = ucitaj_tab_kao_dictove(ws_serije())
+    datoteke = ""
+    for r in serije:
+        if r.get("serija") == izvor_naziv and r.get("datoteke"):
+            datoteke = r["datoteke"]
+    if not datoteke:
+        return "", ""
+    md_folder = drive_podfolder(folder_id, MD_PODFOLDER)
+    md_mapa = {d["name"]: d["id"] for d in drive_popis(md_folder)}
+    ispit, rj = [], []
+    for ime in [x.strip() for x in datoteke.split(",") if x.strip()]:
+        md_ime = re.sub(r"\.(pdf|png|jpe?g)$", "", ime, flags=re.I) + ".md"
+        if md_ime not in md_mapa:
+            continue
+        tekst = drive_preuzmi(md_mapa[md_ime]).decode("utf-8")
+        p = parsiraj_naziv(ime)
+        (rj if p and p[3] else ispit).append(tekst)
+    return "\n\n---\n\n".join(ispit), "\n\n---\n\n".join(rj)
+
+
+def zatrazi_razdvajanje(izvor_naziv, red, folder_id, model):
+    """Ciljani DeepSeek poziv: razdvoji JEDAN redak sa spojenim podzadacima. Vraća listu dijelova."""
+    ispit_md, rj_md = ocr_serije(izvor_naziv, folder_id)
+    poruka = (
+        f"POSEBAN ZADATAK: u bazi je redak id \"{red.get('id')}\" u kojem je više podzadataka spojeno u "
+        "jedan tekst. Razdvoji ga prema pravilu 1b. Vrati JSON u kojem je popunjena SAMO lista "
+        f"\"razdvajanja\" (jedan element, za id \"{red.get('id')}\"); sve ostale liste neka budu prazne.\n\n"
+        f"=== OCR ORIGINALNOG ISPITA ===\n{ispit_md or '(nije dostupan - koristi tekst iz baze)'}\n\n"
+        f"=== OCR SLUŽBENIH RJEŠENJA / KLJUČA ===\n{rj_md or '(nema)'}\n\n"
+        f"=== REDAK IZ BAZE ===\n{json.dumps(pripremi_zadatke_za_ai([red])[0], ensure_ascii=False, indent=1)}"
+    )
+    odg = pozovi_deepseek(model, poruka, 16000, lambda _t: None)
+    podaci = izvuci_json(odg["tekst"])
+    for r in podaci.get("razdvajanja", []) or []:
+        if str(r.get("id", "")).strip() == red.get("id"):
+            return [d for d in (r.get("dijelovi") or []) if str(d.get("tekst_zadatka_latex", "")).strip()], \
+                r.get("razlog", ""), bool(ispit_md)
+    return [], "", bool(ispit_md)
 
 
 # ---------------------------------------------------------------
@@ -541,7 +592,7 @@ with tab_obrada:
     folder_id = st.text_input(
         "ID Drive foldera s ispitima",
         value=st.secrets.get("AI_KONTROLA_FOLDER_ID", ZADANI_FOLDER_ID),
-        help="Dio linka foldera iza .../folders/",
+        help="Dio linka foldera iza .../folders/", key="ai_folder_id",
     ).strip()
     folder_id = folder_id.split("/folders/")[-1].split("?")[0]
 
@@ -597,7 +648,7 @@ with tab_obrada:
         )
 
         c1, c2, c3 = st.columns(3)
-        model = c1.selectbox("Model", MODELI, help="v4-pro = jači i pouzdaniji za provjeru računa; flash = brži i jeftiniji")
+        model = c1.selectbox("Model", MODELI, key="ai_model", help="v4-pro = jači i pouzdaniji za provjeru računa; flash = brži i jeftiniji")
         max_tokens = c2.number_input("Max. duljina odgovora (tokeni)", 2000, 64000,
                                      32000, step=1000)
         ponovno = c3.checkbox("Ponovno obradi i već obrađene", value=False)
@@ -743,6 +794,47 @@ with tab_pregled:
                 st.session_state["glavna_stranica"] = "🔍✏️ Provjera i uređivanje zadataka"
                 st.switch_page("baza_zadataka_app.py")
 
+        with st.expander("✂️ Razdvoji zadatak na podzadatke (kad su u bazi spojeni npr. 25.1, 25.2, 25.3)",
+                         expanded=any(je_sumnjivo_skracivanje(p) for p in lista)):
+            sumnjivi = [p["id_zadatka"] for p in lista if je_sumnjivo_skracivanje(p)]
+            kandidati = list(dict.fromkeys(sumnjivi + ids_serije))
+            if kandidati:
+                id_rz = st.selectbox("Zadatak", kandidati, key="ai_rz_sel",
+                                     format_func=lambda i: f"{i}  ⚠️ skraćuje tekst" if i in sumnjivi else i)
+                st.caption("DeepSeek pripremi dijelove (svaki samostalan, s odgovorom iz ključa). Pojavit će se kao "
+                           "prijedlog „✂️ razdvajanje” koji možeš doraditi. Stari prijedlog skraćivanja i "
+                           "„nedostaje u bazi” za te podzadatke automatski se uklanjaju iz popisa.")
+                if st.button("🤖 Pripremi razdvajanje", key="ai_rz_btn") and id_rz in zadaci_po_id:
+                    red_rz = zadaci_po_id[id_rz]
+                    _fid = (st.session_state.get("ai_folder_id") or
+                            st.secrets.get("AI_KONTROLA_FOLDER_ID", ZADANI_FOLDER_ID)).split("/folders/")[-1].split("?")[0]
+                    _model = st.session_state.get("ai_model", MODELI[0])
+                    with st.spinner(f"DeepSeek ({_model}) razdvaja {id_rz}..."):
+                        try:
+                            dijelovi, razlog_rz, ima_ocr = zatrazi_razdvajanje(serija, red_rz, _fid, _model)
+                        except Exception as e:
+                            dijelovi, razlog_rz, ima_ocr = [], f"greška: {e}", False
+                    if len(dijelovi) < 2:
+                        st.error(f"DeepSeek nije vratio razdvajanje ({razlog_rz or 'nema dijelova'}).")
+                    else:
+                        ws_prijedlozi().append_row([
+                            uuid.uuid4().hex[:10], sada(), serija, id_rz, RAZDVOJI,
+                            red_rz.get("tekst_zadatka_latex", ""), json.dumps(dijelovi, ensure_ascii=False),
+                            "razdvajanje", razlog_rz or "Razdvajanje spojenih podzadataka",
+                            "visoka" if ima_ocr else "srednja", "original" if ima_ocr else "ai_izracun",
+                            "novo", "", "", _model, "",
+                        ], value_input_option="RAW")
+                        oznake = [str(d.get("oznaka", "")).strip() for d in dijelovi if d.get("oznaka")]
+                        zamijenjeni = [
+                            p for p in po_seriji[serija]
+                            if (p["id_zadatka"] == id_rz and p["polje"] == "tekst_zadatka_latex")
+                            or (p["polje"] == "-" and any(p.get("razlog", "").startswith(f"Zad. {o}:") for o in oznake))
+                        ]
+                        oznaci_zamijenjene(init_spreadsheet(), zamijenjeni, odlucio)
+                        st.session_state.pop("ai_prijedlozi_cache", None)
+                        st.success(f"Razdvajanje na {len(dijelovi)} dijela pripremljeno - pogledaj ga u popisu.")
+                        st.rerun()
+
         with st.form(f"forma_{serija}"):
             odluke = {}
             for p in lista:
@@ -752,9 +844,10 @@ with tab_pregled:
                 if p.get("id_zadatka") in zadaci_po_id:
                     prikazi_zadatak_iz_baze(zadaci_po_id[p["id_zadatka"]])
                 if p["polje"] == RAZDVOJI:
-                    prikazi_promjenu(p)
-                    novo_uredeno = p["novo"]
+                    novo_uredeno = uredi_razdvajanje(p, f"rz_{pid}")
                 elif p["polje"] not in ("-", "status_provjere"):
+                    if je_sumnjivo_skracivanje(p):
+                        st.error(UPOZORENJE_SKRACIVANJE)
                     st.caption("🔍 Promjena (crveno = briše se, zeleno = dodaje se):")
                     prikazi_promjenu(p)
                     with st.expander("Prikaz formula prije / poslije i ručna izmjena"):
@@ -790,7 +883,8 @@ with tab_pregled:
                     continue
                 novi_status = "odbijeno"
                 if odluka.startswith("✅") and p["polje"] == RAZDVOJI:
-                    st_r = primijeni_razdvajanje(init_spreadsheet(), ws_z, p, odlucio)  # sam zapisuje status
+                    st_r = primijeni_razdvajanje(init_spreadsheet(), ws_z, p, odlucio,  # sam zapisuje status
+                                                 novo_val if novo_val != p["novo"] else None)
                     if st_r == "primijenjeno":
                         br_primijenjeno += 1
                     elif st_r == "zastarjelo":

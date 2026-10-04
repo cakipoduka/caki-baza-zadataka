@@ -189,7 +189,52 @@ def prikazi_razdvajanje(p):
                 st.markdown(d["rjesenje"])
 
 
-def primijeni_razdvajanje(spreadsheet, ws_zadaci, p, odlucio):
+def uredi_razdvajanje(p, kljuc):
+    """Kao prikazi_razdvajanje, ali svaki dio ima polja za ručnu doradu (tekst, odgovor, bodovi).
+    Vraća JSON (string) s doradjenim dijelovima. Dio s obrisanim tekstom se izostavlja."""
+    dijelovi = dijelovi_razdvajanja(p)
+    st.markdown(f"**✂️ Zadatak se razdvaja na {len(dijelovi)} zasebna zadatka** "
+                "(prvi zamjenjuje postojeći redak, ostali se dodaju kao NOVI redci). "
+                "Svaki dio možeš doraditi; obriši tekst dijela da ga izostaviš.")
+    novi = []
+    for i, d in enumerate(dijelovi):
+        with st.container(border=True):
+            st.caption(f"{'Postojeći redak' if i == 0 else 'NOVI redak'} · {d.get('oznaka', '')} · "
+                       f"{d.get('tip_zadatka', '')}")
+            st.markdown(d.get("tekst_zadatka_latex", "") or "*(prazno)*")
+            tekst = st.text_area("Tekst zadatka (LaTeX)", d.get("tekst_zadatka_latex", ""),
+                                 key=f"{kljuc}_t{i}", height=100)
+            c1, c2 = st.columns([3, 1])
+            odg = c1.text_input("Konačan odgovor", d.get("konacan_odgovor", ""), key=f"{kljuc}_o{i}")
+            bod = c2.text_input("Bodovi", str(d.get("max_bodovi", "") or ""), key=f"{kljuc}_b{i}")
+            if d.get("rjesenje"):
+                st.caption("Rješenje (iz ključa):")
+                st.markdown(d["rjesenje"])
+        nd = dict(d)
+        nd.update({"tekst_zadatka_latex": tekst, "konacan_odgovor": odg, "max_bodovi": bod})
+        if tekst.strip():
+            novi.append(nd)
+    return json.dumps(novi, ensure_ascii=False)
+
+
+def je_sumnjivo_skracivanje(p):
+    """Prijedlog koji tekst zadatka skraćuje za >25 % - tipično spojeni podzadaci (25.1/25.2/25.3)
+    gdje bi prihvaćanje izbrisalo ostale podzadatke. Tada treba ✂️ Razdvoji, ne Prihvati."""
+    if p.get("polje") != "tekst_zadatka_latex":
+        return False
+    staro, novo = (p.get("staro") or "").strip(), (p.get("novo") or "").strip()
+    return len(staro) > 80 and len(novo) < 0.75 * len(staro)
+
+
+UPOZORENJE_SKRACIVANJE = (
+    "⚠️ Ovaj prijedlog SKRAĆUJE tekst zadatka. Ako su u bazi spojeni podzadaci (npr. 25.1, 25.2, 25.3), "
+    "NE prihvaćaj - izgubili bi se ostali podzadaci. Na stranici AI kontrola (tab 2, iznad popisa) "
+    "upotrijebi „✂️ Razdvoji zadatak” - pripremi dijelove i ukloni ovaj prijedlog.")
+
+
+def primijeni_razdvajanje(spreadsheet, ws_zadaci, p, odlucio, novo_json=None):
+    if novo_json is not None:
+        p = dict(p, novo=novo_json)
     dijelovi = [d for d in dijelovi_razdvajanja(p) if (d.get("tekst_zadatka_latex") or "").strip()]
     if len(dijelovi) < 2:
         return _zapisi_status(spreadsheet, p, "greska_neispravno_razdvajanje", odlucio)
@@ -243,7 +288,7 @@ def primijeni_razdvajanje(spreadsheet, ws_zadaci, p, odlucio):
         v[i_id] = nid
         novi.append(v)
     ws_zadaci.append_rows(novi, value_input_option="RAW")
-    return _zapisi_status(spreadsheet, p, "primijenjeno", odlucio)
+    return _zapisi_status(spreadsheet, p, "primijenjeno", odlucio, novo_json)
 
 
 def naslov_prijedloga(p):
@@ -270,7 +315,8 @@ def primijeni_jedan(spreadsheet, ws_zadaci, p, prihvati: bool, novo_val: str, od
     Vraća novi status."""
     status = "odbijeno"
     if prihvati and p.get("polje") == RAZDVOJI:
-        return primijeni_razdvajanje(spreadsheet, ws_zadaci, p, odlucio)
+        return primijeni_razdvajanje(spreadsheet, ws_zadaci, p, odlucio,
+                                     novo_val if novo_val != p.get("novo") else None)
     if prihvati:
         if p["polje"] == "-":
             status = "pregledano"
@@ -296,6 +342,13 @@ def primijeni_jedan(spreadsheet, ws_zadaci, p, prihvati: bool, novo_val: str, od
                     status = "primijenjeno"
     return _zapisi_status(spreadsheet, p, status, odlucio,
                           novo_val if status == "primijenjeno" and novo_val != p.get("novo") else None)
+
+
+def oznaci_zamijenjene(spreadsheet, prijedlozi, odlucio):
+    """Stari prijedlozi koje je zamijenilo razdvajanje (skraćivanje teksta + 'nedostaje u bazi'
+    za iste podzadatke) dobivaju status 'zamijenjeno' - nestaju iz popisa za pregled."""
+    for p in prijedlozi:
+        _zapisi_status(spreadsheet, p, "zamijenjeno", odlucio)
 
 
 def _zapisi_status(spreadsheet, p, status, odlucio, uredeno_novo=None):
@@ -334,8 +387,10 @@ def prikazi_ai_prijedloge_za_zadatak(spreadsheet, ws_zadaci, id_zadatka, nakon_i
             prikazi_kontekst_prijedloga(p)
             novo_val = p.get("novo", "")
             if p["polje"] == RAZDVOJI:
-                prikazi_promjenu(p)
+                novo_val = uredi_razdvajanje(p, f"ai_ed_rz_{pid}")
             elif p["polje"] not in ("-", "status_provjere"):
+                if je_sumnjivo_skracivanje(p):
+                    st.error(UPOZORENJE_SKRACIVANJE)
                 prikazi_promjenu(p)
                 with st.expander("Ručno doradi prijedlog prije prihvaćanja"):
                     novo_val = st.text_area("Nova vrijednost", novo_val, key=f"ai_ed_tx_{pid}", height=90)
