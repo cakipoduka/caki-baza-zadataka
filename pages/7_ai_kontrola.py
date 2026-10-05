@@ -55,7 +55,7 @@ from baza_zadataka_pipeline import (
     prikazi_opcije_markdown,
 )
 from ai_prijedlozi import (
-    RAZDVOJI, UPOZORENJE_DOLARI, UPOZORENJE_SKRACIVANJE, je_samo_dolari, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
+    RAZDVOJI, UPOZORENJE_DOLARI, omotaj_konacan_odgovor, UPOZORENJE_SKRACIVANJE, je_samo_dolari, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
     primijeni_razdvajanje, prikazi_kontekst_prijedloga, prikazi_promjenu, uredi_razdvajanje,
 )
 
@@ -365,7 +365,8 @@ PRAVILA:
      ponudjeni_odgovori (v. niže). Decimalni zarez kao {,} (npr. $2{,}5$);
    - otvoreni interval \langle a, b \rangle; \operatorname{tg}, \operatorname{ctg}, \log, \cdot; LaTeX naredbe umjesto Unicode simbola (\infty, \cup, \leq ...);
    - ponudjeni_odgovori: opcije BEZ slova A/B/C/D, odvojene s " || ", LaTeX BEZ $ (npr. "\frac{1}{2} || 2 || -3");
-   - konacan_odgovor: za visestruki_izbor SAMO slovo (npr. "C"); inače kratka vrijednost;
+   - konacan_odgovor: za visestruki_izbor SAMO slovo (npr. "C"); inače kratka vrijednost, a ako sadrži
+     LaTeX (\langle, \sqrt, \frac, ^, _ ...) OBAVEZNO unutar $...$ (npr. "$\langle 1, \sqrt{5}\rangle$");
    - tip_zadatka: visestruki_izbor, kratki_odgovor ili prosireni_odgovor.
 4. SLUŽBENI KLJUČ je mjerodavan. Ako se konacan_odgovor u bazi razlikuje od ključa -> prijedlog s izvor_prijedloga "kljuc".
    Ako sam izračunaš drugačije od ključa -> NE predlaži promjenu, nego napiši napomenu.
@@ -525,6 +526,8 @@ def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id
             continue
         staro = po_id[id_z].get(polje, "")
         novo = str(p.get("novo", ""))
+        if polje == "konacan_odgovor":
+            novo = omotaj_konacan_odgovor(novo)
         if novo.strip() == staro.strip():
             continue
         if je_samo_dolari({"polje": polje, "staro": staro, "novo": novo}):

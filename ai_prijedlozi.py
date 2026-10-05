@@ -41,6 +41,16 @@ def slovo_stupca(idx0: int) -> str:
 # Učitavanje prijedloga (s cacheom u sesiji)
 # ---------------------------------------------------------------
 
+def omotaj_konacan_odgovor(t):
+    """konacan_odgovor s LaTeX naredbama (\\, ^, _, {}) mora biti unutar $...$ - Test Builder ga
+    inače u PDF-u ispisuje kao obični tekst (escape_outside_math), pa formula ne radi. Kratki
+    odgovori bez LaTeX-a ("C", "3", "24°C") ostaju kakvi jesu."""
+    t = (t or "").strip()
+    if t and "$" not in t and re.search(r"[\\^_{}]", t):
+        return f"${t}$"
+    return t
+
+
 def ucitaj_prijedloge(spreadsheet, osvjezi=False):
     """Vraća (header, redovi) iz taba AI_kontrola_prijedlozi; redovi su dictovi s '_redak'.
     Ako tab još ne postoji (AI kontrola nikad nije pokrenuta) -> ([], [])."""
@@ -58,6 +68,8 @@ def ucitaj_prijedloge(spreadsheet, osvjezi=False):
         for i, r in enumerate(vrijednosti[1:], start=2):
             d = {h: (r[j] if j < len(r) else "") for j, h in enumerate(header)}
             d["_redak"] = i
+            if d.get("polje") == "konacan_odgovor":
+                d["novo"] = omotaj_konacan_odgovor(d.get("novo"))
             redovi.append(d)
         rez = (header, redovi)
     st.session_state[CACHE_KLJUC] = rez
