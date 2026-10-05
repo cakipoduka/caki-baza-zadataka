@@ -31,10 +31,13 @@ Opcionalno:
 """
 
 import difflib
+import functools
 import io
 import json
 import os
 import re
+import ssl
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -129,9 +132,33 @@ def init_spreadsheet():
     return get_gspread_client(sa_info()).open_by_key(st.secrets["SHEET_ID"])
 
 
-@st.cache_resource
+# Drive klijent PO DRETVI, ne dijeljen (5.10.2026.): googleapiclient koristi httplib2 koji NIJE
+# thread-safe - jedan klijent iz st.cache_resource dijele sve Streamlit dretve/reruni, pa nakon
+# duže neaktivnosti ili paralelnog korištenja dolazi do ssl.SSLError ("read" u _read_status).
+_drive_lokalno = threading.local()
+
+
 def init_drive():
-    return get_drive_service(sa_info())
+    d = getattr(_drive_lokalno, "drive", None)
+    if d is None:
+        d = get_drive_service(sa_info())
+        _drive_lokalno.drive = d
+    return d
+
+
+def _ponovi_drive(fn):
+    """Do 3 pokušaja kod mrežne/SSL greške; prije novog pokušaja napravi svjež Drive klijent."""
+    @functools.wraps(fn)
+    def omot(*args, **kwargs):
+        for pokusaj in range(3):
+            try:
+                return fn(*args, **kwargs)
+            except (ssl.SSLError, ConnectionError, TimeoutError, OSError):
+                if pokusaj == 2:
+                    raise
+                _drive_lokalno.drive = None
+                time.sleep(2 * (pokusaj + 1))
+    return omot
 
 
 def ws_prijedlozi():
@@ -178,6 +205,7 @@ def slovo_stupca(idx0: int) -> str:
 # Drive: popis, preuzimanje, spremanje .md
 # ---------------------------------------------------------------
 
+@_ponovi_drive
 def drive_popis(folder_id):
     drive = init_drive()
     datoteke, token = [], None
@@ -194,6 +222,7 @@ def drive_popis(folder_id):
             return datoteke
 
 
+@_ponovi_drive
 def drive_preuzmi(file_id) -> bytes:
     req = init_drive().files().get_media(fileId=file_id, supportsAllDrives=True)
     buf = io.BytesIO()
@@ -204,6 +233,7 @@ def drive_preuzmi(file_id) -> bytes:
     return buf.getvalue()
 
 
+@_ponovi_drive
 def drive_podfolder(parent_id, naziv):
     drive = init_drive()
     res = drive.files().list(
@@ -220,6 +250,7 @@ def drive_podfolder(parent_id, naziv):
     return nov["id"]
 
 
+@_ponovi_drive
 def drive_spremi_tekst(folder_id, naziv, tekst):
     media = MediaIoBaseUpload(io.BytesIO(tekst.encode("utf-8")), mimetype="text/markdown", resumable=False)
     init_drive().files().create(
