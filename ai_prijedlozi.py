@@ -226,6 +226,24 @@ def je_sumnjivo_skracivanje(p):
     return len(staro) > 80 and len(novo) < 0.75 * len(staro)
 
 
+def je_samo_dolari(p):
+    """Prijedlog koji samo BRIŠE $ (ostatak teksta isti). Za sva polja OSIM
+    ponudjeni_odgovori to je POGREŠNO: u bazi matematika mora biti unutar $...$ (bez $ se
+    formula ne renderira u PreTeXt-u/Test Builderu). Takve prijedloge treba odbiti."""
+    if p.get("polje") in ("ponudjeni_odgovori", "-", "status_provjere", RAZDVOJI):
+        return False
+    staro, novo = p.get("staro") or "", p.get("novo") or ""
+    if novo.count("$") >= staro.count("$"):
+        return False  # dodavanje $ (npr. formula bez $) je ispravan prijedlog - ne diramo
+    norm = lambda t: "".join(t.replace("$", "").split())
+    return norm(staro) == norm(novo)
+
+
+UPOZORENJE_DOLARI = (
+    "⛔ Ovaj prijedlog samo BRIŠE znakove $. U bazi formule moraju biti unutar $...$ "
+    "(osim ponuđenih odgovora) - bez njih se formula ne prikazuje. Odbij ga (zadano je već „odbij”).")
+
+
 UPOZORENJE_SKRACIVANJE = (
     "⚠️ Ovaj prijedlog SKRAĆUJE tekst zadatka. Ako su u bazi spojeni podzadaci (npr. 25.1, 25.2, 25.3), "
     "NE prihvaćaj - izgubili bi se ostali podzadaci. Na stranici AI kontrola (tab 2, iznad popisa) "
@@ -391,6 +409,8 @@ def prikazi_ai_prijedloge_za_zadatak(spreadsheet, ws_zadaci, id_zadatka, nakon_i
             elif p["polje"] not in ("-", "status_provjere"):
                 if je_sumnjivo_skracivanje(p):
                     st.error(UPOZORENJE_SKRACIVANJE)
+                if je_samo_dolari(p):
+                    st.error(UPOZORENJE_DOLARI)
                 prikazi_promjenu(p)
                 with st.expander("Ručno doradi prijedlog prije prihvaćanja"):
                     novo_val = st.text_area("Nova vrijednost", novo_val, key=f"ai_ed_tx_{pid}", height=90)

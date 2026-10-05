@@ -52,7 +52,7 @@ from baza_zadataka_pipeline import (
     prikazi_opcije_markdown,
 )
 from ai_prijedlozi import (
-    RAZDVOJI, UPOZORENJE_SKRACIVANJE, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
+    RAZDVOJI, UPOZORENJE_DOLARI, UPOZORENJE_SKRACIVANJE, je_samo_dolari, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
     primijeni_razdvajanje, prikazi_kontekst_prijedloga, prikazi_promjenu, uredi_razdvajanje,
 )
 
@@ -329,7 +329,9 @@ PRAVILA:
 2. Predlaži ispravak SAMO kad postoji stvarna razlika prema originalu ili ključu: OCR greška (krivi broj, znak, eksponent, indeks, razlomak, nestali minus, zamijenjena slova), nedostaje ili je višak dio teksta/podatka, krive ili ispremiještane ponuđene opcije, kriv konačan odgovor, kriv tip zadatka, neuparen ili pogrešno postavljen $.
    NE mijenjaj stil, formulaciju ni interpunkciju ako je sadržaj isti. NE "uljepšavaj".
 3. Konvencije zapisa u bazi (novo MORA ih poštivati):
-   - matematika unutar $...$, običan tekst izvan; decimalni zarez kao {,} (npr. $2{,}5$);
+   - u poljima tekst_zadatka_latex i rjesenje matematika je UVIJEK unutar $...$, običan tekst izvan;
+     NIKAD ne predlaži uklanjanje $ iz ta dva polja (bez $ se formula ne prikazuje). Izuzetak bez $ su SAMO
+     ponudjeni_odgovori (v. niže). Decimalni zarez kao {,} (npr. $2{,}5$);
    - otvoreni interval \langle a, b \rangle; \operatorname{tg}, \operatorname{ctg}, \log, \cdot; LaTeX naredbe umjesto Unicode simbola (\infty, \cup, \leq ...);
    - ponudjeni_odgovori: opcije BEZ slova A/B/C/D, odvojene s " || ", LaTeX BEZ $ (npr. "\frac{1}{2} || 2 || -3");
    - konacan_odgovor: za visestruki_izbor SAMO slovo (npr. "C"); inače kratka vrijednost;
@@ -493,6 +495,9 @@ def obradi_seriju(grupa, izvor_naziv, zadaci_redovi, header_zadaci, md_folder_id
         staro = po_id[id_z].get(polje, "")
         novo = str(p.get("novo", ""))
         if novo.strip() == staro.strip():
+            continue
+        if je_samo_dolari({"polje": polje, "staro": staro, "novo": novo}):
+            log(f"🧹 Odbačen prijedlog koji samo briše $ ({id_z} / {polje})")
             continue
         novi(id_z, polje, staro, novo, p.get("vrsta", ""), p.get("razlog", ""),
              p.get("sigurnost", ""), p.get("izvor_prijedloga", ""), p.get("isjecak_originala", ""))
@@ -848,6 +853,8 @@ with tab_pregled:
                 elif p["polje"] not in ("-", "status_provjere"):
                     if je_sumnjivo_skracivanje(p):
                         st.error(UPOZORENJE_SKRACIVANJE)
+                    if je_samo_dolari(p):
+                        st.error(UPOZORENJE_DOLARI)
                     st.caption("🔍 Promjena (crveno = briše se, zeleno = dodaje se):")
                     prikazi_promjenu(p)
                     with st.expander("Prikaz formula prije / poslije i ručna izmjena"):
@@ -861,6 +868,7 @@ with tab_pregled:
                 else:
                     novo_uredeno = p["novo"]
                 odluka = st.radio("Odluka", ["⏸️ kasnije", "✅ prihvati", "❌ odbij"],
+                                  index=2 if je_samo_dolari(p) else 0,
                                   horizontal=True, key=f"od_{pid}")
                 odluke[pid] = (odluka, novo_uredeno)
                 st.divider()
