@@ -28,7 +28,9 @@ from baza_zadataka_pipeline import (
     _col_letter,
     build_sifrarnik_potpoglavlja_text,
     build_sifrarnik_text,
+    dodaj_biblioteku_izvora,
     extract_zadaci_with_claude,
+    get_biblioteke_izvora,
     get_drive_service,
     get_gspread_client,
     get_potpoglavlja_po_cjelini,
@@ -129,6 +131,40 @@ def stranica_obradi_ispit():
             if zadnja.get("traceback"):
                 st.code(zadnja["traceback"])
         st.divider()
+
+    # (prijedlog, 8.10.2026.) - IZVAN st.form jer forma ne dopušta reaktivno pojavljivanje
+    # text_inputa "upiši novi naziv" dok se cijela forma ne pošalje - ovo mora biti odmah
+    # vidljivo/odabirljivo prije submita. Vrijednost se samo PROSLJEĐUJE u nadopuni_ili_
+    # dodaj_zadatke() niže, nakon submita (varijabla ostaje u scopeu funkcije bez obzira na
+    # with-blok forme).
+    st.subheader("0. Biblioteka izvora")
+    st.caption(
+        "Konkretna zbirka/udžbenik iz kojeg SVI zadaci ovog uploada dolaze (npr. "
+        "'zbirka-Dakić-pismeni') - neovisno o 'Izvor' u metapodacima ispod, isključivo za "
+        "brzo filtriranje u Test Builderu. Nikad se ne ispisuje u PreTeXt/PDF materijalima. "
+        "Ostavi na '— (bez izvora)' ako nije primjenjivo (npr. matura)."
+    )
+    try:
+        _biblioteke_postojece_ingest = get_biblioteke_izvora(sheet)
+    except Exception:
+        _biblioteke_postojece_ingest = []
+    _BEZ_BIBLIOTEKE_INGEST = "— (bez izvora)"
+    _NOVA_BIBLIOTEKA_INGEST = "➕ Nova..."
+    _biblioteka_opcije_ingest = (
+        [_BEZ_BIBLIOTEKE_INGEST] + _biblioteke_postojece_ingest + [_NOVA_BIBLIOTEKA_INGEST]
+    )
+    _biblioteka_odabir_ingest = st.selectbox(
+        "Biblioteka izvora", _biblioteka_opcije_ingest, key="biblioteka_izvora_odabir_ingest",
+    )
+    if _biblioteka_odabir_ingest == _NOVA_BIBLIOTEKA_INGEST:
+        biblioteka_izvora_odabrana = st.text_input(
+            "Upiši naziv nove biblioteke/zbirke (npr. 'zbirka-Naziv-opis')",
+            key="biblioteka_izvora_novi_ingest",
+        ).strip()
+    elif _biblioteka_odabir_ingest == _BEZ_BIBLIOTEKE_INGEST:
+        biblioteka_izvora_odabrana = ""
+    else:
+        biblioteka_izvora_odabrana = _biblioteka_odabir_ingest
 
     with st.form("obrada_form", clear_on_submit=False):
         st.subheader("1. Datoteke")
@@ -243,9 +279,11 @@ def stranica_obradi_ispit():
             # put ćemo u Log_obrade tabu točno vidjeti da je tu stalo, a ne pogađati.
             log("💾 [5/5] Upisujem u bazu (provjera duplikata)...")
             zapisi_log_obrade(sheet, izvor_naziv, "upis_baza", "u_tijeku", f"{len(zadaci)} zadataka za upis", log=log)
+            if biblioteka_izvora_odabrana and biblioteka_izvora_odabrana not in _biblioteke_postojece_ingest:
+                dodaj_biblioteku_izvora(sheet, biblioteka_izvora_odabrana)
             broj_dodanih, broj_azuriranih = nadopuni_ili_dodaj_zadatke(
                 ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza, log=log,
-                ogranici_po_cjelini=True,
+                ogranici_po_cjelini=True, biblioteka_izvora=biblioteka_izvora_odabrana,
             )
             log(f"✅ {broj_dodanih} novih zadataka, {broj_azuriranih} nadopunjeno (duplikat)")
 
@@ -769,6 +807,60 @@ def _forma_uredi_zadatak(row, broj_retka, idx):
         st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
 
     # ------------------------------------------------------------------
+    # Sekcija 2a: Biblioteka izvora (prijedlog, 8.10.2026.)
+    # ------------------------------------------------------------------
+    st.divider()
+    st.markdown("**📚 Biblioteka izvora** *(prijedlog)*")
+    st.caption(
+        "Konkretna zbirka/udžbenik iz kojeg zadatak dolazi (npr. 'zbirka-Dakić-pismeni') - za "
+        "naknadno označavanje starih zadataka. Nikad se ne ispisuje u PreTeXt/PDF materijalima."
+    )
+    try:
+        _biblioteke_postojece_uredi = get_biblioteke_izvora(sheet)
+    except Exception:
+        _biblioteke_postojece_uredi = []
+    _BEZ_BIBLIOTEKE_UREDI = "— (bez izvora)"
+    _NOVA_BIBLIOTEKA_UREDI = "➕ Nova..."
+    biblioteka_trenutna = get(row, "biblioteka_izvora")
+    _biblioteka_opcije_uredi = (
+        [_BEZ_BIBLIOTEKE_UREDI] + _biblioteke_postojece_uredi + [_NOVA_BIBLIOTEKA_UREDI]
+    )
+    if biblioteka_trenutna and biblioteka_trenutna not in _biblioteka_opcije_uredi:
+        # Vrijednost postoji na zadatku ali je netko u međuvremenu obrisao iz šifrarnika -
+        # ubaci je kao opciju da se ne izgubi tiho (isti obrazac kao cjelina/potpoglavlje gore).
+        _biblioteka_opcije_uredi = (
+            [_BEZ_BIBLIOTEKE_UREDI, biblioteka_trenutna] + _biblioteke_postojece_uredi + [_NOVA_BIBLIOTEKA_UREDI]
+        )
+    _biblioteka_index_uredi = (
+        _biblioteka_opcije_uredi.index(biblioteka_trenutna) if biblioteka_trenutna in _biblioteka_opcije_uredi else 0
+    )
+    _biblioteka_odabir_uredi = st.selectbox(
+        "Biblioteka izvora", _biblioteka_opcije_uredi, index=_biblioteka_index_uredi,
+        key=f"biblioteka_izvora_{broj_retka}",
+    )
+    if _biblioteka_odabir_uredi == _NOVA_BIBLIOTEKA_UREDI:
+        nova_biblioteka_izvora = st.text_input(
+            "Upiši naziv nove biblioteke/zbirke", key=f"biblioteka_izvora_novi_{broj_retka}",
+        ).strip()
+    elif _biblioteka_odabir_uredi == _BEZ_BIBLIOTEKE_UREDI:
+        nova_biblioteka_izvora = ""
+    else:
+        nova_biblioteka_izvora = _biblioteka_odabir_uredi
+
+    if st.button("💾 Spremi biblioteku izvora", key=f"spremi_biblioteku_{broj_retka}"):
+        if nova_biblioteka_izvora and nova_biblioteka_izvora not in _biblioteke_postojece_uredi:
+            dodaj_biblioteku_izvora(sheet, nova_biblioteka_izvora)
+        c_biblioteka = _col_letter("biblioteka_izvora")
+        with st.spinner("Spremam..."):
+            try:
+                ws_zadaci.update(range_name=f"{c_biblioteka}{broj_retka}", values=[[nova_biblioteka_izvora]])
+            except Exception as e:
+                st.error(f"Greška: {e}")
+                st.stop()
+        st.success(f"✅ Biblioteka izvora spremljena: {nova_biblioteka_izvora or '—'}.")
+        _ucitaj_zadatke_za_pretragu.clear()
+
+    # ------------------------------------------------------------------
     # Sekcija 2b: Brisanje zadatka (dodano 15.9.2026. na korisnikov zahtjev)
     # ------------------------------------------------------------------
     # NAMJERNO stavljeno OVDJE (prije sekcije "Slika"), ne na kraj funkcije - sekcija
@@ -965,6 +1057,14 @@ def stranica_provjera_i_uredi():
             _opcije_potpog = sorted({get(r, "potpoglavlje") for r in redovi if get(r, "potpoglavlje")})
         f_potpoglavlje = fc2.multiselect("Potpoglavlje", _opcije_potpog, key="filter_potpoglavlje_uredi")
 
+        try:
+            _biblioteke_za_filter_uredi = get_biblioteke_izvora(sheet)
+        except Exception:
+            _biblioteke_za_filter_uredi = []
+        f_biblioteka = st.multiselect(
+            "Biblioteka izvora", _biblioteke_za_filter_uredi, key="filter_biblioteka_uredi",
+        )
+
         fc3, fc4 = st.columns(2)
         f_tip = fc3.multiselect("Tip zadatka", svi_tipovi_baza, key="filter_tip_uredi")
         f_samo_provjera = fc4.checkbox(
@@ -981,7 +1081,9 @@ def stranica_provjera_i_uredi():
 
         upit = st.text_input("Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
 
-        _filtri_aktivni = bool(f_cjelina or f_potpoglavlje or f_tip or f_samo_provjera or f_samo_ai or upit.strip())
+        _filtri_aktivni = bool(
+            f_cjelina or f_potpoglavlje or f_tip or f_biblioteka or f_samo_provjera or f_samo_ai or upit.strip()
+        )
 
         if not _filtri_aktivni:
             st.caption(
@@ -996,6 +1098,8 @@ def stranica_provjera_i_uredi():
                 if f_potpoglavlje and get(_row, "potpoglavlje") not in f_potpoglavlje:
                     continue
                 if f_tip and get(_row, "tip_zadatka") not in f_tip:
+                    continue
+                if f_biblioteka and get(_row, "biblioteka_izvora") not in f_biblioteka:
                     continue
                 if f_samo_provjera and not get(_row, "status_provjere").strip():
                     continue
@@ -1015,7 +1119,7 @@ def stranica_provjera_i_uredi():
                 # od početka.
                 _filter_potpis = (
                     tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tip)),
-                    f_samo_provjera, f_samo_ai, _upit_lower,
+                    tuple(sorted(f_biblioteka)), f_samo_provjera, f_samo_ai, _upit_lower,
                 )
                 if st.session_state.get("uredi_filter_potpis") != _filter_potpis:
                     st.session_state["uredi_filter_potpis"] = _filter_potpis

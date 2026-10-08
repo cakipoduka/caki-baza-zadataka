@@ -64,6 +64,17 @@ ZADACI_HEADERS = [
     # DODAN NA KRAJU popisa (isti razlog kao gornja dva polja) - fizički dodaj kao NOVI
     # zadnji stupac u tabu 'Zadaci'.
     "u_skriptu",
+    # 🆕 (prijedlog, 8.10.2026.) Naziv konkretne zbirke/udžbenika iz kojeg zadatak dolazi
+    # (npr. "zbirka-Dakić-pismeni", "udzbenik-Element-Žitko") - za brzo filtriranje u Test
+    # Builderu kad profesor traži zadatke iz određenog izvora. Kontroliran, ali OTVOREN
+    # popis - vidi get_biblioteke_izvora()/tab 'Sifrarnik_biblioteka_izvora' niže. NAMJERNO
+    # odvojeno od izvor_naziv (identifikator PARTIJE/dokumenta uploada, npr. broj serije ili
+    # naziv PDF-a, ne naziv zbirke) i od izvor_tip (grubi tip: matura/zbirka/udzbenik/
+    # vlastiti_materijal). NIKAD se ne smije koristiti u _oznaka_izvor_tezina() ili bilo kojoj
+    # _build_* funkciji niže - ne smije procuriti u PreTeXt/PDF ispis, isključivo interno za
+    # pretragu/organizaciju baze. DODAN NA KRAJU popisa (isti razlog kao gornja tri polja) -
+    # fizički dodaj kao NOVI zadnji stupac u tabu 'Zadaci'.
+    "biblioteka_izvora",
 ]
 
 SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
@@ -307,6 +318,65 @@ def build_sifrarnik_potpoglavlja_text(sheet) -> str:
         popis = ", ".join(p for p, _ in stavke)
         lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {popis}")
     return "\n".join(lines)
+
+# --- Biblioteka izvora (prijedlog, 8.10.2026.) ---
+#
+# Kontroliran, ali OTVOREN popis konkretnih zbirki/udžbenika (npr. "zbirka-Dakić-pismeni",
+# "udzbenik-Element-Žitko") - vidi biblioteka_izvora u ZADACI_HEADERS gore. Tab 'Sifrarnik_
+# biblioteka_izvora' auto-kreira se prazan preko get_or_create_worksheet-logike (isti obrazac
+# kao Teorija_potpoglavlja niže) i pri PRVOM čitanju seedira se početnim popisom ispod ako je
+# tek kreiran - kasnije dodane vrijednosti (preko dodaj_biblioteku_izvora) ostaju trajne u
+# tabu i šire se na sve stranice koje ovo polje koriste (Test Builder, obje forme u
+# baza_zadataka_app.py).
+
+BIBLIOTEKA_IZVORA_HEADERS = ["naziv"]
+
+_BIBLIOTEKA_IZVORA_POCETNI_SEED = [
+    "zbirka-ŠK-stara",
+    "zbirka-Dakić-pismeni",
+    "zbirka-Dakić-udžbenik",
+    "zbirka-Element-Žitko",
+    "zbirka-Dakić-višestruki izbor",
+]
+
+def get_biblioteke_izvora(sheet) -> list:
+    """Vraća popis poznatih vrijednosti za biblioteka_izvora, iz taba
+    'Sifrarnik_biblioteka_izvora' (jedan stupac: naziv). Ako tab ne postoji, kreira ga prazan
+    i ODMAH ga seedira početnim popisom (_BIBLIOTEKA_IZVORA_POCETNI_SEED) - ako tab već
+    postoji ali je prazan (npr. korisnik ručno obrisao sve retke), NE seedira ponovno,
+    poštuje prazno stanje kao namjerno."""
+    try:
+        ws = sheet.worksheet("Sifrarnik_biblioteka_izvora")
+        novo_kreiran = False
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title="Sifrarnik_biblioteka_izvora", rows=100, cols=1)
+        ws.append_row(BIBLIOTEKA_IZVORA_HEADERS)
+        novo_kreiran = True
+
+    rows = ws.get_all_values()[1:]
+    popis = [r[0].strip() for r in rows if r and r[0].strip()]
+
+    if novo_kreiran:
+        ws.append_rows([[v] for v in _BIBLIOTEKA_IZVORA_POCETNI_SEED])
+        popis = list(_BIBLIOTEKA_IZVORA_POCETNI_SEED)
+
+    return popis
+
+def dodaj_biblioteku_izvora(sheet, naziv: str):
+    """Dodaje novu vrijednost u Sifrarnik_biblioteka_izvora (ako već ne postoji) - poziva se
+    kad profesor u Streamlit izborniku odabere "➕ Nova..." i upiše naziv koji dosad nije bio
+    u popisu, da se od tog trenutka pojavljuje kao opcija za SVE buduće zadatke/sesije."""
+    naziv = (naziv or "").strip()
+    if not naziv:
+        return
+    try:
+        ws = sheet.worksheet("Sifrarnik_biblioteka_izvora")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title="Sifrarnik_biblioteka_izvora", rows=100, cols=1)
+        ws.append_row(BIBLIOTEKA_IZVORA_HEADERS)
+    postojeci = [r[0].strip() for r in ws.get_all_values()[1:] if r and r[0].strip()]
+    if naziv not in postojeci:
+        ws.append_row([naziv])
 
 # --- Teorija po potpoglavlju (§27.2, 9.9.2026.) ---
 #
@@ -1181,7 +1251,7 @@ def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
 
 def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza,
                                 skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None,
-                                ogranici_po_cjelini=False):
+                                ogranici_po_cjelini=False, biblioteka_izvora=""):
     """
     ogranici_po_cjelini=False (zadano): usporedba svakog novog zadatka sa SVIM postojećim
     zadacima u bazi, kao dosad - najsigurnije, ali kod baze od 20-30 tisuća zadataka
@@ -1376,6 +1446,9 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
                 z.get("uputa", ""),
                 "",  # redoslijed_u_potpoglavlju - postavlja se ručno kasnije (stranica u appu)
+                "",  # koristi_kao_primjer_na_satu - postavlja se ručno kasnije
+                "",  # u_skriptu - postavlja se ručno kasnije
+                biblioteka_izvora,
             ]
             novi_redovi.append(row)
             broj_dodanih += 1
