@@ -2,12 +2,17 @@
 \ProvidesPackage{caki-style}[2026/07/21 Modern Math Textbook Style]
 
 % --- 1. GEOMETRIJA I MARGINE (Maksimalna iskoristivost prostora) ---
+% IZMJENA (8.10.2026., na izricit zahtjev - "maksimalno iskoristi prostor na
+% papiru za zadatke"): margine stisnute sa 1.5-1.7cm. Prvi pokusaj bio je 1cm,
+% ali Caki je nakon probnog printanja trazio da se vrati na 1.3cm (sigurnije za
+% printer) - headheight/headsep/footskip ostaju isti (unutarnji razmak oko
+% zaglavlja/podnozja, ne ukupna margina).
 \RequirePackage[
     a4paper,
-    top=1.6cm,
-    bottom=1.7cm,
-    left=1.5cm,
-    right=1.5cm,
+    top=1.3cm,
+    bottom=1.3cm,
+    left=1.3cm,
+    right=1.3cm,
     headheight=24pt,
     headsep=10pt,
     footskip=16pt
@@ -126,6 +131,25 @@
     \endgroup
 }
 
+% --- 3d. VELIČINA MATEMATIČKIH FORMULA (8.10.2026., na izričit zahtjev) ---
+% Caki slabije vidi pa zeli matematicke formule/izraze VECE, bez povecanja
+% ostatka teksta. \DeclareMathSizes je ugradena LaTeX2e kernel naredba bas za
+% ovo - kaze "kad je okolni TEKST velicine X, matematicki fontovi (formula/
+% exponent/exponent-na-exponentu) neka se uzmu kao da je tekst velicine Y"
+% - NE dira stvarnu velicinu teksta, samo prebacuje matematiku na "krupnije"
+% matematicke fontove. 10.95pt = \normalsize za 11pt article klasu (size11.clo)
+% - to je velicina kojom se pise tijelo zadatka/rjesenja. 14pt = otprilike
+% dvije LaTeX "stepenice" vece (10.95 -> 12 -> 14.4pt, isto sto i \Large) -
+% script/scriptscript (indeksi/eksponenti) skalirani proporcionalno (iste
+% vrijednosti kernel vec koristi za 14.4pt dizajn-velicinu). Ako ikad zatreba
+% jos vece/manje, mijenja se SAMO drugi broj nize (14).
+\DeclareMathSizes{10.95}{14}{10}{7}
+% Isto i za \small (10pt, size11.clo) - sekcija "Rjesenja" ispisuje se u
+% \small radi kompaktnosti (vidi multicol nize/2_test_builder.py), a konacni
+% odgovori su i dalje formule pa i tu trebaju biti uocljivije, samo blazi skok
+% (12pt) da se ne narusi cilj "sve stane na jednu stranicu".
+\DeclareMathSizes{10}{12}{9}{6.5}
+
 % --- 4. PALETA BOJA (Moderna, profesionalna i dinamična) ---
 \RequirePackage[table, xcdraw]{xcolor}
 \definecolor{MathPrimary}{HTML}{0F172A}    % Tamno plava / Slate (Glavni tekst i naslovi)
@@ -174,22 +198,23 @@
 }
 
 % --- Custom tcolorbox za Rješenja / Savjete ---
-\newtcolorbox{solutionbox}[1][Rješenje]{
+% IZMJENA (8.10.2026., na izricit zahtjev): isti pristup kao taskbox
+% (11.9.2026.) - NEMA VISE obruba (boxrule=0pt, colframe=colback) niti
+% odvojenog "boxed title" pecata (trosio dodatni red/razmak). Oznaka
+% "Zadatak #N" sad je obicni podebljani tirkizni tekst UMETNUT na pocetku
+% tijela okvira (vidi \rjesenje nize), u ISTOM retku kao rjesenje/odgovor -
+% cilj je da rjesenja ne zauzimaju puno papira.
+\newtcolorbox{solutionbox}[1][]{
     enhanced,
     colback=white,
-    colframe=MathSecondary,
+    colframe=white,
+    boxrule=0pt,
     arc=3pt,
-    boxrule=0.8pt,
-    left=10pt, right=10pt, top=6pt, bottom=6pt,
-    fonttitle=\bfseries\sffamily\small,
-    coltitle=MathSecondary,
-    title={#1},
-    attach boxed title to top left={xshift=8pt, yshift=-8pt},
-    boxed title style={
-        colback=white,
-        colframe=white,
-        left=4pt, right=4pt
-    }
+    left=8pt, right=8pt, top=3pt, bottom=3pt,
+    before skip=1mm,
+    after skip=1.5mm,
+    before upper={\raggedright},
+    #1
 }
 
 % --- 6. GRAPHICS, QR CODES & TABLES ---
@@ -201,6 +226,22 @@
 % Podešavanje popisnih listi za kompaktnost
 \setlist[enumerate]{topsep=2pt, itemsep=2pt, parsep=0pt, partopsep=0pt}
 \setlist[itemize]{topsep=2pt, itemsep=2pt, parsep=0pt, partopsep=0pt}
+
+% --- 6b. HIPERVEZE (hyperref) - DODANO 8.10.2026. ---
+% Jedina svrha: www.cakipoduka.com u podnožju (nize, sekcija 7) postaje
+% klikabilan link kad se PDF gleda digitalno (dijeljenje materijala kao
+% promocija centra - vidi napomenu uz fancyfoot[L] nize). hidelinks = bez
+% obojenih okvira/podcrtavanja oko linkova, u printu nema VIZUALNE razlike
+% od obicnog teksta.
+\RequirePackage{hyperref}
+\hypersetup{hidelinks}
+
+% --- 6c. VIŠE-STUPČANI ISPIS (multicol) - DODANO 8.10.2026. ---
+% Koristi se oko sekcije "Rješenja" u pages/2_test_builder.py (rjesenja_sekcija)
+% da cijeli popis konačnih odgovora stane na JEDNU stranicu u 2 stupca umjesto
+% da se razvuče preko više - rješenja su sad kratka (samo konačan odgovor, vidi
+% \rjesenje nize), pa dobro stanu u uzak stupac.
+\RequirePackage{multicol}
 
 % --- 7. ZAGLAVLJA I PODNOŽJA (Fancyhdr) ---
 \RequirePackage{fancyhdr}
@@ -215,7 +256,14 @@
 
 \fancyhead[L]{\small\sffamily\bfseries\color{MathPrimary} MATEMATIKA \ \textcolor{MathAccent}{$\mathbf{\cdot}$}\ \ ZBIRKA ZADATAKA}
 \fancyhead[R]{\small\sffamily\color{MathAccent}\leftmark}
-\fancyfoot[L]{\tiny\sffamily\color{gray} Generirano pomoću Čaki Test Builder systema}
+% IZMJENA (8.10.2026., na izricit zahtjev, PRIJEDLOG teksta - lako promjenjivo
+% ovdje na jednom mjestu): umjesto interne odrednice "Generirano pomocu...",
+% podnozje sad nosi brend/kontakt centra - cilj je da kad se materijal
+% dijeli dalje (ucenik ucenku), podnozje samo po sebi promovira CAKI centar.
+% Tekst azuriran (8.10.2026., 2. put, na izricit zahtjev - "ima mjesta na
+% footeru") na puniju verziju; OŠ-SŠ-FAX izbaceno jer ga nova recenica vec
+% pokriva (bilo bi dupliciranje).
+\fancyfoot[L]{\tiny\sffamily\color{gray} \href{https://www.cakipoduka.com}{www.cakipoduka.com} \textbullet\ Pripreme za maturu i prijemne ispite u srednje škole \textbullet\ Instrukcije za OŠ, SŠ i fakultet}
 \fancyfoot[R]{\small\sffamily\bfseries\color{MathPrimary} Stranica \thepage}
 
 % --- 8. KOMANDE ZA ZADATKE I VIŠESTRUKI IZBOR ---
@@ -338,11 +386,17 @@
 % brojevima dodijeljenim u \zadatak (generate_tex.py ih generira
 % istim redoslijedom, pa se uvijek poklapaju).
 \newcommand{\rjesenje}[3]{%
-    \begin{solutionbox}[Zadatak \##1]
-        #2%
-        \ifblank{#3}{}{\par\textbf{Konačan odgovor:} #3}%
-    \end{solutionbox}
-    \vspace{2mm}
+    % IZMJENA v2 (8.10.2026., na izricit zahtjev): rjesenja sad prikazuju SAMO
+    % konacan odgovor (#3) - puni postupak (#2) namjerno se VISE NE ispisuje
+    % ovdje (ide u PreTeXt/druge materijale) - #2 se i dalje prima kao
+    % argument (kompatibilnost poziva), ali se ignorira. Bez oznake "Konacan
+    % odgovor:" kod svakog retka (visak teksta/papira) - samo "Zadatak N:
+    % <odgovor>". solutionbox (okvir) vise se ovdje NE koristi - obican
+    % kompaktan redak, zamisljen za \begin{multicols}{2} (vidi rjesenja_sekcija
+    % u 2_test_builder.py) da cijela sekcija stane na jednu stranicu.
+    \noindent{\bfseries\sffamily\color{MathSecondary}Zadatak \##1:}~%
+    \ifblank{#3}{\textit{\color{gray}(odgovor nije unesen)}}{#3}%
+    \par\vspace{1mm}
 }
 
 % ============================================================
@@ -364,9 +418,23 @@
 % dodijeljenu kategoriju), zaglavlje se ponaša kao prije (#4).
 \newcommand{\cakiispithead}[5]{%
     \thispagestyle{empty}
-    {\color{MathPrimary}\sffamily\bfseries\Large #1}\par
+    % DODANO (8.10.2026., 2. put, na izricit zahtjev): mali "letterhead" redak
+    % iznad naslova - naziv tvrtke + web + kontakt, desno poravnat. Namjerno
+    % SAMO na pocetnoj stranici testa (ne u fancyhead koji se ponavlja na
+    % svakoj sljedecoj stranici - ondje vec postoji naslov+datum, a footer na
+    % SVAKOJ stranici vec nosi web/brend, vidi fancyfoot[L] gore - dupliciranje
+    % kontakta na svakoj stranici zaglavlja nije trazeno).
+    \begin{flushright}
+        {\tiny\sffamily\color{gray} Caki centar d.o.o. \textbullet\ \href{https://www.cakipoduka.com}{www.cakipoduka.com} \textbullet\ kontakt: 095 9005611}
+    \end{flushright}
     \vspace{1mm}
-    {\small\sffamily\color{TextDark} #3 \quad\textbullet\quad #2}\par
+    % IZMJENA (8.10.2026., na izricit zahtjev): naslov centriran, s tipom
+    % dokumenta i datumom odmah pored njega u istom centriranom retku
+    % (prije: naslov lijevo poravnat, tip+datum u zasebnom retku ispod).
+    \begin{center}
+        {\color{MathPrimary}\sffamily\bfseries\Large #1}\quad
+        {\small\sffamily\color{TextDark} #3\ \textbullet\ #2}
+    \end{center}
     \vspace{3mm}
     \noindent\textbf{Ime i prezime:} \makebox[5.5cm]{\hrulefill} \quad
     \textbf{Razred:} \makebox[2.5cm]{\hrulefill}

@@ -30,7 +30,6 @@ from baza_zadataka_pipeline import (
     get_gspread_client,
     get_potpoglavlja_po_cjelini,
     prikazi_opcije_markdown,
-    get_biblioteke_izvora,
 )
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
@@ -188,17 +187,6 @@ def ucitaj_potpoglavlja_po_cjelini():
         return get_potpoglavlja_po_cjelini(init_spreadsheet())
     except Exception:
         return {}
-
-
-@st.cache_data(ttl=600)
-def ucitaj_biblioteke_izvora():
-    """Popis poznatih vrijednosti biblioteka_izvora (prijedlog, 8.10.2026.), iz taba
-    'Sifrarnik_biblioteka_izvora' - za filter "Biblioteka izvora" u pretrazi. Vraća [] ako tab
-    (još) ne postoji/čitanje ne uspije - filter se tad jednostavno ne prikazuje s opcijama."""
-    try:
-        return get_biblioteke_izvora(init_spreadsheet())
-    except Exception:
-        return []
 
 
 # ---------------------------------------------------------------
@@ -495,7 +483,6 @@ with col_pretraga:
     f_potpoglavlje = st.multiselect("Potpoglavlje", opcije_potpoglavlje)
 
     f_tezina = st.multiselect("Težina", sve_tezine)
-    f_biblioteka = st.multiselect("Biblioteka izvora", ucitaj_biblioteke_izvora())
     f_tekst = st.text_input("Pretraži tekst / ključne riječi")
 
     filtrirano = zadaci
@@ -505,8 +492,6 @@ with col_pretraga:
         filtrirano = [z for z in filtrirano if z.get("potpoglavlje") in f_potpoglavlje]
     if f_tezina:
         filtrirano = [z for z in filtrirano if z.get("tezina") in f_tezina]
-    if f_biblioteka:
-        filtrirano = [z for z in filtrirano if z.get("biblioteka_izvora") in f_biblioteka]
     if f_tekst:
         upit = f_tekst.lower()
         filtrirano = [
@@ -532,10 +517,7 @@ with col_pretraga:
     # 30 rezultata. Sad se početnih 50 prikazuje odmah, a gumb "Prikaži još" otkriva
     # ostatak u koracima od 50 - brojač se resetira na 50 čim se bilo koji filter
     # promijeni (novi filter_potpis), da rezultati prošle pretrage ne "cure" u novu.
-    filter_potpis = (
-        tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tezina)),
-        tuple(sorted(f_biblioteka)), f_tekst,
-    )
+    filter_potpis = (tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tezina)), f_tekst)
     if st.session_state.get("tb_filter_potpis") != filter_potpis:
         st.session_state["tb_filter_potpis"] = filter_potpis
         st.session_state["tb_broj_prikaza"] = 50
@@ -1157,11 +1139,18 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
 
     rjesenja_sekcija = ""
     if prikazi_rjesenja:
+        # IZMJENA (8.10.2026., na izricit zahtjev): rjesenja (sad samo konacan
+        # odgovor po zadatku, vidi \rjesenje u caki-style.sty) ispisuju se u 2
+        # stupca (multicols) da cijela sekcija stane na jednu stranicu umjesto
+        # da se razvuce na vise - \small jer su retci sad vrlo kratki.
         rjesenja_sekcija = (
             "\\newpage\n"
             "{\\color{MathSecondary}\\sffamily\\bfseries\\Large Rješenja}\\par\n"
             "\\vspace{2mm}\\hrule height 1pt \\color{MathSecondary}\\vspace{4mm}\n"
-            "\\input{generated/rjesenja_body}"
+            "\\begin{multicols}{2}\n"
+            "\\small\n"
+            "\\input{generated/rjesenja_body}\n"
+            "\\end{multicols}"
         )
 
     kraj_oznaka = KRAJ_OZNAKA_PO_TIPU.get(tip_dok, "KRAJ")
