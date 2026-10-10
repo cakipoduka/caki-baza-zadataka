@@ -529,6 +529,12 @@ with col_pretraga:
     f_potpoglavlje = st.multiselect("Potpoglavlje", opcije_potpoglavlje)
 
     f_tezina = st.multiselect("Težina", sve_tezine)
+    # Filter po biblioteci izvora (10.10.2026.) - npr. 'zbirka Dakić' (stupac biblioteka_izvora).
+    sve_biblioteke = sorted({str(z.get("biblioteka_izvora", "")).strip() for z in zadaci if str(z.get("biblioteka_izvora", "")).strip()})
+    f_biblioteka = st.multiselect(
+        "Biblioteka izvora (zbirka/udžbenik)", sve_biblioteke,
+        help="Samo zadaci iz odabrane zbirke. Dodjeljuje se u 'Provjera i uređivanje' ili pri uvozu.",
+    )
     f_tekst = st.text_input("Pretraži tekst / ključne riječi")
 
     # Jedinica = samostalan zadatak ILI skupina (uvod) sa svojim stavkama (10.10.2026.).
@@ -537,7 +543,7 @@ with col_pretraga:
         _jedinice_sve, _upozorenja_skupina = grupiraj(zadaci)
         filtrirano = [
             j for j in _jedinice_sve
-            if jedinica_odgovara(j, f_cjelina, f_potpoglavlje, f_tezina, f_tekst)
+            if jedinica_odgovara(j, f_cjelina, f_potpoglavlje, f_tezina, f_tekst, f_biblioteka)
         ]
         if _upozorenja_skupina:
             with st.expander(f"⚠️ {len(_upozorenja_skupina)} upozorenja o skupinama zadataka"):
@@ -551,6 +557,8 @@ with col_pretraga:
             if f_potpoglavlje and z.get("potpoglavlje") not in f_potpoglavlje:
                 continue
             if f_tezina and z.get("tezina") not in f_tezina:
+                continue
+            if f_biblioteka and str(z.get("biblioteka_izvora", "")).strip() not in f_biblioteka:
                 continue
             if f_tekst:
                 upit = f_tekst.lower()
@@ -580,7 +588,7 @@ with col_pretraga:
     # 30 rezultata. Sad se početnih 50 prikazuje odmah, a gumb "Prikaži još" otkriva
     # ostatak u koracima od 50 - brojač se resetira na 50 čim se bilo koji filter
     # promijeni (novi filter_potpis), da rezultati prošle pretrage ne "cure" u novu.
-    filter_potpis = (tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tezina)), f_tekst)
+    filter_potpis = (tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tezina)), tuple(sorted(f_biblioteka)), f_tekst)
     if st.session_state.get("tb_filter_potpis") != filter_potpis:
         st.session_state["tb_filter_potpis"] = filter_potpis
         st.session_state["tb_broj_prikaza"] = 50

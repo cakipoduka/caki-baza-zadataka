@@ -269,7 +269,7 @@ def stavke_skupine(rows, skupina_id):
     return sorted(st, key=lambda x: _oznaka_sort(x.get("oznaka_stavke")))
 
 
-def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit=""):
+def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit="", f_biblioteka=()):
     """Filter Test Buildera na razini JEDINICE (samostalan ili skupina+stavke).
     Cjelina/potpoglavlje/težina: prolazi ako ih ima skupina ILI bilo koja stavka.
     Tekst: traži se u tekstu i ključnim riječima skupine i svih stavki (pa se skupina
@@ -284,6 +284,8 @@ def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit=""):
     if f_potpoglavlje and not bilo_koji("potpoglavlje", f_potpoglavlje):
         return False
     if f_tezina and not bilo_koji("tezina", f_tezina):
+        return False
+    if f_biblioteka and not bilo_koji("biblioteka_izvora", f_biblioteka):
         return False
     if upit:
         u = upit.lower()
