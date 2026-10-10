@@ -55,7 +55,7 @@ from baza_zadataka_pipeline import (
     prikazi_opcije_markdown,
 )
 from ai_prijedlozi import (
-    RAZDVOJI, UPOZORENJE_DOLARI, omotaj_konacan_odgovor, UPOZORENJE_SKRACIVANJE, je_samo_dolari, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
+    RAZDVOJI, INFO_KOZMETIKA, je_kozmetika_opcija, UPOZORENJE_DOLARI, omotaj_konacan_odgovor, UPOZORENJE_SKRACIVANJE, je_samo_dolari, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
     primijeni_razdvajanje, prikazi_kontekst_prijedloga, prikazi_promjenu, uredi_razdvajanje,
 )
 
@@ -889,6 +889,8 @@ with tab_pregled:
                         st.error(UPOZORENJE_SKRACIVANJE)
                     if je_samo_dolari(p):
                         st.error(UPOZORENJE_DOLARI)
+                    if je_kozmetika_opcija(p):
+                        st.info(INFO_KOZMETIKA)
                     st.caption("🔍 Promjena (crveno = briše se, zeleno = dodaje se):")
                     prikazi_promjenu(p)
                     with st.expander("Prikaz formula prije / poslije i ručna izmjena"):
@@ -902,7 +904,7 @@ with tab_pregled:
                 else:
                     novo_uredeno = p["novo"]
                 odluka = st.radio("Odluka", ["⏸️ kasnije", "✅ prihvati", "❌ odbij"],
-                                  index=2 if je_samo_dolari(p) else 0,
+                                  index=2 if je_samo_dolari(p) else (1 if je_kozmetika_opcija(p) else 0),
                                   horizontal=True, key=f"od_{pid}")
                 odluke[pid] = (odluka, novo_uredeno)
                 st.divider()

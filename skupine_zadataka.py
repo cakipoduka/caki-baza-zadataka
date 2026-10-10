@@ -361,3 +361,35 @@ def sve_stavke_dolari_neuparene(stavke, broj_dolara):
             if broj_dolara(s.get(kljuc, "")) % 2 != 0:
                 out.append((slovo(i), polje, s.get(kljuc, "")))
     return out
+
+
+def azuriranja_biblioteke(redovi, odabrani_ids, biblioteka, col_letter, ukljuci_stavke=True, prepisi=False):
+    """Grupno dodjeljivanje biblioteke izvora (zbirke). `redovi` = rječnici redoka tablice 'Zadaci' po
+    redoslijedu u Sheetu (prvi je redak 2). Vraća (azuriranja, info) za ws.batch_update.
+      ukljuci_stavke: odabrana SKUPINA povlači sa sobom i sve svoje stavke.
+      prepisi: False = zadaci koji VEĆ imaju DRUGU biblioteku se preskaču (ne prepisuju se tiho).
+    biblioteka == '' briše vrijednost (isti mehanizam)."""
+    biblioteka = _s(biblioteka)
+    ids = {_s(i) for i in odabrani_ids if _s(i)}
+    dodano_stavki = 0
+    if ukljuci_stavke:
+        skupine = {_s(r.get("id")) for r in redovi if uloga_retka(r) == ULOGA_SKUPINA and _s(r.get("id")) in ids}
+        for r in redovi:
+            if uloga_retka(r) == ULOGA_STAVKA and _s(r.get("roditelj_id")) in skupine and _s(r.get("id")) not in ids:
+                ids.add(_s(r.get("id")))
+                dodano_stavki += 1
+    slovo_stupca = col_letter("biblioteka_izvora")
+    azur, vec, preskoceno = [], 0, []
+    for broj, r in enumerate(redovi, start=2):
+        rid = _s(r.get("id"))
+        if rid not in ids:
+            continue
+        trenutna = _s(r.get("biblioteka_izvora"))
+        if trenutna == biblioteka:
+            vec += 1
+        elif trenutna and not prepisi:
+            preskoceno.append((rid, trenutna))
+        else:
+            azur.append({"range": f"{slovo_stupca}{broj}", "values": [[biblioteka]]})
+    return azur, {"odabrano": len(ids), "dodano_stavki": dodano_stavki, "vec_ima": vec,
+                  "preskoceno": preskoceno, "za_upis": len(azur)}

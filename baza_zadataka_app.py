@@ -61,6 +61,7 @@ try:
         ULOGA_SKUPINA,
         ULOGA_STAVKA,
         NASLJEDNA_POLJA,
+        azuriranja_biblioteke,
         oznaka_za_popis,
         puni_tekst,
         slovo as slovo_stavke,
@@ -1672,6 +1673,149 @@ def stranica_redoslijed_zadataka():
 
 
 # ============================================================
+# Stranica: Grupno dodjeljivanje biblioteke izvora (10.10.2026.)
+# ============================================================
+
+def stranica_biblioteka_grupno():
+    import pandas as pd
+
+    st.title("🏷️ Grupno dodjeljivanje biblioteke izvora")
+    st.caption(
+        "Označi zadatke kvačicom i svima odjednom dodijeli zbirku/udžbenik (npr. 'zbirka-Dakić-pismeni'), "
+        "da ih Test Builder može filtrirati po izvoru. Ništa se ne zapisuje dok ne klikneš 'Primijeni'."
+    )
+    if not _SKUPINE_OK:
+        st.error("Modul skupine_zadataka.py nije dostupan - ova stranica ga treba.")
+        return
+    if st.button("🔄 Osvježi popis", key="bib_osvjezi"):
+        _ucitaj_zadatke_za_pretragu.clear()
+    headers, redovi = _ucitaj_zadatke_za_pretragu()
+    if "biblioteka_izvora" not in headers:
+        st.error("U tabu 'Zadaci' nema stupca 'biblioteka_izvora'.")
+        return
+    idx = {h: i for i, h in enumerate(headers)}
+    svi = [_redak_u_rjecnik(r, idx) for r in redovi]
+
+    f1, f2 = st.columns(2)
+    sve_cjeline = sorted({d.get("cjelina", "") for d in svi if d.get("cjelina")})
+    f_cj = f1.multiselect("Cjelina", sve_cjeline, key="bib_f_cjelina")
+    opc_pot = sorted({d.get("potpoglavlje", "") for d in svi
+                      if d.get("potpoglavlje") and (not f_cj or d.get("cjelina") in f_cj)})
+    f_pot = f2.multiselect("Potpoglavlje", opc_pot, key="bib_f_potpoglavlje")
+    f3, f4 = st.columns(2)
+    sve_god = sorted({d.get("izvor_naziv", "") for d in svi if d.get("izvor_naziv")})
+    f_izvor = f3.multiselect("Izvor (naziv uvoza / ispita)", sve_god, key="bib_f_izvor")
+    postojece_bib = sorted({d.get("biblioteka_izvora", "") for d in svi if d.get("biblioteka_izvora")})
+    BEZ = "(bez biblioteke)"
+    f_trenutna = f4.multiselect("Trenutna biblioteka", [BEZ] + postojece_bib, key="bib_f_trenutna",
+                                help="Npr. samo '(bez biblioteke)' da vidiš što još nije označeno.")
+    f_tekst = st.text_input("Pretraži tekst zadatka", key="bib_f_tekst").strip().lower()
+    sakrij_stavke = st.checkbox(
+        "📦 Prikaži skupine kao jedan redak (stavke se označavaju zajedno sa skupinom)", value=True, key="bib_f_stavke",
+    )
+
+    prikaz = []
+    for broj, d in enumerate(svi, start=2):
+        if sakrij_stavke and uloga_retka(d) == ULOGA_STAVKA:
+            continue
+        if f_cj and d.get("cjelina") not in f_cj:
+            continue
+        if f_pot and d.get("potpoglavlje") not in f_pot:
+            continue
+        if f_izvor and d.get("izvor_naziv") not in f_izvor:
+            continue
+        if f_trenutna and ((d.get("biblioteka_izvora") or BEZ) not in f_trenutna):
+            continue
+        if f_tekst and f_tekst not in d.get("tekst_zadatka_latex", "").lower():
+            continue
+        prikaz.append(d)
+
+    MAX = 300
+    if len(prikaz) > MAX:
+        st.warning(f"Pronađeno {len(prikaz)} zadataka - prikazano prvih {MAX}. Suzi filtere ili radi u koracima.")
+        prikaz = prikaz[:MAX]
+    st.caption(f"Prikazano: **{len(prikaz)}**")
+    if not prikaz:
+        return
+
+    if "bib_ver" not in st.session_state:
+        st.session_state["bib_ver"] = 0
+        st.session_state["bib_sve"] = False
+    b1, b2, _ = st.columns([1, 1, 4])
+    if b1.button("☑️ Označi sve prikazane", key="bib_oznaci_sve"):
+        st.session_state["bib_sve"] = True
+        st.session_state["bib_ver"] += 1
+        st.rerun()
+    if b2.button("⬜ Poništi oznake", key="bib_ponisti"):
+        st.session_state["bib_sve"] = False
+        st.session_state["bib_ver"] += 1
+        st.rerun()
+
+    tablica = pd.DataFrame({
+        "Odaberi": [st.session_state["bib_sve"]] * len(prikaz),
+        "id": [d.get("id", "") for d in prikaz],
+        "vrsta": [{"skupina": "📦 skupina", "stavka": "↳ stavka"}.get(uloga_retka(d), "") for d in prikaz],
+        "cjelina": [d.get("cjelina", "") for d in prikaz],
+        "potpoglavlje": [d.get("potpoglavlje", "") for d in prikaz],
+        "biblioteka": [d.get("biblioteka_izvora", "") for d in prikaz],
+        "tekst": [(d.get("tekst_zadatka_latex", "")[:90]) for d in prikaz],
+    })
+    # Ključ ovisi o broju prikazanih + verziji: promjena filtera/gumba daje svježu tablicu.
+    uredjena = st.data_editor(
+        tablica, hide_index=True, use_container_width=True,
+        disabled=[c for c in tablica.columns if c != "Odaberi"],
+        key=f"bib_tablica_{st.session_state['bib_ver']}_{len(prikaz)}_{hash(tuple(tablica['id']))}",
+    )
+    odabrani_ids = [r["id"] for _, r in uredjena.iterrows() if r["Odaberi"]]
+    st.markdown(f"Označeno: **{len(odabrani_ids)}**")
+
+    st.divider()
+    try:
+        popis = get_biblioteke_izvora(sheet)
+    except Exception:
+        popis = []
+    NOVA, OCISTI = "➕ Nova...", "— (obriši biblioteku)"
+    odabir = st.selectbox("Dodijeli biblioteku", popis + [NOVA, OCISTI], key="bib_odabir")
+    if odabir == NOVA:
+        biblioteka = st.text_input("Naziv nove biblioteke", key="bib_nova").strip()
+    elif odabir == OCISTI:
+        biblioteka = ""
+    else:
+        biblioteka = odabir
+    ukljuci = st.checkbox("Označena skupina povlači i sve svoje stavke", value=True, key="bib_ukljuci")
+    prepisi = st.checkbox("Prepiši i zadatke koji već imaju DRUGU biblioteku", value=False, key="bib_prepisi")
+
+    azur, info = azuriranja_biblioteke(svi, odabrani_ids, biblioteka, _col_letter, ukljuci, prepisi)
+    if odabrani_ids:
+        st.info(
+            f"Za upis: **{info['za_upis']}** redaka"
+            + (f" (od toga {info['dodano_stavki']} stavki iz označenih skupina)" if info["dodano_stavki"] else "")
+            + f" · već ima istu biblioteku: {info['vec_ima']} · preskočeno (već imaju drugu): {len(info['preskoceno'])}"
+        )
+        if info["preskoceno"]:
+            with st.expander("Preskočeni zadaci"):
+                for rid, tr in info["preskoceno"][:50]:
+                    st.caption(f"{rid} - ima: {tr}")
+    if odabir == NOVA and not biblioteka:
+        st.warning("Upiši naziv nove biblioteke.")
+    if st.button(f"✅ Primijeni na {info['za_upis']} zadataka", type="primary", key="bib_primijeni",
+                 disabled=not azur or (odabir == NOVA and not biblioteka)):
+        if biblioteka and biblioteka not in popis:
+            dodaj_biblioteku_izvora(sheet, biblioteka)
+        with st.spinner("Upisujem..."):
+            try:
+                for i in range(0, len(azur), 200):
+                    ws_zadaci.batch_update(azur[i:i + 200])
+            except Exception as e:
+                st.error(f"Greška: {e}")
+                st.stop()
+        st.success(f"✅ Upisano u {len(azur)} redaka: {biblioteka or '(prazno)'}.")
+        _ucitaj_zadatke_za_pretragu.clear()
+        st.session_state["bib_sve"] = False
+        st.session_state["bib_ver"] += 1
+
+
+# ============================================================
 # Navigacija
 # ============================================================
 
@@ -1681,6 +1825,7 @@ stranica = st.sidebar.radio(
         "📄 Obradi novi ispit",
         "🔍✏️ Provjera i uređivanje zadataka",
         "📑 Redoslijed zadataka po potpoglavlju",
+        "🏷️ Grupno dodjeljivanje biblioteke",
     ],
     key="glavna_stranica",  # postavlja ga i AI kontrola kod skoka u "Provjera i uređivanje"
 )
@@ -1689,5 +1834,7 @@ if stranica == "📄 Obradi novi ispit":
     stranica_obradi_ispit()
 elif stranica == "🔍✏️ Provjera i uređivanje zadataka":
     stranica_provjera_i_uredi()
+elif stranica == "🏷️ Grupno dodjeljivanje biblioteke":
+    stranica_biblioteka_grupno()
 else:
     stranica_redoslijed_zadataka()

@@ -251,6 +251,23 @@ def je_samo_dolari(p):
     return norm(staro) == norm(novo)
 
 
+def je_kozmetika_opcija(p):
+    """ponudjeni_odgovori: prijedlog samo skida/dodaje $ oko opcija, sadržaj isti. Oba oblika
+    rade (Test Builder i PreTeXt opciju s LaTeX-om same prikažu kao formulu) - promjena je samo
+    usklađivanje s konvencijom (opcije bez $), bez rizika."""
+    if p.get("polje") != "ponudjeni_odgovori":
+        return False
+    staro, novo = p.get("staro") or "", p.get("novo") or ""
+    if staro.count("$") == novo.count("$"):
+        return False
+    norm = lambda t: "".join(t.replace("$", "").split())
+    return norm(staro) == norm(novo)
+
+
+INFO_KOZMETIKA = ("ℹ️ Samo usklađivanje zapisa: opcije ostaju iste, mijenjaju se samo znakovi $. "
+                  "Prikazuju se ispravno u oba oblika - prihvaćanje je bez rizika (zadano je već „prihvati”).")
+
+
 UPOZORENJE_DOLARI = (
     "⛔ Ovaj prijedlog samo BRIŠE znakove $. U bazi formule moraju biti unutar $...$ "
     "(osim ponuđenih odgovora) - bez njih se formula ne prikazuje. Odbij ga (zadano je već „odbij”).")
@@ -329,7 +346,8 @@ def naslov_prijedloga(p):
 def prikazi_kontekst_prijedloga(p):
     """Razlog + doslovni isječak originala (ako ga je DeepSeek dao)."""
     if p.get("razlog"):
-        st.markdown(f"**💬 {p['razlog']}**")
+        # $ u obrazloženju je običan znak, ne formula (inače Streamlit tekst između dva $ prikaže kao matematiku)
+        st.markdown("**💬 " + p["razlog"].replace("$", "\\$") + "**")
     if p.get("isjecak_originala"):
         st.caption("📄 Original (iz PDF-a):")
         st.info(p["isjecak_originala"])
