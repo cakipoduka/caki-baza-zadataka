@@ -1006,6 +1006,16 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
         raise
 
 
+# Najveći broj tokena koje Claude smije vratiti u JEDNOM odgovoru pri strukturiranju ispita
+# (10.10.2026.: podignuto sa 16000 na 40000 - ispit od ~17 zadataka s ~50 podzadataka nije stao
+# u 16000 pa se odgovor stalno rezao). Plaća se SAMO stvarno generirano, ne ovaj limit.
+# Ako je 40000 previše/prespor, slobodno smanji (npr. 32000) - promijeni SAMO ovaj broj.
+# VAŽNO: preko ~21000 tokena Anthropic SDK ODBIJA obični (ne-streaming) poziv s pogreškom
+# "Streaming is required for operations that may take longer than 10 minutes" - zato se
+# niže koristi client.messages.stream(...), ne client.messages.create(...).
+EXTRACTION_MAX_TOKENS = 40000
+
+
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
                                 sifrarnik_potpoglavlja_text="", model="claude-sonnet-5",
                                 _preostala_dubina=2, log=None, _preostali_pokusaji_praznog=2):
@@ -1022,9 +1032,9 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     if rjesenja_md:
         user_content += f"\n=== TEKST RJEŠENJA/BODOVANJA (Mathpix Markdown) ===\n{rjesenja_md}\n"
 
-    response = client.messages.create(
+    with client.messages.stream(
         model=model,
-        max_tokens=16000,
+        max_tokens=EXTRACTION_MAX_TOKENS,
         system=EXTRACTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],
         # Claude Sonnet 5 po defaultu koristi "adaptive thinking" (effort "high"), a tokeni
@@ -1043,7 +1053,10 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
         # post-hoc, nakon što odgovor stigne - v. blok "if raw_text and not raw_text.
         # startswith(...)" niže.
         thinking={"type": "disabled"},
-    )
+    ) as stream:
+        # Isti Message objekt kakav je vraćao create() (content, stop_reason...) - ostatak
+        # funkcije ostaje NEPROMIJENJEN.
+        response = stream.get_final_message()
 
     if response.stop_reason == "max_tokens":
         if _preostala_dubina > 0 and len(ispit_md) > 1000:
