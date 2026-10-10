@@ -25,6 +25,25 @@ import gspread
 import streamlit as st
 from PIL import Image
 
+try:
+    # Skupine zadataka (uvod + stavke a), b), c)) - 10.10.2026. Zaštićen import: ako modul
+    # nedostaje, Test Builder radi kao i prije (svi zadaci se tretiraju kao samostalni).
+    from skupine_zadataka import (
+        ULOGA_SKUPINA,
+        grupiraj,
+        izgradi_rjesenja_blok,
+        izgradi_stavke_blok,
+        jedinica_odgovara,
+        sve_stavke_dolari_neuparene,
+        slovo as slovo_stavke,
+        spoji_u_samostalan,
+        stavke_za_unos,
+        zbroji_bodove,
+    )
+    _SKUPINE_OK = True
+except Exception:
+    _SKUPINE_OK = False
+
 from baza_zadataka_pipeline import (
     get_drive_service,
     get_gspread_client,
@@ -396,6 +415,33 @@ def dodaj_zadatak(row, bodovi_default=""):
     })
 
 
+def dodaj_jedinicu(j, ids_zauzeti, samo_stavke_ids=None):
+    """Dodaje jedinicu iz baze u 'Odabrane zadatke'.
+      - samostalan: kao dosad (dodaj_zadatak).
+      - skupina s >= 2 odabrane stavke: JEDAN zadatak (uvod) s popisom stavki a), b), c).
+      - skupina s točno 1 odabranom stavkom: običan zadatak 'uvod + stavka' (bez slova).
+    samo_stavke_ids: None = sve stavke koje još nisu u odabiru; inače točno te stavke.
+    Vraća broj dodanih stavki (1 za samostalan)."""
+    if j["tip"] != ULOGA_SKUPINA:
+        dodaj_zadatak(j["glavni"])
+        return 1
+    stavke = [s for s in j["stavke"] if s.get("id") not in ids_zauzeti]
+    if samo_stavke_ids is not None:
+        stavke = [s for s in stavke if s.get("id") in samo_stavke_ids]
+    if not stavke:
+        return 0
+    if len(stavke) == 1:
+        dodaj_zadatak(spoji_u_samostalan(j["glavni"], stavke[0]))
+        st.session_state.odabrani[-1]["skupina_id"] = j["glavni"].get("id", "")
+        return 1
+    dodaj_zadatak(j["glavni"], bodovi_default=zbroji_bodove(stavke))
+    z = st.session_state.odabrani[-1]
+    z["stavke"] = stavke_za_unos(stavke)
+    z["rjesenje"] = ""
+    z["konacan_odgovor"] = ""
+    return len(stavke)
+
+
 def pomakni(idx, smjer):
     novi = idx + smjer
     lst = st.session_state.odabrani
@@ -485,26 +531,43 @@ with col_pretraga:
     f_tezina = st.multiselect("Težina", sve_tezine)
     f_tekst = st.text_input("Pretraži tekst / ključne riječi")
 
-    filtrirano = zadaci
-    if f_cjelina:
-        filtrirano = [z for z in filtrirano if z.get("cjelina") in f_cjelina]
-    if f_potpoglavlje:
-        filtrirano = [z for z in filtrirano if z.get("potpoglavlje") in f_potpoglavlje]
-    if f_tezina:
-        filtrirano = [z for z in filtrirano if z.get("tezina") in f_tezina]
-    if f_tekst:
-        upit = f_tekst.lower()
+    # Jedinica = samostalan zadatak ILI skupina (uvod) sa svojim stavkama (10.10.2026.).
+    # Stavke se NE prikazuju kao zasebni redci - vide se unutar kartice svoje skupine.
+    if _SKUPINE_OK:
+        _jedinice_sve, _upozorenja_skupina = grupiraj(zadaci)
         filtrirano = [
-            z for z in filtrirano
-            if upit in (z.get("tekst_zadatka_latex", "") or "").lower()
-            or upit in (z.get("kljucne_rijeci", "") or "").lower()
+            j for j in _jedinice_sve
+            if jedinica_odgovara(j, f_cjelina, f_potpoglavlje, f_tezina, f_tekst)
         ]
+        if _upozorenja_skupina:
+            with st.expander(f"⚠️ {len(_upozorenja_skupina)} upozorenja o skupinama zadataka"):
+                for _u in _upozorenja_skupina:
+                    st.caption(_u)
+    else:
+        filtrirano = []
+        for z in zadaci:
+            if f_cjelina and z.get("cjelina") not in f_cjelina:
+                continue
+            if f_potpoglavlje and z.get("potpoglavlje") not in f_potpoglavlje:
+                continue
+            if f_tezina and z.get("tezina") not in f_tezina:
+                continue
+            if f_tekst:
+                upit = f_tekst.lower()
+                if upit not in (z.get("tekst_zadatka_latex", "") or "").lower() \
+                        and upit not in (z.get("kljucne_rijeci", "") or "").lower():
+                    continue
+            filtrirano.append({"tip": "samostalan", "glavni": z, "stavke": []})
 
     # ID-jevi zadataka koji su VEĆ u "2. Odabrani zadaci" - za kvačicu/oznaku
     # niže i onemogućavanje ponovnog dodavanja istog zadatka (zahtjev 14.9.2026.:
     # profesor je znao slučajno dodati isti zadatak dvaput jer ništa u popisu
     # pretrage nije pokazivalo da je zadatak već odabran).
     ids_odabranih = {z.get("id") for z in st.session_state.odabrani if z.get("id")}
+    for _zo in st.session_state.odabrani:          # stavke dodane kao dio skupine (10.10.2026.)
+        for _so in _zo.get("stavke") or []:
+            if _so.get("id"):
+                ids_odabranih.add(_so["id"])
 
     # Paginacija umjesto tvrdog reza na prvih 30 (popravak 14.9.2026.) - stari kod je
     # UVIJEK prikazivao samo filtrirano[:30], bez obzira koliko je zadataka stvarno
@@ -534,14 +597,59 @@ with col_pretraga:
     # prikazane (ne na CIJELI filtrirano skup) - da profesor uvijek zna točno koliko
     # će i kojih zadataka dodati, bez iznenađenja ako filter vrati npr. 200 podudaranja
     # - suzi filter (ili klikni "Prikaži još") ako treba dodati više odjednom.
-    _neprikazani_dodani = [row for row in filtrirano[:broj_prikaza] if row.get("id") not in ids_odabranih]
+    def _jedinica_ima_slobodno(_j):
+        if _j["tip"] == "skupina":
+            return any(_s.get("id") not in ids_odabranih for _s in _j["stavke"])
+        return _j["glavni"].get("id") not in ids_odabranih
+
+    _neprikazani_dodani = [j for j in filtrirano[:broj_prikaza] if _jedinica_ima_slobodno(j)]
     if _neprikazani_dodani:
         if st.button(f"➕ Dodaj sve prikazane ({len(_neprikazani_dodani)})", key="tb_dodaj_sve_prikazane"):
-            for row in _neprikazani_dodani:
-                dodaj_zadatak(row)
+            for j in _neprikazani_dodani:
+                dodaj_jedinicu(j, ids_odabranih)
             st.rerun()
 
-    for row in filtrirano[:broj_prikaza]:
+    for _jed in filtrirano[:broj_prikaza]:
+        row = _jed["glavni"]
+        if _jed["tip"] == "skupina":
+            with st.container(border=True):
+                _slobodne = [s for s in _jed["stavke"] if s.get("id") not in ids_odabranih]
+                st.markdown(
+                    f"📦 `{row.get('id','')}` · {row.get('cjelina','')} · {row.get('tezina','')} · "
+                    f"skupina od {len(_jed['stavke'])} stavki"
+                    + (" · ✅ sve dodano" if not _slobodne else "")
+                )
+                st.markdown(row.get("tekst_zadatka_latex", ""))
+                _izabrane_ids = set()
+                for _i_s, _s in enumerate(_jed["stavke"]):
+                    _sc1, _sc2 = st.columns([1, 14])
+                    _zauzeta = _s.get("id") in ids_odabranih
+                    with _sc1:
+                        _kv = st.checkbox(
+                            slovo_stavke(_i_s), value=not _zauzeta, disabled=_zauzeta,
+                            key=f"tbst_{_s.get('id')}_{int(_zauzeta)}",
+                            help="Kvačica = stavka ulazi u zadatak. Na radnom materijalu se slova uvijek broje od a).",
+                        )
+                    with _sc2:
+                        st.markdown(("✅ " if _zauzeta else "") + (_s.get("tekst_zadatka_latex", "") or ""))
+                    if _kv and not _zauzeta:
+                        _izabrane_ids.add(_s.get("id"))
+                if row.get("slika_zadana") == "da" and row.get("slika_putanja", "").strip():
+                    _slika_bytes = dohvati_sliku_bytes(row["slika_putanja"].strip())
+                    if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
+                        st.image(_slika_bytes, width=130)
+                if not _slobodne:
+                    st.button("✅ Već dodano", key=f"add_{row.get('id')}", disabled=True)
+                else:
+                    _tekst_gumba = (
+                        f"➕ Dodaj skupinu ({len(_izabrane_ids)} od {len(_jed['stavke'])} stavki)"
+                        if len(_izabrane_ids) > 1 else
+                        ("➕ Dodaj odabranu stavku (uvod + stavka)" if len(_izabrane_ids) == 1 else "➕ Odaberi barem jednu stavku")
+                    )
+                    if st.button(_tekst_gumba, key=f"add_{row.get('id')}", disabled=not _izabrane_ids):
+                        dodaj_jedinicu(_jed, ids_odabranih, samo_stavke_ids=_izabrane_ids)
+                        st.rerun()
+            continue
         with st.container(border=True):
             _vec_dodan = row.get("id") in ids_odabranih
             _oznaka_dodano = "✅ " if _vec_dodan else ""
@@ -710,6 +818,9 @@ with col_odabrano:
                 st.markdown(
                     (z["tekst"][:220] + "…") if len(z["tekst"]) > 220 else z["tekst"]
                 )
+                if z.get("stavke"):
+                    for _i_st, _st in enumerate(z["stavke"]):
+                        st.markdown(f"**{slovo_stavke(_i_st)}** {_st.get('tekst_zadatka_latex', '')}")
                 if z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
                     st.markdown(prikazi_opcije_markdown(z["ponudjeni_odgovori"]))
                     z["prikazi_opcije"] = st.checkbox(
@@ -887,6 +998,7 @@ if st.session_state.odabrani:
         _t = 1.0
         if len(_z_proc.get("tekst", "") or "") > 250:
             _t += 0.5
+        _t += 0.4 * len(_z_proc.get("stavke") or [])
         if _z_proc.get("slika_putanja"):
             _t += 1.0
         if _z_proc.get("tip_zadatka") == "visestruki_izbor":
@@ -992,6 +1104,11 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
         tip_z = (z.get("tip_zadatka") or "").strip()
         kategorije_tex = izgradi_kategorije_tex(z.get("kategorije") or {})
 
+        if z.get("stavke"):
+            # Skupina: uvod je već escapiran gore; blok stavki a), b), c) dodaje se NAKON
+            # escapiranja (sadrži prave LaTeX naredbe) - isti obrazac kao izgradi_opcije_blok.
+            tekst += izgradi_stavke_blok(z["stavke"], escape=escape_outside_math)
+
         if z.get("prikazi_opcije", True) and z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
             # Lokalna kopija (ne diramo spremljeni z["ponudjeni_odgovori"]) - mamac
             # se dodaje samo za OVO generiranje, profesor ga može uključiti/isključiti
@@ -1010,7 +1127,9 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
         if ukljuci_rjesenja:
             rjesenje_raw = str(z.get("rjesenje") or "").strip()
             konacan_raw = str(z.get("konacan_odgovor") or "").strip()
-            if rjesenje_raw or konacan_raw:
+            if z.get("stavke"):
+                rjesenje_tex, konacan_tex = izgradi_rjesenja_blok(z["stavke"], escape=escape_outside_math)
+            elif rjesenje_raw or konacan_raw:
                 rjesenje_tex = escape_outside_math(rjesenje_raw) if rjesenje_raw else "\\textit{Puni postupak nije unesen u bazu.}"
                 konacan_tex = escape_outside_math(konacan_raw)
             else:
@@ -1050,6 +1169,9 @@ def pronadji_neuparene_dolare(zadaci_odabrani):
         for naziv_polja, sadrzaj in polja_za_provjeru:
             if broj_dolara(sadrzaj) % 2 != 0:
                 problemi.append((i, zid, naziv_polja, sadrzaj))
+        if z.get("stavke"):
+            for oznaka, polje, sadrzaj in sve_stavke_dolari_neuparene(z["stavke"], broj_dolara):
+                problemi.append((i, zid, f"stavka {oznaka} ({polje})", sadrzaj))
     return problemi
 
 

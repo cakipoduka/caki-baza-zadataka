@@ -22,7 +22,7 @@ ULOGA_STAVKA = "stavka"
 # Stavka nasljeđuje od skupine ako joj je polje prazno (npr. cjelina, potpoglavlje).
 NASLJEDNA_POLJA = [
     "izvor_tip", "izvor_naziv", "godina", "razina", "razred", "kategorija",
-    "cjelina", "potpoglavlje", "biblioteka_izvora", "tezina",
+    "cjelina", "potpoglavlje", "kljucne_rijeci", "biblioteka_izvora", "tezina",
 ]
 
 
@@ -152,3 +152,210 @@ def nadji_moguce_duplikate(rows):
         if k:
             po_izrazu.setdefault(k, []).append(_s(r.get("id")))
     return [ids for ids in po_izrazu.values() if len(ids) > 1]
+
+
+
+# ---------------------------------------------------------------------------
+# UVOZ: ravna lista Claudeovih objekata -> jedinice za upis (v2, 10.10.2026.)
+# ---------------------------------------------------------------------------
+# Claude (vidi EXTRACTION_SYSTEM_PROMPT, točka 1b) vraća RAVNU listu: objekt s
+# uloga="skupina", iza njega objekti uloga="stavka" s roditelj_privremeni_broj = privremeni_broj
+# skupine; svi ostali su uloga="samostalan" (ili prazno). Ova funkcija to slaže u jedinice
+# i ispravlja uobičajene Claudeove pogreške, a NIKAD ne gubi zadatak.
+
+def _uloga_claude(z):
+    u = _s(z.get("uloga")).lower()
+    return u if u in (ULOGA_SKUPINA, ULOGA_STAVKA) else ULOGA_SAMOSTALAN
+
+
+def _popuni_prazno_iz(cilj, izvor, polja):
+    for p in polja:
+        if not _s(cilj.get(p)) and _s(izvor.get(p)):
+            cilj[p] = izvor[p]
+
+
+def pripremi_jedinice(zadaci, log=None):
+    """Vraća listu jedinica redoslijedom iz ulaza:
+       {"tip": "samostalan", "z": zadatak}
+       {"tip": "skupina", "skupina": zadatak, "stavke": [zadatak, ...]}   (uvijek >= 2 stavke)
+    Pravila:
+      - stavka bez postojeće skupine (roditelj_privremeni_broj ne postoji)  -> samostalan + upozorenje
+      - skupina s 0 stavki -> samostalan + upozorenje (njen tekst je samo uvod, pa se označi za provjeru)
+      - skupina s 1 stavkom -> spaja se u JEDAN samostalan zadatak (uvod + stavka)
+      - stavke dobivaju (kopiraju) cjelinu, potpoglavlje, kategoriju, ključne riječi i težinu od skupine
+        ako su prazni - da ostatak aplikacije, koji čita ta polja po retku, radi bez izmjena.
+    Ulazni rječnici se ne mijenjaju (radi se na kopijama)."""
+    zadaci = [dict(z) for z in zadaci]
+    skupine = {}
+    for z in zadaci:
+        pb = _s(z.get("privremeni_broj"))
+        if _uloga_claude(z) == ULOGA_SKUPINA and pb and pb not in skupine:
+            skupine[pb] = z
+    djeca = {pb: [] for pb in skupine}
+    for z in zadaci:
+        if _uloga_claude(z) == ULOGA_STAVKA:
+            rod = _s(z.get("roditelj_privremeni_broj"))
+            if rod in djeca:
+                djeca[rod].append(z)
+
+    def upozori(poruka):
+        if log:
+            log(poruka)
+
+    jedinice = []
+    spojene = set()       # id() stavki koje su već spojene sa svojom (jedinom) skupinom
+    for z in zadaci:
+        if id(z) in spojene:
+            continue
+        u = _uloga_claude(z)
+        pb = _s(z.get("privremeni_broj"))
+        if u == ULOGA_SAMOSTALAN:
+            jedinice.append({"tip": ULOGA_SAMOSTALAN, "z": z})
+        elif u == ULOGA_STAVKA:
+            if _s(z.get("roditelj_privremeni_broj")) in djeca:
+                continue                                    # obradit će se uz svoju skupinu
+            upozori(f"⚠️ Stavka #{pb} nema skupinu (roditelj '{_s(z.get('roditelj_privremeni_broj'))}') - "
+                    "upisana kao samostalan zadatak.")
+            z["uloga"] = ULOGA_SAMOSTALAN
+            z["status_provjere"] = (_s(z.get("status_provjere")) + "; " if _s(z.get("status_provjere")) else "") + \
+                "stavka bez skupine - provjeriti uvod zadatka"
+            jedinice.append({"tip": ULOGA_SAMOSTALAN, "z": z})
+        else:  # skupina
+            if skupine.get(pb) is not z:
+                z["uloga"] = ULOGA_SAMOSTALAN              # duplikat oznake skupine - ne gubi se
+                jedinice.append({"tip": ULOGA_SAMOSTALAN, "z": z})
+                continue
+            st = djeca[pb]
+            if not st:
+                upozori(f"⚠️ Skupina #{pb} nema nijednu stavku - upisana kao samostalan zadatak (provjeri).")
+                z["uloga"] = ULOGA_SAMOSTALAN
+                z["status_provjere"] = (_s(z.get("status_provjere")) + "; " if _s(z.get("status_provjere")) else "") + \
+                    "skupina bez stavki - provjeriti"
+                jedinice.append({"tip": ULOGA_SAMOSTALAN, "z": z})
+            elif len(st) == 1:
+                s = st[0]
+                upozori(f"ℹ️ Skupina #{pb} ima samo jednu stavku - spojeno u jedan zadatak.")
+                _popuni_prazno_iz(s, z, NASLJEDNA_POLJA + ["slika_zadana", "slika_url", "slika_putanja", "vizualni_potencijal"])
+                s["tekst_zadatka_latex"] = f"{_s(z.get('tekst_zadatka_latex'))} {_s(s.get('tekst_zadatka_latex'))}".strip()
+                s["uloga"] = ULOGA_SAMOSTALAN
+                spojene.add(id(s))
+                jedinice.append({"tip": ULOGA_SAMOSTALAN, "z": s})
+            else:
+                for s in st:
+                    _popuni_prazno_iz(s, z, NASLJEDNA_POLJA)
+                jedinice.append({"tip": ULOGA_SKUPINA, "skupina": z, "stavke": st})
+    return jedinice
+
+
+# ---------------------------------------------------------------------------
+# UI POMOĆNE FUNKCIJE (v3, 10.10.2026.) - pregled/uređivanje i Test Builder
+# ---------------------------------------------------------------------------
+
+def oznaka_za_popis(row, indeks_stavke=None):
+    """Prefiks za popis zadataka u aplikaciji: 📦 za skupinu, '↳ a)' za stavku, '' za ostalo."""
+    u = uloga_retka(row)
+    if u == ULOGA_SKUPINA:
+        return "📦 "
+    if u == ULOGA_STAVKA:
+        o = _s(row.get("oznaka_stavke"))
+        return f"↳ {o} " if o else "↳ "
+    return ""
+
+
+def stavke_skupine(rows, skupina_id):
+    """Stavke (redovi) jedne skupine, sortirane po oznaka_stavke."""
+    sid = _s(skupina_id)
+    st = [r for r in rows if uloga_retka(r) == ULOGA_STAVKA and _s(r.get("roditelj_id")) == sid]
+    return sorted(st, key=lambda x: _oznaka_sort(x.get("oznaka_stavke")))
+
+
+def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit=""):
+    """Filter Test Buildera na razini JEDINICE (samostalan ili skupina+stavke).
+    Cjelina/potpoglavlje/težina: prolazi ako ih ima skupina ILI bilo koja stavka.
+    Tekst: traži se u tekstu i ključnim riječima skupine i svih stavki (pa se skupina
+    nađe i kad se traži izraz iz podzadatka)."""
+    redovi = [j["glavni"]] + list(j.get("stavke", []))
+
+    def bilo_koji(polje, dopusteno):
+        return any(_s(r.get(polje)) in dopusteno for r in redovi)
+
+    if f_cjelina and not bilo_koji("cjelina", f_cjelina):
+        return False
+    if f_potpoglavlje and not bilo_koji("potpoglavlje", f_potpoglavlje):
+        return False
+    if f_tezina and not bilo_koji("tezina", f_tezina):
+        return False
+    if upit:
+        u = upit.lower()
+        if not any(u in _s(r.get("tekst_zadatka_latex")).lower() or u in _s(r.get("kljucne_rijeci")).lower()
+                   for r in redovi):
+            return False
+    return True
+
+
+def spoji_u_samostalan(skupina, stavka):
+    """Jedna odabrana stavka + uvod skupine -> običan samostalan redak (uvod + stavka),
+    s poljima stavke (rješenje, bodovi...) i nasljeđenom klasifikacijom/slikom skupine."""
+    out = nasljedi(skupina, stavka)
+    for p in ("slika_zadana", "slika_url", "slika_putanja"):
+        if not _s(out.get(p)) and _s(skupina.get(p)):
+            out[p] = skupina[p]
+    out["tekst_zadatka_latex"] = puni_tekst(skupina, stavka)
+    out["uloga"] = ULOGA_SAMOSTALAN
+    return out
+
+
+def stavke_za_unos(stavke):
+    """Stavke -> lagani JSON-siguran oblik za Test Builder (session_state + nacrt u Sheetu)."""
+    return [{
+        "id": _s(s.get("id")),
+        "oznaka_stavke": _s(s.get("oznaka_stavke")),
+        "tekst_zadatka_latex": _s(s.get("tekst_zadatka_latex")),
+        "rjesenje": _s(s.get("rjesenje")),
+        "konacan_odgovor": _s(s.get("konacan_odgovor")),
+    } for s in stavke]
+
+
+def zbroji_bodove(stavke):
+    """Zbroj max_bodovi stavki kao tekst ('' ako nijedna nema broj). Decimalni zarez dopušten."""
+    ukupno, ima = 0.0, False
+    for s in stavke:
+        v = _s(s.get("max_bodovi")).replace(",", ".")
+        if v:
+            try:
+                ukupno += float(v)
+                ima = True
+            except ValueError:
+                pass
+    if not ima:
+        return ""
+    return str(int(ukupno)) if ukupno == int(ukupno) else str(ukupno).replace(".", ",")
+
+
+def izgradi_rjesenja_blok(stavke, escape=lambda s: s):
+    """(rjesenje_tex, konacan_tex) za skupinu u sekciji 'Rješenja': po stavci a), b), c)...
+    Oznake su prave LaTeX naredbe pa se dodaju NAKON escapiranja sadržaja."""
+    dijelovi, konacni, ima_nesto = [], [], False
+    for i, s in enumerate(stavke):
+        o = f"\\textbf{{{slovo(i)}}}"
+        rj, ko = _s(s.get("rjesenje")), _s(s.get("konacan_odgovor"))
+        if rj or ko:
+            ima_nesto = True
+        dijelovi.append(f"{o}~{escape(rj)}" if rj else f"{o}~\\textit{{---}}")
+        if ko:
+            konacni.append(f"{o}~{escape(ko)}")
+    if not ima_nesto:
+        return "\\textit{Rješenje se dodaje naknadno.}", ""
+    rjesenje_tex = "\\par\\noindent ".join(dijelovi) if any(_s(s.get("rjesenje")) for s in stavke) \
+        else "\\textit{Puni postupak nije unesen u bazu.}"
+    return rjesenje_tex, "\\quad ".join(konacni)
+
+
+def sve_stavke_dolari_neuparene(stavke, broj_dolara):
+    """[(oznaka, polje, sadrzaj)] za stavke s neparnim brojem $ (isti test kao za obične zadatke)."""
+    out = []
+    for i, s in enumerate(stavke):
+        for polje, kljuc in (("tekst", "tekst_zadatka_latex"), ("rješenje", "rjesenje"), ("konačan odgovor", "konacan_odgovor")):
+            if broj_dolara(s.get(kljuc, "")) % 2 != 0:
+                out.append((slovo(i), polje, s.get(kljuc, "")))
+    return out

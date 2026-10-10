@@ -53,6 +53,24 @@ try:
 except Exception:
     _AI_OK = False
 
+# Skupine zadataka (zajednički uvod + stavke a), b), c); 10.10.2026.). Zaštićen import: ako modul
+# nedostaje ili u Sheetu još nema stupaca uloga/roditelj_id/oznaka_stavke, aplikacija radi kao prije.
+try:
+    from skupine_zadataka import (
+        ULOGA_SAMOSTALAN,
+        ULOGA_SKUPINA,
+        ULOGA_STAVKA,
+        NASLJEDNA_POLJA,
+        oznaka_za_popis,
+        puni_tekst,
+        slovo as slovo_stavke,
+        stavke_skupine,
+        uloga_retka,
+    )
+    _SKUPINE_OK = True
+except Exception:
+    _SKUPINE_OK = False
+
 # Tipovi datoteka koje uploaderi za OCR ulaz prihvaćaju - PDF i uobičajeni formati slika
 # (npr. screenshot zaslona zadataka/rješenja). Mathpix OCR grana se automatski po ekstenziji
 # u pipeline.mathpix_ocr_datoteka() - ovdje samo dopuštamo oba u Streamlit file_upload widgetu.
@@ -362,7 +380,139 @@ def _oznaci_zadatak(par, idx):
     _, row = par
     ima_sliku = "🖼️ " if _get_polje(row, idx, "slika_putanja").strip() else "　 "
     fragment = _get_polje(row, idx, "tekst_zadatka_latex")[:70]
-    return f"{ima_sliku}#{_get_polje(row, idx, 'id')} ({_get_polje(row, idx, 'cjelina')}) — {fragment}..."
+    prefiks = ""
+    if _SKUPINE_OK:
+        prefiks = oznaka_za_popis({
+            "uloga": _get_polje(row, idx, "uloga"), "oznaka_stavke": _get_polje(row, idx, "oznaka_stavke"),
+        })
+    return f"{ima_sliku}{prefiks}#{_get_polje(row, idx, 'id')} ({_get_polje(row, idx, 'cjelina')}) — {fragment}..."
+
+
+def _redak_u_rjecnik(row, idx):
+    """Redak Sheeta (lista) -> rječnik {naziv_stupca: vrijednost}."""
+    return {h: (row[i] if i < len(row) else "") for h, i in idx.items()}
+
+
+def _blok_skupine(row, broj_retka, idx, redovi):
+    """Gornji dio desne kolone za SKUPINU (uvod + popis stavki) ili STAVKU (uvod roditelja,
+    oznaka, odvajanje od skupine). Za obične zadatke ne prikazuje ništa."""
+    if not _SKUPINE_OK or redovi is None or "uloga" not in idx:
+        return
+    r = _redak_u_rjecnik(row, idx)
+    uloga = uloga_retka(r)
+    if uloga == ULOGA_SAMOSTALAN:
+        return
+    svi = [_redak_u_rjecnik(x, idx) for x in redovi]
+    broj_po_id = {d.get("id"): br for br, d in enumerate(svi, start=2) if d.get("id")}
+
+    if uloga == ULOGA_SKUPINA:
+        stavke = stavke_skupine(svi, r.get("id"))
+        st.info(
+            f"📦 **Skupina zadataka** — tekst ispod je zajednički UVOD; podzadaci su zasebni retci (stavke). "
+            f"Broj stavki: **{len(stavke)}**."
+        )
+        if not stavke:
+            st.warning("⚠️ Ova skupina nema nijednu stavku (možda su obrisane ili im je roditelj_id pogrešan).")
+        lista_nav = [broj_retka] + [broj_po_id[s["id"]] for s in stavke if s.get("id") in broj_po_id]
+        for i, s in enumerate(stavke):
+            br_s = broj_po_id.get(s.get("id"))
+            c1, c2 = st.columns([6, 1])
+            with c1:
+                st.markdown(f"**{slovo_stavke(i)}** `{s.get('id')}` {s.get('tekst_zadatka_latex', '')}")
+                if s.get("rjesenje") or s.get("konacan_odgovor"):
+                    st.caption(f"Rješenje: {s.get('konacan_odgovor') or '✓ postupak unesen'}")
+                else:
+                    st.caption("Rješenje: —")
+            with c2:
+                if br_s and st.button("✏️ Uredi", key=f"otvori_stavku_{br_s}"):
+                    st.session_state["provjera_uredi_broj_retka"] = br_s
+                    st.session_state["provjera_lista_redoslijeda"] = lista_nav
+                    st.rerun()
+        if stavke:
+            st.caption(
+                "Cjelina/potpoglavlje/težina stavki su kopija iz skupine (da ostale stranice rade bez izmjena). "
+                "Ako ih promijeniš na skupini, prvo klikni '💾 Spremi', pa ovdje prepiši na stavke."
+            )
+            if st.button("↧ Prepiši kategoriju, cjelinu, potpoglavlje, težinu i biblioteku skupine na sve stavke",
+                         key=f"propagiraj_{broj_retka}"):
+                polja = [p for p in ("kategorija", "cjelina", "potpoglavlje", "tezina", "biblioteka_izvora", "kljucne_rijeci")
+                         if p in idx]
+                azuriranja = []
+                for s in stavke:
+                    br_s = broj_po_id.get(s.get("id"))
+                    if not br_s:
+                        continue
+                    for p in polja:
+                        azuriranja.append({"range": f"{_col_letter(p)}{br_s}", "values": [[r.get(p, "")]]})
+                with st.spinner("Prepisujem na stavke..."):
+                    try:
+                        ws_zadaci.batch_update(azuriranja)
+                    except Exception as e:
+                        st.error(f"Greška: {e}")
+                        st.stop()
+                st.success(f"✅ Prepisano na {len(stavke)} stavki ({', '.join(polja)}).")
+                _ucitaj_zadatke_za_pretragu.clear()
+        st.divider()
+        return
+
+    # --- stavka ---
+    rod = svi[broj_po_id[r.get("roditelj_id")] - 2] if r.get("roditelj_id") in broj_po_id else None
+    if rod is None:
+        st.warning(
+            f"⚠️ Ova stavka ima roditelj_id '{r.get('roditelj_id')}' koji ne postoji u bazi - tretira se kao "
+            "samostalan zadatak (uvod joj nedostaje)."
+        )
+    else:
+        br_rod = broj_po_id[rod["id"]]
+        st.info(f"↳ **Stavka {r.get('oznaka_stavke') or ''}** skupine `{rod['id']}`. Uvod skupine:")
+        st.markdown(rod.get("tekst_zadatka_latex", ""))
+        bratija = stavke_skupine(svi, rod["id"])
+        lista_nav = [br_rod] + [broj_po_id[s["id"]] for s in bratija if s.get("id") in broj_po_id]
+        if st.button("⬆️ Otvori skupinu", key=f"otvori_skupinu_{broj_retka}"):
+            st.session_state["provjera_uredi_broj_retka"] = br_rod
+            st.session_state["provjera_lista_redoslijeda"] = lista_nav
+            st.rerun()
+
+    novi_oznaka = st.text_input(
+        "Oznaka stavke (određuje redoslijed: 1, 2, 3... ili a, b, c...)", value=r.get("oznaka_stavke", ""),
+        key=f"oznaka_stavke_{broj_retka}",
+    )
+    if st.button("💾 Spremi oznaku stavke", key=f"spremi_oznaku_{broj_retka}"):
+        try:
+            ws_zadaci.update(range_name=f"{_col_letter('oznaka_stavke')}{broj_retka}", values=[[novi_oznaka.strip()]])
+        except Exception as e:
+            st.error(f"Greška: {e}")
+            st.stop()
+        st.success("✅ Oznaka spremljena.")
+        _ucitaj_zadatke_za_pretragu.clear()
+
+    if rod is not None:
+        with st.expander("✂️ Odvoji od skupine (postaje samostalan zadatak)"):
+            st.caption(
+                "Za slučaj da je Claude pogrešno povezao zadatak sa skupinom. Stavka postaje običan zadatak, "
+                "a tekst joj postaje 'uvod + stavka'. Skupina i ostale stavke se ne diraju."
+            )
+            if st.checkbox("Potvrđujem odvajanje", key=f"potvrdi_odvoji_{broj_retka}") and st.button(
+                "✂️ Odvoji", key=f"odvoji_{broj_retka}"
+            ):
+                novi_tekst = puni_tekst(rod, r)
+                azuriranja = [
+                    {"range": f"{_col_letter('tekst_zadatka_latex')}{broj_retka}", "values": [[novi_tekst]]},
+                    {"range": f"{_col_letter('tekst_zadatka_mathjax')}{broj_retka}",
+                     "values": [[novi_tekst.replace("\\\\", "<br>")]]},
+                    {"range": f"{_col_letter('uloga')}{broj_retka}", "values": [[""]]},
+                    {"range": f"{_col_letter('roditelj_id')}{broj_retka}", "values": [[""]]},
+                    {"range": f"{_col_letter('oznaka_stavke')}{broj_retka}", "values": [[""]]},
+                ]
+                try:
+                    ws_zadaci.batch_update(azuriranja)
+                except Exception as e:
+                    st.error(f"Greška: {e}")
+                    st.stop()
+                st.success("✅ Stavka je sada samostalan zadatak.")
+                _ucitaj_zadatke_za_pretragu.clear()
+                st.rerun()
+    st.divider()
 
 
 def _odaberi_zadatak_pretragom(headers, redovi, kljuc_sufiks):
@@ -482,7 +632,7 @@ def _prikazi_usporedbu(headers, redovi):
             st.rerun()
 
 
-def _forma_uredi_zadatak(row, broj_retka, idx):
+def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
     """Desna kolona spojene stranice '🔍✏️ Provjera i uređivanje zadataka' (11.9.2026.) -
     formular za uređivanje JEDNOG već odabranog zadatka: tekst/rješenje/uputa, ponuđeni
     odgovori, kategorizacija, slika. Izdvojeno iz prijašnje samostalne stranica_uredi_zadatak()
@@ -496,6 +646,8 @@ def _forma_uredi_zadatak(row, broj_retka, idx):
         f"Kategorija: {get(row, 'kategorija') or '—'} · Cjelina: {get(row, 'cjelina') or '—'} · "
         f"Potpoglavlje: {get(row, 'potpoglavlje') or '—'} · Tip: {get(row, 'tip_zadatka') or '—'}"
     )
+
+    _blok_skupine(row, broj_retka, idx, redovi)
 
     with st.expander("👁️ Puni tekst zadatka (renderirano, ne sirovi LaTeX)", expanded=True):
         st.write(get(row, "tekst_zadatka_latex") or "*(prazno)*")
@@ -873,6 +1025,13 @@ def _forma_uredi_zadatak(row, broj_retka, idx):
         "Brisanje je TRAJNO - cijeli redak se briše iz baze (Google Sheets), nema undo. "
         "Koristi samo za zadatke koji su duplikat, netočni ili greškom uneseni."
     )
+    if _SKUPINE_OK and redovi is not None and get(row, "uloga").strip().lower() == "skupina":
+        _br_st = len(stavke_skupine([_redak_u_rjecnik(_x, idx) for _x in redovi], get(row, "id")))
+        if _br_st:
+            st.error(
+                f"⚠️ Ovo je SKUPINA s {_br_st} stavki. Brisanjem skupine stavke ostaju u bazi bez uvoda "
+                "(prikazivat će se kao samostalni zadaci s upozorenjem). Prvo obriši ili odvoji stavke."
+            )
     potvrda_brisanja = st.checkbox(
         f"Potvrđujem da želim trajno izbrisati zadatak #{get(row, 'id') or broj_retka}",
         key=f"potvrdi_brisanje_{broj_retka}",
@@ -1079,11 +1238,23 @@ def stranica_provjera_i_uredi():
             help="Zadaci za koje AI kontrola (DeepSeek) ima prijedloge ispravaka koji još čekaju odluku.",
         )
 
+        f_sakrij_stavke = False
+        if _SKUPINE_OK and "uloga" in idx:
+            f_sakrij_stavke = st.checkbox(
+                "📦 Sakrij stavke skupina (vidi ih unutar skupine)", value=True, key="filter_sakrij_stavke_uredi",
+                help="Skupina zadataka (uvod + a), b), c)) prikazuje se kao jedan redak, a njezine stavke se "
+                "otvaraju iz desne kolone. Kad upišeš tekst u pretragu, stavke se prikazuju uvijek.",
+            )
+
         upit = st.text_input("Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
 
         _filtri_aktivni = bool(
             f_cjelina or f_potpoglavlje or f_tip or f_biblioteka or f_samo_provjera or f_samo_ai or upit.strip()
         )
+        if _SKUPINE_OK and "uloga" in idx and not _filtri_aktivni:
+            _br_skupina = sum(1 for _r in redovi if get(_r, "uloga").strip().lower() == "skupina")
+            if _br_skupina:
+                st.caption(f"📦 U bazi je {_br_skupina} skupina zadataka (uvod + stavke) - odaberi filter da ih vidiš.")
 
         if not _filtri_aktivni:
             st.caption(
@@ -1105,6 +1276,8 @@ def stranica_provjera_i_uredi():
                     continue
                 if f_samo_ai and get(_row, "id") not in _ai_ids:
                     continue
+                if f_sakrij_stavke and not _upit_lower and get(_row, "uloga").strip().lower() == "stavka":
+                    continue
                 if _upit_lower and _upit_lower not in get(_row, "id").lower() \
                         and _upit_lower not in get(_row, "tekst_zadatka_latex").lower():
                     continue
@@ -1119,7 +1292,7 @@ def stranica_provjera_i_uredi():
                 # od početka.
                 _filter_potpis = (
                     tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tip)),
-                    tuple(sorted(f_biblioteka)), f_samo_provjera, f_samo_ai, _upit_lower,
+                    tuple(sorted(f_biblioteka)), f_samo_provjera, f_samo_ai, _upit_lower, f_sakrij_stavke,
                 )
                 if st.session_state.get("uredi_filter_potpis") != _filter_potpis:
                     st.session_state["uredi_filter_potpis"] = _filter_potpis
@@ -1161,6 +1334,10 @@ def stranica_provjera_i_uredi():
                         st.markdown(
                             (_tekst_pregled[:300] + "…") if len(_tekst_pregled) > 300 else _tekst_pregled
                         )
+                        if _SKUPINE_OK and get(_odabrani_par[1], "uloga").strip().lower() == "skupina":
+                            _svi_p = [_redak_u_rjecnik(_x, idx) for _x in redovi]
+                            for _i_p, _s_p in enumerate(stavke_skupine(_svi_p, get(_odabrani_par[1], "id"))):
+                                st.markdown(f"**{slovo_stavke(_i_p)}** {_s_p.get('tekst_zadatka_latex', '')}")
 
         st.divider()
         st.subheader("⚠️ Zadaci za provjeru")
@@ -1262,7 +1439,7 @@ def stranica_provjera_i_uredi():
                     prikazi_ai_prijedloge_za_zadatak(
                         sheet, ws_zadaci, get(odabrani_row, "id"), nakon_izmjene=_nakon_ai_izmjene,
                     )
-                _forma_uredi_zadatak(odabrani_row, odabrani_broj_retka, idx)
+                _forma_uredi_zadatak(odabrani_row, odabrani_broj_retka, idx, redovi=redovi)
 
 
 # ============================================================

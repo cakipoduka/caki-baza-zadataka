@@ -23,6 +23,7 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from teorija_markup import teorija_u_ptx_odlomke
 from filtriraj_zadatke_za_skriptu import filtriraj_zadatke_za_skriptu
+from skupine_zadataka import NOVI_STUPCI, pripremi_jedinice
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -75,6 +76,13 @@ ZADACI_HEADERS = [
     # pretragu/organizaciju baze. DODAN NA KRAJU popisa (isti razlog kao gornja tri polja) -
     # fizički dodaj kao NOVI zadnji stupac u tabu 'Zadaci'.
     "biblioteka_izvora",
+    # 🆕 (10.10.2026.) SKUPINE ZADATAKA - zadatak s podzadacima 1), 2), 3)... sprema se kao JEDAN redak
+    # skupine (uloga="skupina", u tekst_zadatka_latex samo zajednički uvod) + po jedan redak za SVAKU
+    # stavku (uloga="stavka", roditelj_id = id skupine, oznaka_stavke = "1", "2", "a"...). Prazna uloga =
+    # samostalan zadatak (svi postojeći redci). DODANA NA KRAJU popisa (isti razlog kao gornja polja) -
+    # fizički dodaj kao NOVE ZADNJE stupce u tabu 'Zadaci', TIM REDOSLIJEDOM, odmah iza biblioteka_izvora.
+    # Vidi skupine_zadataka.py.
+    "uloga", "roditelj_id", "oznaka_stavke",
 ]
 
 SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
@@ -130,26 +138,26 @@ Dobit ćeš OCR tekst (Mathpix Markdown) ispita, i po mogućnosti tekst s rješe
 
 Tvoj zadatak:
 1. Razdvoji ispit na pojedinačne zadatke (zadrži izvorni redni broj u polju privremeni_broj).
-1b. AKO jedan zadatak sadrži VIŠE NUMERIRANIH VARIJANTI istog problema s različitim ulaznim
-vrijednostima (čest slučaj u zbirkama, npr. 'Riješi pravokutni trokut ako je: 1) a=3, b=4  2) c=5, b=3
-3) c=21, a=2'), NE ostavljaj ih spojene u jednom zadatku - RAZDVOJI SVAKU VARIJANTU U POTPUNO
-SAMOSTALAN ZADATAK: ponovi zajednički uvodni tekst uz svaku varijantu tako da svaki proizvedeni
-zadatak ima cjelovit, samostojeći tekst_zadatka_latex (npr. 'Riješi pravokutni trokut ako je a=3, b=4.',
-zatim zaseban zadatak 'Riješi pravokutni trokut ako je c=5, b=3.', itd). Svaki takav pod-zadatak dobiva
-svoj privremeni_broj nastavkom slovom (npr. '5a', '5b', '5c') da se zna da dijele isti izvorni broj.
-Ako rješenja za pojedine varijante postoje odvojeno u tekstu rješenja, pridijeli svakoj svoje; ako ne,
-polje rjesenje ostaje prazno za tu varijantu (vidi točku 3).
-1c. AKO jedan zadatak ima IZRIČITO OZNAČENE PODZADATKE (npr. a), b), c)... ili A), B), C)...) koji
-dijele ZAJEDNIČKI UVOD/KONTEKST (istu zadanu funkciju, tijelo, sliku, tekst), tretiraj ih ANALOGNO
-točki 1b: RAZDVOJI SVAKI PODZADATAK U POTPUNO SAMOSTALAN ZADATAK - ponovi zajednički uvodni kontekst
-na početku tekst_zadatka_latex svakog podzadatka, zatim dodaj specifično pitanje tog podzadatka.
-Svaki dobiva privremeni_broj nastavkom IZVORNOM oznakom podzadatka (npr. za zadatak 7 s a)/b)
-dijelovima -> "7a", "7b" - koristi izvornu oznaku iz materijala, ne proizvoljan redoslijed). Rješenje/
-konačan odgovor pridijeli analogno točki 3, zasebno za svaki podzadatak ako su dana odvojeno. IZNIMKA:
-ako podzadatak b) suštinski OVISI o brojčanom rezultatu podzadatka a) (npr. "uvrsti rezultat iz a)
-u..."), ipak ih razdvoji u zasebne retke kao gore, ali u tekst_zadatka_latex podzadatka b) eksplicitno
-navedi taj rezultat kao zadanu vrijednost (izračunaj ga sam iz konteksta ako je to jednoznačno moguće)
-tako da svaki redak ostane potpuno samostalan i rješiv bez uvida u drugi redak.
+1b. SKUPINE I STAVKE. AKO jedan zadatak ima VIŠE PODZADATAKA ili NUMERIRANIH VARIJANTI koje dijele zajednički uvod
+(npr. 'Izračunaj: 1) ... 2) ... 3) ...', 'Riješi pravokutni trokut ako je: 1) a=3, b=4  2) c=5, b=3', zadatak s a), b), c)
+dijelovima nad istom funkcijom ili slikom, ili dva neovisna pitanja u istom zadatku), NEMOJ ponavljati uvod u svakom
+podzadatku. Umjesto toga vrati JEDAN objekt SKUPINE (uloga="skupina") i ODMAH iza njega po jedan objekt za SVAKU STAVKU
+(uloga="stavka"), redoslijedom kojim su u materijalu:
+ - SKUPINA: privremeni_broj = izvorni broj zadatka (npr. '8'); tekst_zadatka_latex = SAMO zajednički uvod/kontekst
+   (npr. 'Koliko znamenki ima broj:'; ako uvoda nema, prazan string ""); kategorija, cjelina, potpoglavlje, kljucne_rijeci,
+   tezina (težina većine stavki) popuni kao za svaki drugi zadatak; slika_zadana/slika_url popuni ako je slika zajednička
+   za sve stavke (točka 12). Skupina NEMA rjesenje ni konacan_odgovor.
+ - STAVKA: privremeni_broj = broj skupine + '.' + izvorna oznaka (npr. '8.1', '7.b'); roditelj_privremeni_broj =
+   privremeni_broj skupine; oznaka_stavke = izvorna oznaka podzadatka BEZ zagrade (npr. '1', '2', 'a', 'b');
+   tekst_zadatka_latex = SAMO tekst te stavke, BEZ uvoda (npr. '$2^{11} \\cdot 5^{11}$'); tezina TE stavke; te rjesenje,
+   tip_rjesenja_izvor, konacan_odgovor, max_bodovi, uputa, status_provjere, tip_zadatka i ponudjeni_odgovori po točkama
+   3, 8, 9, 10, 11, 13 i 14. Rješenja stavki traži po broju zadatka I oznaci stavke (npr. '8. 1) ...'). NE ponavljaj
+   kategoriju, cjelinu, potpoglavlje ni ključne riječi na stavci - nasljeđuje ih od skupine (izostavi ta polja).
+ - Ako podzadatak b) ovisi o brojčanom rezultatu podzadatka a), ipak ih ostavi kao stavke iste skupine, ali u tekstu
+   stavke b) eksplicitno navedi taj rezultat kao zadanu vrijednost (izračunaj ga sam samo ako je jednoznačno moguće).
+ - Skupina mora imati BAREM 2 stavke. Zadatak sa SAMO JEDNIM pitanjem (čak i ako ima dugačak uvod sa zadanim podacima,
+   npr. 'Ako je m=..., n=..., koliko je ...?') je običan zadatak: uloga="samostalan".
+ - Svaki običan zadatak ima uloga="samostalan".
 2. Za svaki zadatak izvuci ČIST TEKST PITANJA u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, bez naredbi za formatiranje cijelog dokumenta). VAŽNO: NE uključuj ponuđene odgovore A/B/C/D u ovo polje - oni idu zasebno, vidi točku 13.
 3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
 4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
@@ -167,8 +175,9 @@ VAŽNO: slika_zadana i vizualni_potencijal se međusobno isključuju - zadatak s
 13. ponudjeni_odgovori: SAMO za tip_zadatka="visestruki_izbor" - JSON lista ponuđenih odgovora BEZ oznaka A/B/C/D, redoslijedom kako se pojavljuju (npr. ["5", "4.6", "4.58", "4.573"]). Za sve ostale tipove zadataka, prazna lista [].
 14. konacan_odgovor: KRATAK, čist finalni odgovor, odvojen od punog postupka u polju rjesenje. Za visestruki_izbor: samo slovo točnog odgovora (npr. "C"). Za kratki_odgovor/prosireni_odgovor: kratka vrijednost (npr. "3", "1/2", "x=5"). Ako rjesenje nije dano (vidi točku 3), ostavi prazno.
 
-VAŽNO: Odgovori ISKLJUČIVO JSON listom objekata, bez ikakvog teksta prije/poslije, bez markdown ograda (bez ```). Svaki objekt neka ima točno ova polja:
-privremeni_broj, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor, uputa
+VAŽNO: Odgovori ISKLJUČIVO JSON listom objekata, bez ikakvog teksta prije/poslije, bez markdown ograda (bez ```). Čak i ako ne možeš povezati rješenja s numeracijom zadataka, svejedno vrati JSON listu zadataka (polje rjesenje ostavi prazno) - NIKAD ne odgovaraj objašnjenjem umjesto JSON-a. Svaki objekt neka ima ova polja:
+privremeni_broj, uloga, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, kljucne_rijeci, tezina, vizualni_potencijal, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, slika_zadana, slika_url, ponudjeni_odgovori, konacan_odgovor, uputa
+(uloga je "samostalan", "skupina" ili "stavka" - vidi točku 1b). Objekti uloge "stavka" imaju DODATNO roditelj_privremeni_broj i oznaka_stavke, a od ostalih polja SMIJU imati samo: tekst_zadatka_latex, tezina, rjesenje, tip_rjesenja_izvor, max_bodovi, status_provjere, tip_zadatka, ponudjeni_odgovori, konacan_odgovor, uputa, slika_zadana, slika_url (sve ostalo izostavi - odgovor ostaje kraći).
 
 KRITIČNO za ispravnost JSON-a: ako bilo koje polje sadrži navodnik (npr. zapis kuta u stupnjevima/minutama/sekundama poput 12°34'56", oznaka inča, ili citat unutar teksta zadatka), TAJ NAVODNIK MORAŠ escapeati kao \" unutar JSON stringa. Isto vrijedi za obrnutu kosu crtu (\\ -> \\\\) i nove retke unutar stringa (koristi \\n, ne stvarni prijelom retka). Jedan neescapean navodnik ili obrnuta kosa crta učini CIJELI JSON odgovor neispravnim i cijela obrada zadataka propadne - budi posebno pažljiv kod zapisa kutova i LaTeX izraza.
 """
@@ -1103,6 +1112,16 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
         # pouzdan znak stvarnog početka. Fallback na staro ponašanje ako regex ne nađe ništa
         # (rubni slučaj), da se ne pogorša postojeće ponašanje.
         match = re.search(r"\[\s*\{", raw_text)
+        if not match and "{" not in raw_text:
+            # Claude je za ovaj dio vratio SAMO objašnjenje (nema nijednog JSON objekta) - npr. "numeracija
+            # u rješenjima ne odgovara...". Prije se tu uzimala prva '[' iz teksta ("[]"), json.loads je
+            # padao s "Extra data" i rušio CIJELU obradu, uključujući uspješne dijelove. Sad se samo ovaj
+            # dio preskače, uz GLASNO upozorenje (u logu i u Log_obrada), a ostali dijelovi se spremaju.
+            if log:
+                log("❌ DIO ISPITA NIJE OBRAĐEN: Claude je vratio tekst umjesto JSON-a "
+                    f"('{raw_text[:120].strip()}...'). Taj dio je preskočen - provjeri koji zadaci nedostaju "
+                    "i ponovi obradu samo za njih.")
+            return []
         prvi_zagrada = match.start() if match else raw_text.find("[")
         if prvi_zagrada > 0:
             if log:
@@ -1262,54 +1281,97 @@ def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
         if log:
             log(f"⚠️ Backup nije uspio (baza je i dalje sigurna, samo bez dodatne kopije): {e}")
 
+# Strožа provjera duplikata za KRATKE stavke skupina (10.10.2026.): kod kratkih formula poput
+# "Pomnoži: $3^5 \cdot 3^7$" SequenceMatcher daje visoku sličnost i za RAZLIČITE zadatke
+# (zamijenjeni su samo brojevi), pa bi prag 0.85 tiho prebrisao tuđi redak. Za stavke čiji je
+# puni tekst (uvod + stavka) kraći od MIN_DULJINA_ZA_POUZDANU_USPOREDBU zato tražimo praktički
+# identičan tekst. Ne vrijedi za samostalne zadatke (njihovo ponašanje je ostalo isto kao prije).
+PRAG_SLICNOSTI_KRATKA_STAVKA = 0.98
+
+
 def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza,
                                 skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None,
                                 ogranici_po_cjelini=False, biblioteka_izvora=""):
     """
+    Upisuje zadatke u tab 'Zadaci' s detekcijom duplikata (isto ponašanje kao i prije za
+    samostalne zadatke) i, od 10.10.2026., podržava SKUPINE ZADATAKA:
+      - Claudeov izlaz se prvo složi u jedinice (skupina + stavke, ili samostalan) -
+        vidi pripremi_jedinice() u skupine_zadataka.py.
+      - Skupina = jedan redak (uloga='skupina') sa zajedničkim uvodom; stavke = zasebni retci
+        (uloga='stavka', roditelj_id = ID skupine, oznaka_stavke) s kopiranom cjelinom/potpoglavljem.
+      - Duplikati se traže PO STAVCI, uspoređujući "uvod + stavka" (retci skupina nikad nisu
+        kandidati, a postojeće stavke se uspoređuju s uvodom svoje skupine).
+      - Redak skupine se dodaje SAMO ako je barem jedna njezina stavka nova (inače bi ponovni
+        upload istog ispita stvarao prazne skupine).
+      - Ako tab 'Zadaci' nema stupce uloga/roditelj_id/oznaka_stavke (točno iza biblioteka_izvora),
+        a uvoz sadrži skupine, upis se PRIJE bilo kakvog pisanja prekida jasnom porukom. Bez skupina
+        sve radi kao prije.
+    Vraća (broj_dodanih, broj_azuriranih): broj_dodanih broji zadatke i stavke, ne retke skupina.
+
     ogranici_po_cjelini=False (zadano): usporedba svakog novog zadatka sa SVIM postojećim
     zadacima u bazi, kao dosad - najsigurnije, ali kod baze od 20-30 tisuća zadataka
-    najsporije (O(broj_novih x broj_postojecih) SequenceMatcher.ratio() poziva).
-
-    ogranici_po_cjelini=True: usporedba se ograničava SAMO na postojeće zadatke iz ISTE
-    cjeline (npr. "Trigonometrija") kao novi zadatak - jer bi dva zadatka koja su stvarni
-    duplikat gotovo uvijek trebala biti klasificirana u istu cjelinu. Ovo je red veličine
-    brže na velikoj bazi (dijeli posao otprilike na broj cjelina u šifrarniku), ALI nosi
-    mali rizik: ako Claude pri dvije odvojene obrade ISTOG zadatka (npr. slučajno
-    uploadan isti ispit dvaput) dodijeli RAZLIČITU cjelinu, taj duplikat neće biti
-    prepoznat i bit će dodan kao nov zadatak. Radi sigurnosti, postojeći zadaci BEZ
-    upisane cjeline (prazno polje - stariji/ručno dodani unosi) uvijek se uspoređuju sa
-    SVIM novim zadacima, bez obzira na ovu postavku - da migrirani/nekategorizirani
-    unosi ne postanu "slijepa točka" za detekciju duplikata.
+    najsporije. ogranici_po_cjelini=True: usporedba samo s postojećim zadacima iz ISTE cjeline
+    (+ onima bez upisane cjeline) - brže, uz mali rizik opisan u ranijim verzijama.
     """
     all_values = ws_zadaci.get_all_values()
+    headers = all_values[0] if all_values else []
     data_rows = all_values[1:]
+
+    jedinice = pripremi_jedinice(zadaci, log=log)
+    ima_skupine = any(j["tip"] == "skupina" for j in jedinice)
+    ima_nove_stupce = all(c in headers for c in NOVI_STUPCI)
+    if ima_nove_stupce:
+        for c in NOVI_STUPCI:
+            if headers.index(c) != ZADACI_HEADERS.index(c):
+                raise RuntimeError(
+                    f"Stupac '{c}' u tabu 'Zadaci' nije na očekivanom mjestu (očekivano: stupac broj "
+                    f"{ZADACI_HEADERS.index(c) + 1}, nađeno: {headers.index(c) + 1}). Stupci uloga, roditelj_id i "
+                    "oznaka_stavke moraju biti NOVI ZADNJI stupci, odmah iza 'biblioteka_izvora', tim redoslijedom."
+                )
+    elif ima_skupine:
+        raise RuntimeError(
+            "Ovaj ispit sadrži zadatke s podzadacima (skupine), a u tabu 'Zadaci' nedostaju stupci "
+            "uloga, roditelj_id i oznaka_stavke. Dodaj ih kao NOVE ZADNJE stupce (odmah iza 'biblioteka_izvora', "
+            "tim redoslijedom, zaglavlja točno kako piše) pa ponovi obradu. Ništa nije upisano."
+        )
 
     _idx_naziv = ZADACI_HEADERS.index("izvor_naziv")
     _idx_latex = ZADACI_HEADERS.index("tekst_zadatka_latex")
     _idx_cjelina = ZADACI_HEADERS.index("cjelina")
-    # Normalizirani tekst i njegova duljina računaju se OVDJE, JEDNOM za svaki postojeći
-    # redak - ne iznova za svaki novi zadatak (kako je bilo prije). Kod baze od nekoliko
-    # tisuća zadataka to je bila stvarna, mjerljiva sporost: normalizacija (regex) postojećih
-    # redaka izvodila se broj_novih_zadataka x broj_postojecih_redaka puta umjesto samo
-    # broj_postojecih_redaka puta. Rezultat provjere duplikata ostaje IDENTIČAN kad je
-    # ogranici_po_cjelini=False - ovo je čisto ubrzanje, ne mijenja logiku usporedbe.
+    _idx_id = ZADACI_HEADERS.index("id")
+    _i_uloga = headers.index("uloga") if "uloga" in headers else None
+    _i_rod = headers.index("roditelj_id") if "roditelj_id" in headers else None
+
+    def _celija(row, i):
+        return (row[i] if i is not None and len(row) > i else "") or ""
+
+    # Uvodi postojećih skupina (za usporedbu postojećih stavki u obliku "uvod + stavka").
+    uvod_skupine = {}
+    if _i_uloga is not None:
+        for row in data_rows:
+            if _celija(row, _i_uloga).strip().lower() == "skupina":
+                uvod_skupine[_celija(row, _idx_id).strip()] = _celija(row, _idx_latex)
+
     existing_lookup = []
     grupe_po_cjelini = {}
     for i, row in enumerate(data_rows):
+        uloga_r = _celija(row, _i_uloga).strip().lower()
+        if uloga_r == "skupina":
+            continue  # redak skupine sadrži samo uvod - nikad kandidat za duplikat
         existing_naziv = row[_idx_naziv] if len(row) > _idx_naziv else ""
         existing_latex = row[_idx_latex] if len(row) > _idx_latex else ""
+        if uloga_r == "stavka":
+            existing_latex = f"{uvod_skupine.get(_celija(row, _i_rod).strip(), '')} {existing_latex}".strip()
         existing_cjelina = (row[_idx_cjelina] if len(row) > _idx_cjelina else "").strip()
         norm_existing = _normalize_za_usporedbu(existing_latex)
         stavka = (i + 2, existing_naziv, norm_existing, len(norm_existing))
         existing_lookup.append(stavka)
         grupe_po_cjelini.setdefault(existing_cjelina, []).append(stavka)
-    # "Bez cjeline" grupa (prazan string) - uvijek dio kandidata, vidi obrazloženje gore.
     bez_cjeline = grupe_po_cjelini.get("", [])
 
     id_prefix = izvor_naziv.replace(" ", "_")
-    # Sljedeći broj ID-a računamo iz STVARNO postojećih brojeva (max + 1), NE brojanjem redaka -
-    # brojanje je krhko: ako se redci obrišu (npr. deduplikacija), broj se pomakne i može
-    # generirati ID koji se poklapa s nekim postojećim, preživjelim retkom (PreTeXt xml:id sudar).
+    # Sljedeći broj ID-a iz STVARNO postojećih brojeva (max + 1), NE brojanjem redaka -
+    # brojanje je krhko (brisanje redaka može generirati ID koji se poklapa s postojećim).
     _broj_id_re = re.compile(rf"^{re.escape(id_prefix)}_(\d+)$")
     _postojeci_brojevi = []
     for r in data_rows:
@@ -1317,31 +1379,23 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
             m = _broj_id_re.match(r[0])
             if m:
                 _postojeci_brojevi.append(int(m.group(1)))
-    _sljedeci_broj = (max(_postojeci_brojevi) + 1) if _postojeci_brojevi else 1
-
+    stanje = {
+        "sljedeci": (max(_postojeci_brojevi) + 1) if _postojeci_brojevi else 1,
+        "dodanih": 0, "azuriranih": 0, "skupina": 0,
+    }
     novi_redovi = []
-    broj_azuriranih = 0
-    broj_dodanih = 0
-    # Sve izmjene POSTOJEĆIH redaka (duplikata) skupljamo ovdje umjesto da svaku šaljemo
-    # kao zaseban ws_zadaci.update() poziv - Google Sheets API ima limit "Write requests
-    # per minute per user" (tipično 60/min), a svaki duplikat je dosad slao do 8 ODVOJENIH
-    # write poziva (rjesenje, potpoglavlje, slika, bodovi, tip_zadatka, slika_zadana,
-    # ponudjeni_odgovori, uputa) - kod ispita s puno duplikata (npr. ponovna obrada već
-    # unesenog ispita) to je vrlo brzo probijalo limit (429 "Quota exceeded"). Sve te
-    # izmjene sad idu u JEDAN ws_zadaci.batch_update() poziv na kraju cijele funkcije -
-    # bez obzira koliko duplikata ima u ovoj obradi, to je i dalje samo JEDAN write zahtjev
-    # (plus jedan za append_rows), umjesto potencijalno stotina.
-    def _puni_raspon(bare_range):
-        # NAPOMENA: gspread's Worksheet.batch_update() SAM dodaje naziv sheeta ispred
-        # raspona (isto kao i .update()), pa OVDJE range ostaje gol ("N74:P74") - ručno
-        # dodavanje naziva sheeta ovdje uzrokovalo je dupliciranje ("'Zadaci'!'Zadaci'!...")
-        # i grešku "Unable to parse range" iz Google Sheets API-ja.
-        return bare_range
-
+    # Sve izmjene POSTOJEĆIH redaka (duplikata) idu u JEDAN batch_update() na kraju
+    # (Google Sheets limit "Write requests per minute"). gspread SAM dodaje naziv sheeta
+    # ispred raspona, pa range ostaje gol ("N74:P74").
     sva_azuriranja_polja = []
 
-    for z in zadaci:
-        norm_novi = _normalize_za_usporedbu(z.get("tekst_zadatka_latex", ""))
+    def _novi_id():
+        zid = f"{id_prefix}_{stanje['sljedeci']:03d}"
+        stanje["sljedeci"] += 1
+        return zid
+
+    def _podudaranje(z, tekst_za_usporedbu, je_stavka):
+        norm_novi = _normalize_za_usporedbu(tekst_za_usporedbu)
         duljina_novi = len(norm_novi)
         najbolji_redak, najbolja_slicnost, najbolji_naziv = None, 0.0, None
 
@@ -1362,116 +1416,134 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
 
         isti_naziv = najbolji_redak and najbolji_naziv == izvor_naziv
         prag = prag_slicnosti_isti_naziv if isti_naziv else prag_slicnosti
+        if je_stavka and duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU:
+            prag = max(prag, PRAG_SLICNOSTI_KRATKA_STAVKA)
 
-        # §25.9: kratak/generički tekst + slika -> usporedba teksta nepouzdana.
-        # NIKAD tiho ne spajaj/prepiši postojeći redak u ovom slučaju - uvijek
-        # dodaj kao nov zadatak (nula rizika gubitka podataka), a ako je
-        # sličnost ipak bila iznad praga, samo označi za RUČNU provjeru.
-        nesiguran_kratak_sa_slikom = duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU and _ima_sliku(z)
+        # §25.9: kratak/generički tekst + slika -> usporedba teksta nepouzdana: NIKAD tiho
+        # ne prepiši postojeći redak, dodaj kao nov i označi za ručnu provjeru.
+        nesiguran = duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU and _ima_sliku(z)
+        return {
+            "redak": najbolji_redak, "slicnost": najbolja_slicnost, "isti_naziv": isti_naziv, "prag": prag,
+            "nesiguran": nesiguran,
+            "duplikat": bool(najbolji_redak and najbolja_slicnost >= prag and not nesiguran),
+        }
 
-        if najbolji_redak and najbolja_slicnost >= prag and not nesiguran_kratak_sa_slikom:
-            # Slova stupaca računamo DINAMIČKI iz ZADACI_HEADERS (_col_letter) umjesto
-            # hardkodiranih slova - dodavanje/premještanje kolone (npr. `potpoglavlje`)
-            # više neće tiho pomaknuti ova ažuriranja na pogrešan stupac.
-            rjesenje_novo = z.get("rjesenje", "")
-            if rjesenje_novo:
-                c1, c2 = _col_letter("rjesenje"), _col_letter("tip_rjesenja_izvor")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c1}{najbolji_redak}:{c2}{najbolji_redak}"),
-                    "values": [[rjesenje_novo, "sluzbeno", z.get("tip_rjesenja_izvor", "")]],
-                })
-            if z.get("potpoglavlje", ""):
-                c = _col_letter("potpoglavlje")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("potpoglavlje", "")]],
-                })
-            if z.get("slika_putanja", ""):
-                c = _col_letter("slika_putanja")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("slika_putanja", "")]],
-                })
-            if z.get("max_bodovi", ""):
-                c = _col_letter("max_bodovi")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("max_bodovi", "")]],
-                })
-            if z.get("tip_zadatka", ""):
-                c = _col_letter("tip_zadatka")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("tip_zadatka", "")]],
-                })
-            if z.get("slika_zadana", ""):
-                c = _col_letter("slika_zadana")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("slika_zadana", "")]],
-                })
-            if z.get("ponudjeni_odgovori"):
-                c = _col_letter("ponudjeni_odgovori")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"),
-                    "values": [[" || ".join(z.get("ponudjeni_odgovori", []))]],
-                })
-            if z.get("konacan_odgovor", ""):
-                c = _col_letter("konacan_odgovor")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("konacan_odgovor", "")]],
-                })
-            if z.get("uputa", ""):
-                c = _col_letter("uputa")
-                sva_azuriranja_polja.append({
-                    "range": _puni_raspon(f"{c}{najbolji_redak}"), "values": [[z.get("uputa", "")]],
-                })
+    def _primijeni_duplikat(z, m):
+        najbolji_redak = m["redak"]
+        # Slova stupaca DINAMIČKI iz ZADACI_HEADERS (_col_letter).
+        rjesenje_novo = z.get("rjesenje", "")
+        if rjesenje_novo:
+            c1, c2 = _col_letter("rjesenje"), _col_letter("tip_rjesenja_izvor")
+            sva_azuriranja_polja.append({
+                "range": f"{c1}{najbolji_redak}:{c2}{najbolji_redak}",
+                "values": [[rjesenje_novo, "sluzbeno", z.get("tip_rjesenja_izvor", "")]],
+            })
+        for polje in ("potpoglavlje", "slika_putanja", "max_bodovi", "tip_zadatka", "slika_zadana",
+                      "konacan_odgovor", "uputa"):
+            if z.get(polje, ""):
+                c = _col_letter(polje)
+                sva_azuriranja_polja.append({"range": f"{c}{najbolji_redak}", "values": [[z.get(polje, "")]]})
+        if z.get("ponudjeni_odgovori"):
+            c = _col_letter("ponudjeni_odgovori")
+            sva_azuriranja_polja.append({
+                "range": f"{c}{najbolji_redak}", "values": [[" || ".join(z.get("ponudjeni_odgovori", []))]],
+            })
+        if log:
+            znak = "📄" if m["isti_naziv"] else "🔤"
+            log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
+                f"({znak}{m['slicnost']:.0%}, prag {m['prag']:.0%}) - nadopunjen.")
+        stanje["azuriranih"] += 1
+
+    def _napravi_redak(z, zid, status_provjere_novi, uloga="", roditelj_id="", oznaka=""):
+        je_skupina = uloga == "skupina"
+        redak = [
+            zid, izvor_tip, izvor_naziv, godina, broj_pdf_ulaza,
+            razina, "",
+            z.get("kategorija", ""), z.get("cjelina", ""), z.get("potpoglavlje", ""), z.get("kljucne_rijeci", ""),
+            z.get("tekst_zadatka_latex", ""), z.get("tekst_zadatka_mathjax", ""),
+            z.get("rjesenje", ""),
+            "" if je_skupina else ("sluzbeno" if z.get("rjesenje") else "nedostaje"),
+            z.get("tip_rjesenja_izvor", ""),
+            z.get("slika_putanja", ""), "",
+            z.get("vizualni_potencijal", ""),
+            "", "",
+            z.get("tezina", ""), z.get("max_bodovi", ""),
+            "",
+            status_provjere_novi, skenirano,
+            "",
+            z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
+            " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
+            z.get("uputa", ""),
+            "",  # redoslijed_u_potpoglavlju - postavlja se ručno kasnije (stranica u appu)
+            "",  # koristi_kao_primjer_na_satu - postavlja se ručno kasnije
+            "",  # u_skriptu - postavlja se ručno kasnije
+            biblioteka_izvora,
+        ]
+        if ima_nove_stupce:
+            redak += [uloga, roditelj_id, oznaka]
+        return redak
+
+    def _dodaj_novi(z, m, uloga="", roditelj_id="", oznaka=""):
+        zid = _novi_id()
+        status_provjere_novi = z.get("status_provjere", "") or ""
+        if m["nesiguran"] and m["redak"] and m["slicnost"] >= m["prag"]:
+            napomena = (
+                f"MOGUĆI duplikat retka {m['redak']} ({m['slicnost']:.0%}) - tekst prekratak/"
+                "generički za pouzdanu automatsku usporedbu (zadatak sa slikom), provjeri ručno je li slika ista."
+            )
+            status_provjere_novi = f"{status_provjere_novi}; {napomena}" if status_provjere_novi else napomena
             if log:
-                znak = "📄" if isti_naziv else "🔤"
-                log(f"🔁 Zadatak #{z.get('privremeni_broj')} = duplikat retka {najbolji_redak} "
-                    f"({znak}{najbolja_slicnost:.0%}, prag {prag:.0%}) - nadopunjen.")
-            broj_azuriranih += 1
-        else:
-            zid = f"{id_prefix}_{_sljedeci_broj:03d}"
-            _sljedeci_broj += 1
-            status_provjere_novi = z.get("status_provjere", "") or ""
-            if nesiguran_kratak_sa_slikom and najbolji_redak and najbolja_slicnost >= prag:
-                napomena = (
-                    f"MOGUĆI duplikat retka {najbolji_redak} ({najbolja_slicnost:.0%}) - tekst prekratak/"
-                    "generički za pouzdanu automatsku usporedbu (zadatak sa slikom), provjeri ručno je li slika ista."
-                )
-                status_provjere_novi = f"{status_provjere_novi}; {napomena}" if status_provjere_novi else napomena
+                log(f"⚠️ Zadatak #{z.get('privremeni_broj')} - MOGUĆI duplikat retka {m['redak']} "
+                    f"({m['slicnost']:.0%}), ali tekst je prekratak/generički (zadatak sa slikom) - "
+                    "DODAN kao NOV zadatak i označen za ručnu provjeru, umjesto tihog spajanja s postojećim retkom.")
+        novi_redovi.append(_napravi_redak(z, zid, status_provjere_novi, uloga, roditelj_id, oznaka))
+        stanje["dodanih"] += 1
+        return zid
+
+    for j in jedinice:
+        if j["tip"] == "samostalan":
+            z = j["z"]
+            m = _podudaranje(z, z.get("tekst_zadatka_latex", ""), False)
+            if m["duplikat"]:
+                _primijeni_duplikat(z, m)
+            else:
+                _dodaj_novi(z, m)
+            continue
+
+        skupina, stavke = j["skupina"], j["stavke"]
+        uvod = skupina.get("tekst_zadatka_latex", "") or ""
+        podudaranja = [
+            _podudaranje(s, f"{uvod} {s.get('tekst_zadatka_latex', '')}".strip(), True) for s in stavke
+        ]
+        if all(m["duplikat"] for m in podudaranja):
+            for s, m in zip(stavke, podudaranja):
+                _primijeni_duplikat(s, m)
+            if log:
+                log(f"🔁 Skupina #{skupina.get('privremeni_broj')}: sve stavke već postoje u bazi - "
+                    "redak skupine nije dodan.")
+            continue
+        id_skupine = _novi_id()
+        novi_redovi.append(_napravi_redak(
+            skupina, id_skupine, skupina.get("status_provjere", "") or "", uloga="skupina"))
+        stanje["skupina"] += 1
+        for s, m in zip(stavke, podudaranja):
+            if m["duplikat"]:
+                _primijeni_duplikat(s, m)
                 if log:
-                    log(f"⚠️ Zadatak #{z.get('privremeni_broj')} - MOGUĆI duplikat retka {najbolji_redak} "
-                        f"({najbolja_slicnost:.0%}), ali tekst je prekratak/generički (zadatak sa slikom) - "
-                        "DODAN kao NOV zadatak i označen za ručnu provjeru, umjesto tihog spajanja s postojećim retkom.")
-            row = [
-                zid, izvor_tip, izvor_naziv, godina, broj_pdf_ulaza,
-                razina, "",
-                z.get("kategorija", ""), z.get("cjelina", ""), z.get("potpoglavlje", ""), z.get("kljucne_rijeci", ""),
-                z.get("tekst_zadatka_latex", ""), z.get("tekst_zadatka_mathjax", ""),
-                z.get("rjesenje", ""),
-                "sluzbeno" if z.get("rjesenje") else "nedostaje",
-                z.get("tip_rjesenja_izvor", ""),
-                z.get("slika_putanja", ""), "",
-                z.get("vizualni_potencijal", ""),
-                "", "",
-                z.get("tezina", ""), z.get("max_bodovi", ""),
-                "",
-                status_provjere_novi, skenirano,
-                "",
-                z.get("tip_zadatka", ""), z.get("slika_zadana", ""),
-                " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
-                z.get("uputa", ""),
-                "",  # redoslijed_u_potpoglavlju - postavlja se ručno kasnije (stranica u appu)
-                "",  # koristi_kao_primjer_na_satu - postavlja se ručno kasnije
-                "",  # u_skriptu - postavlja se ručno kasnije
-                biblioteka_izvora,
-            ]
-            novi_redovi.append(row)
-            broj_dodanih += 1
+                    log(f"ℹ️ Stavka #{s.get('privremeni_broj')} već postoji (redak {m['redak']}) i ostaje uz "
+                        f"svoju staru skupinu; ostale stavke iz #{skupina.get('privremeni_broj')} dodane su "
+                        f"u novu skupinu {id_skupine}.")
+            else:
+                _dodaj_novi(s, m, uloga="stavka", roditelj_id=id_skupine,
+                            oznaka=str(s.get("oznaka_stavke", "") or ""))
 
     if novi_redovi:
         ws_zadaci.append_rows(novi_redovi)
 
     if sva_azuriranja_polja:
-        # JEDAN poziv za SVE izmjene duplikata iz ove obrade - vidi obrazloženje gore
-        # (rješava "Quota exceeded... Write requests per minute" grešku).
+        # JEDAN poziv za SVE izmjene duplikata iz ove obrade (rješava "Quota exceeded" grešku).
         ws_zadaci.batch_update(sva_azuriranja_polja)
 
-    return broj_dodanih, broj_azuriranih
+    if stanje["skupina"] and log:
+        log(f"📚 Dodano {stanje['skupina']} skupina zadataka (retci skupina nisu ubrojeni u broj novih zadataka).")
+    return stanje["dodanih"], stanje["azuriranih"]
