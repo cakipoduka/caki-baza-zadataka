@@ -33,6 +33,104 @@ def filtriraj_zadatke_za_skriptu(zadaci: list, stupac: str = "u_skriptu", vrijed
     ]
 
 
+# ---------------------------------------------------------------------------
+# 11.10.2026. - VISESTRUKI FILTRI za skriptu (razina A/B, cjelina, vrsta izvora, biblioteka,
+# godina, u_skriptu). Sve je OPCIONALNO: prazan filtar = ne filtrira po tom kriteriju.
+# Kriteriji se kombiniraju s I (AND); vrijednosti unutar jednog kriterija s ILI (OR).
+# ---------------------------------------------------------------------------
+
+FILTRI_KLJUCEVI = ("razine", "cjeline", "izvori", "biblioteke", "godina_od", "godina_do", "samo_u_skriptu")
+
+
+def normaliziraj_filtre(filtri) -> dict:
+    """Vraca ocisceni dict filtara sa SVIM kljucevima iz FILTRI_KLJUCEVI (nepoznati se
+    odbacuju, liste se ocisti od praznih/duplikata, godine postaju int ili None)."""
+    filtri = filtri or {}
+
+    def _lista(k, velika=False):
+        izlaz = []
+        for v in (filtri.get(k) or []):
+            t = str(v).strip()
+            if velika:
+                t = t.upper()
+            if t and t not in izlaz:
+                izlaz.append(t)
+        return izlaz
+
+    def _godina(k):
+        try:
+            return int(str(filtri.get(k)).strip())
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "razine": _lista("razine", velika=True),
+        "cjeline": _lista("cjeline"),
+        "izvori": [v.lower() for v in _lista("izvori")],
+        "biblioteke": _lista("biblioteke"),
+        "godina_od": _godina("godina_od"),
+        "godina_do": _godina("godina_do"),
+        "samo_u_skriptu": bool(filtri.get("samo_u_skriptu", False)),
+    }
+
+
+def _godina_retka(z):
+    try:
+        return int(str(z.get("godina", "")).strip()[:4])
+    except ValueError:
+        return None
+
+
+def filtriraj_zadatke(zadaci: list, filtri=None) -> list:
+    """Vraca NOVU listu zadataka koji zadovoljavaju SVE zadane filtre (v. gore).
+    Zadaci bez godine NE prolaze ako je zadan godina_od/godina_do. Usporedbe su bez obzira
+    na velika/mala slova i visak razmaka. filtri=None ili {} -> vraca cijelu listu."""
+    f = normaliziraj_filtre(filtri)
+    cjeline = {c.lower() for c in f["cjeline"]}
+    biblioteke = {b.lower() for b in f["biblioteke"]}
+    izlaz = []
+    for z in zadaci:
+        if f["razine"] and str(z.get("razina", "")).strip().upper() not in f["razine"]:
+            continue
+        if cjeline and str(z.get("cjelina", "")).strip().lower() not in cjeline:
+            continue
+        if f["izvori"] and str(z.get("izvor_tip", "")).strip().lower() not in f["izvori"]:
+            continue
+        if biblioteke and str(z.get("biblioteka_izvora", "")).strip().lower() not in biblioteke:
+            continue
+        if f["godina_od"] is not None or f["godina_do"] is not None:
+            g = _godina_retka(z)
+            if g is None:
+                continue
+            if f["godina_od"] is not None and g < f["godina_od"]:
+                continue
+            if f["godina_do"] is not None and g > f["godina_do"]:
+                continue
+        if f["samo_u_skriptu"] and str(z.get("u_skriptu", "")).strip().lower() != "da":
+            continue
+        izlaz.append(z)
+    return izlaz
+
+
+def opis_filtara(filtri) -> str:
+    """Kratak citljiv opis (za naslov skripte / prikaz zahtjeva)."""
+    f = normaliziraj_filtre(filtri)
+    dijelovi = []
+    if f["razine"]:
+        dijelovi.append("razina " + "/".join(f["razine"]))
+    if f["cjeline"]:
+        dijelovi.append(", ".join(f["cjeline"]))
+    if f["izvori"]:
+        dijelovi.append("izvor: " + ", ".join(f["izvori"]))
+    if f["biblioteke"]:
+        dijelovi.append("biblioteka: " + ", ".join(f["biblioteke"]))
+    if f["godina_od"] is not None or f["godina_do"] is not None:
+        dijelovi.append(f"godine {f['godina_od'] or '...'}-{f['godina_do'] or '...'}")
+    if f["samo_u_skriptu"]:
+        dijelovi.append("samo oznaceni za skriptu")
+    return "; ".join(dijelovi) or "svi zadaci"
+
+
 if __name__ == "__main__":
     # Brz test bez Google Sheetsa - samo da se vidi da filtriranje radi kako treba.
     primjer_zadaci = [

@@ -2,8 +2,7 @@
 CAKI Matematika - pages/4_skripta.py
 
 Streamlit stranica za PRIPREMU zahtjeva za "skriptu" (§27.5, 15.9.2026.) - bira SAMO
-parametre (cjelina, učenik/profesor verzija teorije, filtriraj li se na fiksni skup
-"u_skriptu"). NE gradi PDF ovdje - stvarni PreTeXt/xelatex build i dalje radi Colab
+parametre (razina, cjelina, vrsta izvora, biblioteka, godina, u_skriptu + učenik/profesor). NE gradi PDF ovdje - stvarni PreTeXt/xelatex build i dalje radi Colab
 (Korak 3.1 -> 3.3 -> 5), NAMJERNO: xelatex/TeX Live je pretežak/presporo za ovaj lagani
 Streamlit Cloud hosting koji SVAKODNEVNO koriste i profesori (Test Builder) i Caki
 (unos zadataka) - ubacivanje LaTeX buildanja u tu istu aplikaciju bi riskiralo usporiti
@@ -25,6 +24,7 @@ from baza_zadataka_pipeline import (
     spremi_zahtjev_skripte,
     ucitaj_zadnji_zahtjev_skripte,
 )
+from filtriraj_zadatke_za_skriptu import filtriraj_zadatke, opis_filtara
 
 st.set_page_config(page_title="CAKI Skripta", page_icon="📘", layout="wide")
 
@@ -70,6 +70,12 @@ def _ucitaj_cjeline():
     return sorted(get_sifrarnik_cjelina(init_sheet()).keys())
 
 
+@st.cache_data(ttl=600)
+def _ucitaj_zadatke():
+    """Svi retci taba Zadaci (samo za brojac i popis vrijednosti filtara - build radi Colab)."""
+    return init_sheet().worksheet("Zadaci").get_all_records()
+
+
 # ---------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------
@@ -89,8 +95,6 @@ if not cjeline:
     st.warning("Šifrarnik cjelina je prazan - popuni tab 'Sifrarnik_cjelina' prvo.")
     st.stop()
 
-cjelina = st.selectbox("Cjelina", cjeline, key="skripta_cjelina")
-
 verzija = st.radio(
     "Verzija teorije",
     ["ucenik", "profesor"],
@@ -99,25 +103,74 @@ verzija = st.radio(
     key="skripta_verzija",
 )
 
+st.subheader("Filtri zadataka")
+st.caption("Prazno = bez ograničenja po tom kriteriju. Kriteriji se kombiniraju s I; "
+           "više vrijednosti unutar jednog kriterija s ILI.")
+
+try:
+    _svi = _ucitaj_zadatke()
+except Exception as e:  # noqa: BLE001 - prikaži, ali ne ruši stranicu
+    st.error(f"Ne mogu učitati zadatke za brojač: {e}")
+    _svi = []
+
+
+def _vrijednosti(stupac, velika=False):
+    v = {str(r.get(stupac, "")).strip() for r in _svi}
+    v = {x.upper() if velika else x for x in v if x}
+    return sorted(v)
+
+
+_godine = sorted({int(str(r.get("godina", ""))[:4]) for r in _svi if str(r.get("godina", ""))[:4].isdigit()})
+
+k1, k2 = st.columns(2)
+with k1:
+    razine = st.multiselect("Razina mature", ["A", "B"], key="skripta_razine")
+    cjeline_odabrane = st.multiselect("Cjelina", cjeline, key="skripta_cjeline")
+with k2:
+    izvori = st.multiselect(
+        "Vrsta izvora", _vrijednosti("izvor_tip") or ["matura", "zbirka", "vlastiti_materijal", "udzbenik"],
+        key="skripta_izvori",
+        help="matura = državna matura; zbirka = zbirke zadataka; vlastiti_materijal = tvoji zadaci; udzbenik.")
+    biblioteke = st.multiselect("Zbirka / biblioteka izvora", _vrijednosti("biblioteka_izvora"),
+                                key="skripta_biblioteke")
+
+if _godine:
+    g_od, g_do = st.select_slider("Godina (od - do)", options=_godine,
+                                   value=(_godine[0], _godine[-1]), key="skripta_godine")
+    # cijeli raspon = bez filtra po godini (zadaci bez godine tada ne ispadaju)
+    godina_od = None if (g_od == _godine[0] and g_do == _godine[-1]) else g_od
+    godina_do = None if (g_od == _godine[0] and g_do == _godine[-1]) else g_do
+else:
+    godina_od = godina_do = None
+
 filtriraj = st.checkbox(
     "Samo zadaci označeni za skriptu (u_skriptu = DA)",
-    value=True,
+    value=False,
     key="skripta_filtriraj",
-    help=(
-        "Uključeno (preporučeno za skriptu): koristi se fiksni skup 'zadaci za rad na "
-        "satu' koje si ručno označila. Isključeno: build uzima CIJELI fond zadataka za "
-        "ovu cjelinu, kao web izlaz - vjerojatno neželjeno za tiskanu skriptu."
-    ),
+    help="Uključi ako želiš samo fiksni skup 'zadaci za rad na satu' koje si ručno označila.",
 )
 
+filtri = {
+    "razine": razine, "cjeline": cjeline_odabrane, "izvori": izvori, "biblioteke": biblioteke,
+    "godina_od": godina_od, "godina_do": godina_do, "samo_u_skriptu": filtriraj,
+}
+_pogodaka = filtriraj_zadatke(_svi, filtri)
+st.metric("Zadataka koji zadovoljavaju filtre", len(_pogodaka), help="Broj prije gradnje - isti filtar koristi Colab.")
+st.caption(f"Opis: {opis_filtara(filtri)}")
+if _pogodaka:
+    _po = {}
+    for r in _pogodaka:
+        c = str(r.get("cjelina", "")).strip() or "Nekategorizirano"
+        _po[c] = _po.get(c, 0) + 1
+    st.dataframe([{"cjelina": c, "zadataka": n} for c, n in sorted(_po.items())], hide_index=True)
+
 st.divider()
-if st.button("💾 Pripremi zahtjev za Colab", type="primary"):
-    spremi_zahtjev_skripte(init_sheet(), cjelina, verzija_teorije=verzija, filtriraj_u_skriptu=filtriraj)
+if st.button("💾 Pripremi zahtjev za Colab", type="primary", disabled=not _pogodaka):
+    spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri)
     st.success(
-        f"✅ Zahtjev spremljen: **{cjelina}** / "
-        f"**{'učenik' if verzija == 'ucenik' else 'profesor'}** / "
-        f"**{'samo u_skriptu=DA' if filtriraj else 'cijeli fond'}**. "
-        "Sad pokreni Korak 3.1 u Colabu - pročitat će ovaj zahtjev."
+        f"✅ Zahtjev spremljen: **{opis_filtara(filtri)}** / "
+        f"**{'učenik' if verzija == 'ucenik' else 'profesor'}** / {len(_pogodaka)} zadataka. "
+        "Sad pokreni Korak 3.1s u Colabu - pročitat će ovaj zahtjev."
     )
     st.cache_data.clear()
 

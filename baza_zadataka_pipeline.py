@@ -22,7 +22,9 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 from teorija_markup import teorija_u_ptx_odlomke
-from filtriraj_zadatke_za_skriptu import filtriraj_zadatke_za_skriptu
+from filtriraj_zadatke_za_skriptu import (
+    filtriraj_zadatke_za_skriptu, filtriraj_zadatke, normaliziraj_filtre, opis_filtara,
+)
 from skupine_zadataka import NOVI_STUPCI, pripremi_jedinice
 
 SCOPES = [
@@ -447,24 +449,43 @@ def get_teorija_po_potpoglavlju(sheet) -> dict:
 # Ova stranica NIKAD sama ne pokrece build - samo priprema, Caki i dalje rucno pokrece
 # Colab kad zeli, isto kao dosad za obicni build.
 
-SKRIPTA_ZAHTJEVI_HEADERS = ["cjelina", "verzija_teorije", "filtriraj_u_skriptu", "vrijeme"]
+SKRIPTA_ZAHTJEVI_HEADERS = ["cjelina", "verzija_teorije", "filtriraj_u_skriptu", "vrijeme", "filtri_json"]
 
-def spremi_zahtjev_skripte(sheet, cjelina: str, verzija_teorije: str = "ucenik",
-                            filtriraj_u_skriptu: bool = True) -> None:
+def spremi_zahtjev_skripte(sheet, cjelina: str = "", verzija_teorije: str = "ucenik",
+                            filtriraj_u_skriptu: bool = True, filtri: dict = None) -> None:
     """Dodaje NOV redak u tab 'Skripta_zahtjevi' (uvijek append, nikad prepisivanje - stari
     zahtjevi ostaju kao povijest, Colab uvijek cita samo POSLJEDNJI, v.
-    ucitaj_zadnji_zahtjev_skripte)."""
+    ucitaj_zadnji_zahtjev_skripte).
+
+    11.10.2026.: novi parametar `filtri` (dict, v. filtriraj_zadatke_za_skriptu.normaliziraj_filtre:
+    razine, cjeline, izvori, biblioteke, godina_od, godina_do, samo_u_skriptu) sprema se kao JSON
+    u stupac 'filtri_json'. Ako filtri nije zadan, ponasa se kao prije (cjelina + filtriraj_u_skriptu).
+    Stari tab bez stupca 'filtri_json' dobiva ga automatski u zaglavlju."""
     from datetime import datetime
     ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
-    ws.append_row([
-        cjelina, verzija_teorije, "DA" if filtriraj_u_skriptu else "NE",
-        datetime.now().strftime("%Y-%m-%d %H:%M"),
-    ])
+    zaglavlje = ws.row_values(1)
+    if "filtri_json" not in zaglavlje:
+        ws.update_cell(1, len(zaglavlje) + 1, "filtri_json")
+        zaglavlje = zaglavlje + ["filtri_json"]
+    if filtri is not None:
+        f = normaliziraj_filtre(filtri)
+        cjelina = f["cjeline"][0] if len(f["cjeline"]) == 1 else cjelina
+        filtriraj_u_skriptu = f["samo_u_skriptu"]
+        filtri_json = json.dumps(f, ensure_ascii=False)
+    else:
+        filtri_json = ""
+    vrijednosti = {
+        "cjelina": cjelina, "verzija_teorije": verzija_teorije,
+        "filtriraj_u_skriptu": "DA" if filtriraj_u_skriptu else "NE",
+        "vrijeme": datetime.now().strftime("%Y-%m-%d %H:%M"), "filtri_json": filtri_json,
+    }
+    ws.append_row([vrijednosti.get(h, "") for h in zaglavlje])
 
 def ucitaj_zadnji_zahtjev_skripte(sheet):
-    """Vraca dict {cjelina, verzija_teorije, filtriraj_u_skriptu (bool), vrijeme} za
-    POSLJEDNJI zapisan zahtjev, ili None ako tab ne postoji/je prazan. Poziva se iz Colaba
-    (Korak 3.1) neposredno prije build_pretext_article poziva - v. gornju napomenu."""
+    """Vraca dict {cjelina, verzija_teorije, filtriraj_u_skriptu (bool), vrijeme, filtri (dict)}
+    za POSLJEDNJI zapisan zahtjev, ili None ako tab ne postoji/je prazan. `filtri` je UVIJEK
+    normaliziran dict: ako zahtjev nema filtri_json (stari zahtjev), izvodi se iz cjelina +
+    filtriraj_u_skriptu - stari zahtjevi rade identicno kao prije."""
     ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
     all_values = ws.get_all_values()
     if len(all_values) < 2:
@@ -476,11 +497,23 @@ def ucitaj_zadnji_zahtjev_skripte(sheet):
         i = idx.get(col)
         return zadnji[i] if i is not None and i < len(zadnji) else ""
 
+    cjelina = _get("cjelina")
+    filtriraj = _get("filtriraj_u_skriptu").strip().upper() == "DA"
+    sirovi = _get("filtri_json").strip()
+    filtri = None
+    if sirovi:
+        try:
+            filtri = normaliziraj_filtre(json.loads(sirovi))
+        except (ValueError, TypeError):
+            filtri = None
+    if filtri is None:
+        filtri = normaliziraj_filtre({"cjeline": [cjelina] if cjelina else [], "samo_u_skriptu": filtriraj})
     return {
-        "cjelina": _get("cjelina"),
+        "cjelina": cjelina,
         "verzija_teorije": _get("verzija_teorije") or "ucenik",
-        "filtriraj_u_skriptu": _get("filtriraj_u_skriptu").strip().upper() == "DA",
+        "filtriraj_u_skriptu": filtriraj,
         "vrijeme": _get("vrijeme"),
+        "filtri": filtri,
     }
 
 # --- PreTeXt XML generiranje (Korak 3.1) ---
@@ -759,7 +792,7 @@ def _build_introduction_lines(teorija_row, verzija="ucenik"):
 
 def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir,
                           cjelina=None, teorija_po_potpoglavlju=None, verzija_teorije="ucenik",
-                          filtriraj_u_skriptu=False):
+                          filtriraj_u_skriptu=False, filtri=None):
     """Vraća (lines, broj_slika) - unutrašnji sadržaj BEZ vanjskog <article>/<title> omota:
     ako je potpoglavlja_redoslijed zadan, grupira zadatke u <section> po potpoglavlju
     (redoslijedom iz šifrarnika; zadaci bez prepoznatog potpoglavlja idu u 'Ostalo' na kraju);
@@ -783,6 +816,8 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
     je neutralno za postojeći sadržaj koji još ne koristi [RJESENJE] konvenciju."""
     if filtriraj_u_skriptu:
         zadaci_redovi = filtriraj_zadatke_za_skriptu(zadaci_redovi)
+    if filtri:  # 11.10.2026.: visestruki filtri (razina, cjelina, izvor, godina...)
+        zadaci_redovi = filtriraj_zadatke(zadaci_redovi, filtri)
 
     lines = []
     broj_slika = 0
@@ -848,7 +883,7 @@ def _build_inner_content(zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, im
 
 def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir, potpoglavlja_redoslijed=None,
                            cjelina=None, teorija_po_potpoglavlju=None, verzija_teorije="ucenik",
-                           filtriraj_u_skriptu=False):
+                           filtriraj_u_skriptu=False, filtri=None):
     """Gradi samostalan PreTeXt dokument: <pretext><article>...</article></pretext>
     (root mora biti <pretext> po PreTeXt shemi - ranija verzija je to preskakala).
     cjelina/teorija_po_potpoglavlju: v. _build_inner_content (§27.2, opcionalno).
@@ -857,7 +892,7 @@ def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, sl
     inner_lines, broj_slika = _build_inner_content(
         zadaci_redovi, xml_id_root, potpoglavlja_redoslijed, images_dir_abs, slike_izvor_dir,
         cjelina=cjelina, teorija_po_potpoglavlju=teorija_po_potpoglavlju,
-        verzija_teorije=verzija_teorije, filtriraj_u_skriptu=filtriraj_u_skriptu)
+        verzija_teorije=verzija_teorije, filtriraj_u_skriptu=filtriraj_u_skriptu, filtri=filtri)
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>',
              f'  <article xml:id="{_sanitize_id(xml_id_root)}">',
              f'    <title>{_xml_escape(naslov)}</title>']
@@ -865,6 +900,47 @@ def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, sl
     lines.append('  </article>')
     lines.append('</pretext>')
     return "\n".join(lines), broj_slika
+
+def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, slike_izvor_dir,
+                         teorija_po_potpoglavlju=None):
+    """11.10.2026. - JEDNA funkcija koju Colab zove za skriptu: uzme SVE retke taba 'Zadaci'
+    (list rjecnika) i zahtjev iz ucitaj_zadnji_zahtjev_skripte(), primijeni filtre i vrati
+    (xml_string, broj_slika, broj_zadataka, naslov).
+    - jedna cjelina u rezultatu -> <article> s potpoglavljima (+ teorija ako postoji)
+    - vise cjelina -> svaka cjelina je <section> (redoslijed iz sifrarnika, ostale abecedno)
+    - 0 zadataka nakon filtriranja -> xml je None (pozivatelj ispisuje poruku)."""
+    filtri = normaliziraj_filtre(zahtjev.get("filtri"))
+    verzija = zahtjev.get("verzija_teorije") or "ucenik"
+    odabrani = filtriraj_zadatke(rows, filtri)
+    naslov = "Skripta - " + opis_filtara(filtri)
+    if not odabrani:
+        return None, 0, 0, naslov
+
+    po_cjelini = {}
+    for r in odabrani:
+        c = (r.get("cjelina") or "").strip() or "Nekategorizirano"
+        po_cjelini.setdefault(c, []).append(r)
+    redoslijed = [c for c in potpoglavlja_po_cjelini if c in po_cjelini]
+    redoslijed += sorted(c for c in po_cjelini if c not in redoslijed)
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>',
+             '  <article xml:id="skripta">', f'    <title>{_xml_escape(naslov)}</title>']
+    broj_slika = 0
+    jedna = len(redoslijed) == 1
+    for c in redoslijed:
+        if not jedna:
+            lines.append(f'    <section xml:id="{_sanitize_id("skripta-" + c)}">')
+            lines.append(f'      <title>{_xml_escape(c)}</title>')
+        inner, s_ = _build_inner_content(
+            po_cjelini[c], f"skripta-{c}", potpoglavlja_po_cjelini.get(c),
+            images_dir_abs, slike_izvor_dir, cjelina=c,
+            teorija_po_potpoglavlju=teorija_po_potpoglavlju, verzija_teorije=verzija)
+        lines.extend(inner)
+        broj_slika += s_
+        if not jedna:
+            lines.append('    </section>')
+    lines += ['  </article>', '</pretext>']
+    return "\n".join(lines), broj_slika, len(odabrani), naslov
 
 # --- Log obrade (upisuje se u Sheet, NE samo u Streamlit session_state) ---
 #
