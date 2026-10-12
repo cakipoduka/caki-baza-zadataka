@@ -159,12 +159,36 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--zahtjev-id", required=True)
     args = ap.parse_args(argv)
-    sa_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
-    sheet = bp.get_gspread_client(sa_info).open_by_key(os.environ["SHEET_ID"])
-    drive = bp.get_drive_service(sa_info)
-    with tempfile.TemporaryDirectory() as radni:
-        izgradi(args.zahtjev_id, sheet, drive, os.environ["SLIKE_FOLDER_ID"],
-                os.environ["SKRIPTE_FOLDER_ID"], radni)
+    # Jasna poruka ako tajna nedostaje (ispisuje se SAMO ime, nikad vrijednost)
+    potrebne = ["GOOGLE_SERVICE_ACCOUNT_JSON", "SHEET_ID", "SLIKE_FOLDER_ID", "SKRIPTE_FOLDER_ID"]
+    # Cesta greska pri unosu GitHub tajni: razmak/novi red/navodnici oko ID-a -> ocisti
+    for n in potrebne:
+        v = os.environ.get(n, "").strip()
+        if n != "GOOGLE_SERVICE_ACCOUNT_JSON":
+            v = v.strip("'\" ")
+        os.environ[n] = v
+    nedostaju = [n for n in potrebne if not os.environ.get(n, "").strip()]
+    if nedostaju:
+        print("GRESKA: nedostaju GitHub tajne: " + ", ".join(nedostaju))
+        return 1
+    try:
+        sa_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    except ValueError:
+        print("GRESKA: GOOGLE_SERVICE_ACCOUNT_JSON nije ispravan JSON (zalijepi samo dio od { do }, bez navodnika).")
+        return 1
+    print(f"Zahtjev: {args.zahtjev_id}")
+    try:
+        sheet = bp.get_gspread_client(sa_info).open_by_key(os.environ["SHEET_ID"])
+        drive = bp.get_drive_service(sa_info)
+        with tempfile.TemporaryDirectory() as radni:
+            izgradi(args.zahtjev_id, sheet, drive, os.environ["SLIKE_FOLDER_ID"],
+                    os.environ["SKRIPTE_FOLDER_ID"], radni)
+    except SkriptaGreska as e:
+        print(f"GRESKA: {e}")
+        return 1
+    except Exception as e:  # noqa: BLE001 - tip greske pomaze, detalji mogu sadrzavati podatke
+        print(f"GRESKA: neocekivana greska ({type(e).__name__}): {str(e)[:200]}")
+        return 1
     return 0
 
 
