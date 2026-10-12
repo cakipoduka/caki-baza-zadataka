@@ -450,7 +450,8 @@ def get_teorija_po_potpoglavlju(sheet) -> dict:
 # Colab kad zeli, isto kao dosad za obicni build.
 
 SKRIPTA_ZAHTJEVI_HEADERS = ["cjelina", "verzija_teorije", "filtriraj_u_skriptu", "vrijeme", "filtri_json",
-                            "zahtjev_id", "status", "poruka", "pdf_drive_id"]
+                            "zahtjev_id", "status", "poruka", "pdf_drive_id", "naslov", "podnaslov"]
+# naslov/podnaslov (12.10.2026.): neobavezni, upisuje ih korisnik; prazan naslov = automatski iz filtara.
 # status: "" (stari zahtjev) | "cekanje" | "u_radu" | "gotovo" | "greska"
 # 12.10.2026.: zahtjev_id/status/poruka/pdf_drive_id sluze za automatsku gradnju PDF-a na GitHub Actions
 # (radnik azurira status, Streamlit ga cita i nudi PDF) - Colab ih ignorira.
@@ -471,7 +472,8 @@ def _osiguraj_zaglavlje_zahtjeva(ws):
     return zaglavlje
 
 def spremi_zahtjev_skripte(sheet, cjelina: str = "", verzija_teorije: str = "ucenik",
-                            filtriraj_u_skriptu: bool = True, filtri: dict = None) -> str:
+                            filtriraj_u_skriptu: bool = True, filtri: dict = None,
+                            naslov: str = "", podnaslov: str = "") -> str:
     """Dodaje NOV redak u tab 'Skripta_zahtjevi' (uvijek append, nikad prepisivanje - stari
     zahtjevi ostaju kao povijest, Colab uvijek cita samo POSLJEDNJI, v.
     ucitaj_zadnji_zahtjev_skripte). Vraca zahtjev_id (kratki jedinstveni kod).
@@ -497,6 +499,8 @@ def spremi_zahtjev_skripte(sheet, cjelina: str = "", verzija_teorije: str = "uce
         "filtriraj_u_skriptu": "DA" if filtriraj_u_skriptu else "NE",
         "vrijeme": datetime.now().strftime("%Y-%m-%d %H:%M"), "filtri_json": filtri_json,
         "zahtjev_id": zahtjev_id, "status": "cekanje", "poruka": "", "pdf_drive_id": "",
+        "naslov": " ".join((naslov or "").split())[:150],
+        "podnaslov": " ".join((podnaslov or "").split())[:200],
     }
     ws.append_row([vrijednosti.get(h, "") for h in zaglavlje])
     return zahtjev_id
@@ -529,6 +533,8 @@ def _zahtjev_iz_retka(headers, redak, broj_retka=None):
         "status": _get("status"),
         "poruka": _get("poruka"),
         "pdf_drive_id": _get("pdf_drive_id"),
+        "naslov": _get("naslov"),
+        "podnaslov": _get("podnaslov"),
         "redak": broj_retka,
     }
 
@@ -1061,7 +1067,10 @@ def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, 
     filtri = normaliziraj_filtre(zahtjev.get("filtri"))
     verzija = zahtjev.get("verzija_teorije") or "ucenik"
     odabrani = filtriraj_zadatke(rows, filtri)
-    naslov = "Skripta - " + opis_filtara(filtri)
+    # 12.10.2026.: naslov i podnaslov mogu doci iz zahtjeva (polja na stranici Skripta);
+    # bez naslova ostaje automatski "Skripta - <opis filtara>".
+    naslov = " ".join((zahtjev.get("naslov") or "").split()) or ("Skripta - " + opis_filtara(filtri))
+    podnaslov = " ".join((zahtjev.get("podnaslov") or "").split())
     if not odabrani:
         return None, 0, 0, naslov
 
@@ -1075,6 +1084,8 @@ def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, 
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>']
     lines += _skripta_docinfo_lines()
     lines += ['  <article xml:id="skripta">', f'    <title>{_xml_escape(naslov)}</title>']
+    if podnaslov:
+        lines.append(f'    <subtitle>{_xml_escape(podnaslov)}</subtitle>')
     lines += _skripta_frontmatter_lines()
     broj_slika = 0
     jedna = len(redoslijed) == 1

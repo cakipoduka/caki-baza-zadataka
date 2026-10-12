@@ -168,6 +168,16 @@ if _pogodaka:
         _po[c] = _po.get(c, 0) + 1
     st.dataframe([{"cjelina": c, "zadataka": n} for c, n in sorted(_po.items())], hide_index=True)
 
+st.subheader("Naslov i podnaslov")
+n1, n2 = st.columns(2)
+with n1:
+    naslov = st.text_input("Naslov dokumenta", key="skripta_naslov", max_chars=150,
+                           placeholder="npr. Vektori – matura A razina",
+                           help="Prazno = automatski naslov iz filtara (npr. „Skripta - Vektori“).")
+with n2:
+    podnaslov = st.text_input("Podnaslov (neobavezno)", key="skripta_podnaslov", max_chars=200,
+                              placeholder="npr. Zadaci za pripremu · šk. god. 2026./2027.")
+
 st.divider()
 _token = st.secrets.get("GITHUB_DISPATCH_TOKEN")
 _pdf_spreman = bool(_token) and bool(st.secrets.get("SKRIPTE_FOLDER_ID"))
@@ -176,7 +186,8 @@ with c1:
     if st.button("📄 Izgradi PDF (automatski, ~5 min)", type="primary",
                  disabled=not _pogodaka or not _pdf_spreman,
                  help=None if _pdf_spreman else "Automatska gradnja još nije uključena (nedostaju tajne GITHUB_DISPATCH_TOKEN / SKRIPTE_FOLDER_ID)."):
-        _zid = spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri)
+        _zid = spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri,
+                                   naslov=naslov, podnaslov=podnaslov)
         _ok, _poruka = pokreni_github_build_skripte(_token, _zid)
         if _ok:
             st.success(f"✅ Gradnja pokrenuta (zahtjev {_zid}, {len(_pogodaka)} zadataka). "
@@ -186,7 +197,8 @@ with c1:
         st.cache_data.clear()
 with c2:
     if st.button("💾 Samo zapiši zahtjev (za Colab)", disabled=not _pogodaka):
-        spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri)
+        spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri,
+                                   naslov=naslov, podnaslov=podnaslov)
         st.success(
             f"✅ Zahtjev spremljen: **{opis_filtara(filtri)}** / "
             f"**{'učenik' if verzija == 'ucenik' else 'profesor'}** / {len(_pogodaka)} zadataka. "

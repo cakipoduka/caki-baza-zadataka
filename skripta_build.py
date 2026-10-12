@@ -29,10 +29,17 @@ import tempfile
 import baza_zadataka_pipeline as bp
 
 # --- Izgled PDF-a (12.10.2026.) ---
-# A4, dva stupca, rjesenja na kraju (backmatter/solutions), tezina slovima L/S/T, CAKI podnozje.
+# Namjena: OBOSTRANI ispis na A4, ZICANI uvez po DULJEM rubu, sto manje papira.
+# - dva stupca, malo slovo (FONT_PT), uske margine osim UNUTARNJE (za uvez): inner veci od outer,
+#   pa je uvez uvijek na pravoj strani i na prednjoj i na straznjoj strani lista
+# - kompaktan naslovni blok (naslov + podnaslov lijevo, autor/datum/legenda desno), bez posebne
+#   naslovnice; bez zaglavlja; podnozje s brojem stranice na VANJSKOM rubu
+# - rjesenja na kraju (backmatter/solutions), tezina slovima L/S/T
 # Stil se dodaje kroz vlastiti XSL (STIL_XSL) koji nadograduje standardni PreTeXt LaTeX XSL
 # i samo upisuje dodatnu LaTeX preambulu (parametar latex.preamble.late).
-STUPCI = 2  # 1 = jedan stupac, 2 = dva stupca (ako slike prave probleme, vrati na 1)
+STUPCI = 2     # 1 = jedan stupac, 2 = dva stupca (ako slike prave probleme, vrati na 1)
+FONT_PT = 9    # velicina slova: 8, 9, 10, 11 ili 12 (10 = ugodnije za citanje, ~15% vise papira)
+MARGINE = "a4paper,inner=1.9cm,outer=1.0cm,top=1.1cm,bottom=1.5cm,footskip=0.65cm,columnsep=0.5cm"
 
 PUBLICATION_PTX = (
     '<?xml version="1.0" encoding="UTF-8"?>\n<publication>\n  <source>\n'
@@ -42,8 +49,8 @@ PUBLICATION_PTX = (
     # zadaci u tekstu bez rjesenja (rjesenja idu u poglavlje "Rjesenja" na kraju)
     '    <exercise-divisional statement="yes" hint="yes" answer="no" solution="no"/>\n'
     '  </common>\n'
-    '  <latex font-size="10" sides="one">\n'
-    '    <page><geometry>a4paper,left=1.8cm,right=1.8cm,top=1.9cm,bottom=2.4cm,columnsep=0.8cm</geometry></page>\n'
+    f'  <latex font-size="{FONT_PT}" sides="two">\n'
+    f'    <page><geometry>{MARGINE}</geometry></page>\n'
     '  </latex>\n'
     '  <html/>\n</publication>\n'
 )
@@ -57,42 +64,52 @@ PROJECT_PTX = (
 # LaTeX preambula (kasna, iza svih PreTeXt definicija pa ih smije prepisati).
 # %%LEGENDA%% i %%STUPCI%% zamjenjuje stil_xsl().
 STIL_PREAMBULA = r"""
-%% ===== CAKI stil skripte =====
+%% ===== CAKI stil skripte (kompaktno, obostrani ispis) =====
 \usepackage{xcolor}
 \definecolor{cakiplava}{HTML}{1F4E79}
 \definecolor{cakisiva}{HTML}{6B7280}
 \usepackage{polyglossia}
 \setmainlanguage{croatian}
 \usepackage{fancyhdr}
-\setlength{\headheight}{14pt}
 \renewcommand{\headrulewidth}{0pt}
-\renewcommand{\footrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0pt}
 \fancypagestyle{plain}{\fancyhf{}%
-  \fancyfoot[L]{\footnotesize\color{cakisiva}cakipoduka.com}%
-  \fancyfoot[C]{\footnotesize\color{cakisiva}Caki Centar}%
-  \fancyfoot[R]{\footnotesize\color{cakisiva}\thepage}}
+  \fancyfoot[LE,RO]{\footnotesize\color{cakisiva}\thepage}%
+  \fancyfoot[RE,LO]{\footnotesize\color{cakisiva}Caki Centar \textperiodcentered{} cakipoduka.com}}
 \pagestyle{plain}
-\setlength{\columnsep}{0.8cm}
+\setlength{\columnsep}{0.5cm}
 \setlength{\columnseprule}{0.2pt}
+\setlength{\medskipamount}{2pt plus 1pt minus 1pt}
 \hypersetup{linkcolor=cakiplava,urlcolor=cakiplava,citecolor=cakiplava}
 \renewcommand{\ptxtriangle}{}
-\tcbset{exercisespacingstyle/.style={before skip={2.2ex plus 0.6ex}}}
+\tcbset{exercisespacingstyle/.style={before skip={1.1ex plus 0.3ex}}}
 \makeatletter
+\renewcommand{\thispagestyle}[1]{}% PreTeXt gasi podnozje 1. stranice; ovdje ga zelimo
+\newcommand{\cakipodnaslov}{\par\vspace{0.2ex}\normalfont\color{cakisiva}}
 \renewcommand{\maketitle}{%
   \ifnum%%STUPCI%%=2 \twocolumn[{\fi
-  \begin{center}
-    {\color{cakisiva}\small\scshape\@author\par}\vspace{1.2ex}
-    {\color{cakiplava}\LARGE\bfseries\@title\par}\vspace{1ex}
-    {\color{cakisiva}\small\today\par}\vspace{0.8ex}
-    {\small\color{cakisiva}%%LEGENDA%%\par}
-    {\color{cakiplava}\rule{\linewidth}{0.8pt}}
-  \end{center}\vspace{1ex}
+  \noindent\begin{minipage}[b]{0.58\linewidth}
+    {\color{cakiplava}\Large\bfseries\let\\\cakipodnaslov\@title\par}
+  \end{minipage}\hfill
+  \begin{minipage}[b]{0.40\linewidth}\raggedleft\footnotesize\color{cakisiva}
+    \@author\par\today\par {}%%LEGENDA%%\par
+  \end{minipage}\par\vspace{0.3ex}
+  {\color{cakiplava}\rule{\linewidth}{0.7pt}}\vspace{0.8ex}
   \ifnum%%STUPCI%%=2 }]\fi}
 \makeatother
-\titleformat{\section}[hang]{\normalfont\Large\bfseries\color{cakiplava}}{\thesection}{0.7em}{#1}
-\titleformat{\subsection}[hang]{\normalfont\large\bfseries\color{cakiplava}}{\thesubsection}{0.7em}{#1}
-\titleformat{name=\subsection,numberless}[block]{\normalfont\large\bfseries\color{cakiplava}}{}{0pt}{#1}
-\titleformat{name=\subsubsection,numberless}[block]{\normalfont\normalsize\bfseries\color{cakisiva}}{}{0pt}{#1}
+\titleformat{\section}[hang]{\normalfont\large\bfseries\color{cakiplava}}{\thesection}{0.5em}{#1}
+\titlespacing*{\section}{0pt}{1.4ex plus 0.4ex}{0.6ex}
+\titleformat{\subsection}[hang]{\normalfont\normalsize\bfseries\color{cakiplava}}{\thesubsection}{0.5em}{#1}
+\titlespacing*{\subsection}{0pt}{1.0ex plus 0.3ex}{0.2ex}
+%% naslov "Zadaci" ispod svakog potpoglavlja je suvisan (svaki zadatak ima svoj naslov) - ne ispisuje se
+\DeclareDocumentEnvironment{exercises-subsection-numberless}{mmmmmmm}{}{}
+\DeclareDocumentEnvironment{exercises-subsubsection-numberless}{mmmmmmm}{}{}
+%% rjesenja na kraju: sitnije slovo i gusto (to je referentni dio, ne gradivo)
+\tcbset{divisionsolutionstyle/.style={bwminimalstyle, runintitlestyle, before skip={0.5ex plus 0.2ex}, after title={\space}, breakable, before upper app={\ptxsetparstyle}}}
+\RenewDocumentEnvironment{solutions-section}{mmmmmmm}
+{\renewcommand{\divisionnameptx}{#1}\renewcommand{\titleptx}{#2}\renewcommand{\subtitleptx}{#3}%
+ \renewcommand{\shortitleptx}{#4}\renewcommand{\authorsptx}{#5}\renewcommand{\epigraphptx}{#6}%
+ \section[{#4}]{#2}\label{#7}\footnotesize}{}
 \tcbset{divisionexercisestyle/.style={bwminimalstyle, runintitlestyle, exercisespacingstyle, left=0pt, breakable, before upper app={\ptxsetparstyle}}}
 \renewtcolorbox{divisionexercise}[4]{divisionexercisestyle,
   before title={\textbf{\color{cakiplava}Zadatak \ifnum\value{subsection}>0 \thesubsection\else\thesection\fi.#1.}\enspace},
@@ -213,7 +230,8 @@ def uploadaj_pdf(drive, folder_id: str, putanja_pdf: str, naziv: str) -> str:
 
 
 def naziv_pdfa(zahtjev: dict) -> str:
-    opis = bp.opis_filtara(zahtjev.get("filtri"))
+    opis = (zahtjev.get("naslov") or "").strip() or bp.opis_filtara(zahtjev.get("filtri"))
+    opis = opis.translate(str.maketrans("\u010d\u0107\u017e\u0161\u0111\u010c\u0106\u017d\u0160\u0110", "cczsdCCZSD"))
     sigurno = re.sub(r"[^A-Za-z0-9_-]+", "_", opis).strip("_")[:60] or "skripta"
     return f"skripta_{zahtjev.get('zahtjev_id', '')}_{sigurno}.pdf"
 
