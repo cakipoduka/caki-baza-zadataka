@@ -1,0 +1,45 @@
+# Gradi PDF skripte na zahtjev sa stranice "Skripta" (Streamlit salje workflow_dispatch).
+# Logovi ovog repoa su JAVNI - skripta_build.py zato ispisuje samo broj zadataka i status.
+name: Izgradi skriptu (PDF)
+
+on:
+  workflow_dispatch:
+    inputs:
+      zahtjev_id:
+        description: "ID zahtjeva iz taba Skripta_zahtjevi"
+        required: true
+        type: string
+
+concurrency:
+  group: skripta-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: LaTeX (xelatex) i fontovi
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            texlive-xetex texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended texlive-lang-european fonts-dejavu latexmk
+
+      - name: Python paketi
+        run: pip install gspread google-auth google-api-python-client requests anthropic pretext
+
+      - name: Izgradi PDF
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          SLIKE_FOLDER_ID: ${{ secrets.SLIKE_FOLDER_ID }}
+          SKRIPTE_FOLDER_ID: ${{ secrets.SKRIPTE_FOLDER_ID }}
+          ZAHTJEV_ID: ${{ inputs.zahtjev_id }}
+        run: python skripta_build.py --zahtjev-id "$ZAHTJEV_ID"

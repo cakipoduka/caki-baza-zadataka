@@ -19,8 +19,12 @@ import json
 import streamlit as st
 
 from baza_zadataka_pipeline import (
+    get_drive_service,
     get_gspread_client,
     get_sifrarnik_cjelina,
+    pokreni_github_build_skripte,
+    popis_zahtjeva_skripte,
+    preuzmi_datoteku_iz_drivea,
     spremi_zahtjev_skripte,
     ucitaj_zadnji_zahtjev_skripte,
 )
@@ -165,14 +169,49 @@ if _pogodaka:
     st.dataframe([{"cjelina": c, "zadataka": n} for c, n in sorted(_po.items())], hide_index=True)
 
 st.divider()
-if st.button("💾 Pripremi zahtjev za Colab", type="primary", disabled=not _pogodaka):
-    spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri)
-    st.success(
-        f"✅ Zahtjev spremljen: **{opis_filtara(filtri)}** / "
-        f"**{'učenik' if verzija == 'ucenik' else 'profesor'}** / {len(_pogodaka)} zadataka. "
-        "Sad pokreni Korak 3.1s u Colabu - pročitat će ovaj zahtjev."
-    )
+_token = st.secrets.get("GITHUB_DISPATCH_TOKEN")
+_pdf_spreman = bool(_token) and bool(st.secrets.get("SKRIPTE_FOLDER_ID"))
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("📄 Izgradi PDF (automatski, ~5 min)", type="primary",
+                 disabled=not _pogodaka or not _pdf_spreman,
+                 help=None if _pdf_spreman else "Automatska gradnja još nije uključena (nedostaju tajne GITHUB_DISPATCH_TOKEN / SKRIPTE_FOLDER_ID)."):
+        _zid = spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri)
+        _ok, _poruka = pokreni_github_build_skripte(_token, _zid)
+        if _ok:
+            st.success(f"✅ Gradnja pokrenuta (zahtjev {_zid}, {len(_pogodaka)} zadataka). "
+                       "Za ~5 minuta klikni „Osvježi status“ dolje i preuzmi PDF.")
+        else:
+            st.error(f"❌ {_poruka}")
+        st.cache_data.clear()
+with c2:
+    if st.button("💾 Samo zapiši zahtjev (za Colab)", disabled=not _pogodaka):
+        spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri)
+        st.success(
+            f"✅ Zahtjev spremljen: **{opis_filtara(filtri)}** / "
+            f"**{'učenik' if verzija == 'ucenik' else 'profesor'}** / {len(_pogodaka)} zadataka. "
+            "Sad pokreni Korak 3.1s u Colabu - pročitat će ovaj zahtjev."
+        )
+        st.cache_data.clear()
+
+st.divider()
+st.subheader("Zadnje izgradnje")
+if st.button("🔄 Osvježi status"):
     st.cache_data.clear()
+_STATUS = {"cekanje": "⏳ čeka", "u_radu": "🛠️ u izradi", "gotovo": "✅ gotovo", "greska": "❌ greška"}
+_zadnji_popis = [z for z in popis_zahtjeva_skripte(init_sheet()) if z.get("zahtjev_id")]
+if not _zadnji_popis:
+    st.caption("Još nema automatskih izgradnji.")
+for z in _zadnji_popis:
+    st.markdown(f"**{z['vrijeme']}** · {opis_filtara(z['filtri'])} · {_STATUS.get(z['status'], z['status'] or '—')}"
+                + (f" · _{z['poruka']}_" if z.get("poruka") else ""))
+    if z["status"] == "gotovo" and z.get("pdf_drive_id"):
+        try:
+            _bytes = preuzmi_datoteku_iz_drivea(get_drive_service(json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])), z["pdf_drive_id"])
+            st.download_button("⬇️ Preuzmi PDF", _bytes, file_name=f"skripta_{z['zahtjev_id']}.pdf",
+                               mime="application/pdf", key=f"pdf_{z['zahtjev_id']}")
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"PDF se ne može dohvatiti ({type(e).__name__}).")
 
 st.divider()
 st.subheader("Posljednji zapisan zahtjev")

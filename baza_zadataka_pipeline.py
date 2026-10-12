@@ -449,24 +449,41 @@ def get_teorija_po_potpoglavlju(sheet) -> dict:
 # Ova stranica NIKAD sama ne pokrece build - samo priprema, Caki i dalje rucno pokrece
 # Colab kad zeli, isto kao dosad za obicni build.
 
-SKRIPTA_ZAHTJEVI_HEADERS = ["cjelina", "verzija_teorije", "filtriraj_u_skriptu", "vrijeme", "filtri_json"]
+SKRIPTA_ZAHTJEVI_HEADERS = ["cjelina", "verzija_teorije", "filtriraj_u_skriptu", "vrijeme", "filtri_json",
+                            "zahtjev_id", "status", "poruka", "pdf_drive_id"]
+# status: "" (stari zahtjev) | "cekanje" | "u_radu" | "gotovo" | "greska"
+# 12.10.2026.: zahtjev_id/status/poruka/pdf_drive_id sluze za automatsku gradnju PDF-a na GitHub Actions
+# (radnik azurira status, Streamlit ga cita i nudi PDF) - Colab ih ignorira.
+
+def _osiguraj_zaglavlje_zahtjeva(ws):
+    """Dodaje u zaglavlje taba Skripta_zahtjevi stupce koji nedostaju (stari tab), redom."""
+    zaglavlje = ws.row_values(1)
+    nedostaje = [h for h in SKRIPTA_ZAHTJEVI_HEADERS if h not in zaglavlje]
+    # Google tab ima fiksnu mrezu (stari tab: samo 4 stupca) - upis izvan nje daje
+    # "exceeds grid limits", pa PRVO prosirimo mrezu.
+    potrebno = len(zaglavlje) + len(nedostaje)
+    trenutno = getattr(ws, "col_count", potrebno)
+    if nedostaje and trenutno < potrebno:
+        ws.add_cols(potrebno - trenutno)
+    for h in nedostaje:
+        ws.update_cell(1, len(zaglavlje) + 1, h)
+        zaglavlje = zaglavlje + [h]
+    return zaglavlje
 
 def spremi_zahtjev_skripte(sheet, cjelina: str = "", verzija_teorije: str = "ucenik",
-                            filtriraj_u_skriptu: bool = True, filtri: dict = None) -> None:
+                            filtriraj_u_skriptu: bool = True, filtri: dict = None) -> str:
     """Dodaje NOV redak u tab 'Skripta_zahtjevi' (uvijek append, nikad prepisivanje - stari
     zahtjevi ostaju kao povijest, Colab uvijek cita samo POSLJEDNJI, v.
-    ucitaj_zadnji_zahtjev_skripte).
+    ucitaj_zadnji_zahtjev_skripte). Vraca zahtjev_id (kratki jedinstveni kod).
 
-    11.10.2026.: novi parametar `filtri` (dict, v. filtriraj_zadatke_za_skriptu.normaliziraj_filtre:
+    11.10.2026.: parametar `filtri` (dict, v. filtriraj_zadatke_za_skriptu.normaliziraj_filtre:
     razine, cjeline, izvori, biblioteke, godina_od, godina_do, samo_u_skriptu) sprema se kao JSON
     u stupac 'filtri_json'. Ako filtri nije zadan, ponasa se kao prije (cjelina + filtriraj_u_skriptu).
-    Stari tab bez stupca 'filtri_json' dobiva ga automatski u zaglavlju."""
+    Stari tab dobiva nove stupce u zaglavlju automatski."""
+    import uuid
     from datetime import datetime
     ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
-    zaglavlje = ws.row_values(1)
-    if "filtri_json" not in zaglavlje:
-        ws.update_cell(1, len(zaglavlje) + 1, "filtri_json")
-        zaglavlje = zaglavlje + ["filtri_json"]
+    zaglavlje = _osiguraj_zaglavlje_zahtjeva(ws)
     if filtri is not None:
         f = normaliziraj_filtre(filtri)
         cjelina = f["cjeline"][0] if len(f["cjeline"]) == 1 else cjelina
@@ -474,28 +491,22 @@ def spremi_zahtjev_skripte(sheet, cjelina: str = "", verzija_teorije: str = "uce
         filtri_json = json.dumps(f, ensure_ascii=False)
     else:
         filtri_json = ""
+    zahtjev_id = uuid.uuid4().hex[:10]
     vrijednosti = {
         "cjelina": cjelina, "verzija_teorije": verzija_teorije,
         "filtriraj_u_skriptu": "DA" if filtriraj_u_skriptu else "NE",
         "vrijeme": datetime.now().strftime("%Y-%m-%d %H:%M"), "filtri_json": filtri_json,
+        "zahtjev_id": zahtjev_id, "status": "cekanje", "poruka": "", "pdf_drive_id": "",
     }
     ws.append_row([vrijednosti.get(h, "") for h in zaglavlje])
+    return zahtjev_id
 
-def ucitaj_zadnji_zahtjev_skripte(sheet):
-    """Vraca dict {cjelina, verzija_teorije, filtriraj_u_skriptu (bool), vrijeme, filtri (dict)}
-    za POSLJEDNJI zapisan zahtjev, ili None ako tab ne postoji/je prazan. `filtri` je UVIJEK
-    normaliziran dict: ako zahtjev nema filtri_json (stari zahtjev), izvodi se iz cjelina +
-    filtriraj_u_skriptu - stari zahtjevi rade identicno kao prije."""
-    ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
-    all_values = ws.get_all_values()
-    if len(all_values) < 2:
-        return None
-    headers, zadnji = all_values[0], all_values[-1]
+def _zahtjev_iz_retka(headers, redak, broj_retka=None):
     idx = {h: i for i, h in enumerate(headers)}
 
     def _get(col):
         i = idx.get(col)
-        return zadnji[i] if i is not None and i < len(zadnji) else ""
+        return redak[i] if i is not None and i < len(redak) else ""
 
     cjelina = _get("cjelina")
     filtriraj = _get("filtriraj_u_skriptu").strip().upper() == "DA"
@@ -514,7 +525,95 @@ def ucitaj_zadnji_zahtjev_skripte(sheet):
         "filtriraj_u_skriptu": filtriraj,
         "vrijeme": _get("vrijeme"),
         "filtri": filtri,
+        "zahtjev_id": _get("zahtjev_id"),
+        "status": _get("status"),
+        "poruka": _get("poruka"),
+        "pdf_drive_id": _get("pdf_drive_id"),
+        "redak": broj_retka,
     }
+
+def ucitaj_zadnji_zahtjev_skripte(sheet):
+    """Vraca dict {cjelina, verzija_teorije, filtriraj_u_skriptu (bool), vrijeme, filtri (dict),
+    zahtjev_id, status, poruka, pdf_drive_id, redak} za POSLJEDNJI zapisan zahtjev, ili None ako
+    tab ne postoji/je prazan. `filtri` je UVIJEK normaliziran dict: ako zahtjev nema filtri_json
+    (stari zahtjev), izvodi se iz cjelina + filtriraj_u_skriptu - stari zahtjevi rade kao prije."""
+    ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
+    all_values = ws.get_all_values()
+    if len(all_values) < 2:
+        return None
+    return _zahtjev_iz_retka(all_values[0], all_values[-1], len(all_values))
+
+def nadji_zahtjev_skripte(sheet, zahtjev_id: str):
+    """Zahtjev s danim zahtjev_id (isti oblik kao ucitaj_zadnji_zahtjev_skripte) ili None."""
+    ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
+    vr = ws.get_all_values()
+    if len(vr) < 2 or "zahtjev_id" not in vr[0]:
+        return None
+    k = vr[0].index("zahtjev_id")
+    for n in range(len(vr) - 1, 0, -1):  # od najnovijeg
+        if k < len(vr[n]) and vr[n][k] == zahtjev_id:
+            return _zahtjev_iz_retka(vr[0], vr[n], n + 1)
+    return None
+
+def azuriraj_status_zahtjeva(sheet, zahtjev_id: str, status: str, poruka: str = "", pdf_drive_id: str = ""):
+    """Postavlja status/poruka/pdf_drive_id retka s danim zahtjev_id. Vraca True ako je nasao redak.
+    `poruka` neka je KRATKA i bez sadrzaja zadataka (cuva se u Sheetu, ne u logu)."""
+    ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
+    zahtjev = nadji_zahtjev_skripte(sheet, zahtjev_id)
+    if not zahtjev:
+        return False
+    zaglavlje = ws.row_values(1)
+    for naziv, vrijednost in (("status", status), ("poruka", poruka[:300]), ("pdf_drive_id", pdf_drive_id)):
+        ws.update_cell(zahtjev["redak"], zaglavlje.index(naziv) + 1, vrijednost)
+    return True
+
+GITHUB_REPO = "cakipoduka/caki-baza-zadataka"
+GITHUB_WORKFLOW_SKRIPTA = "skripta.yml"
+
+def pokreni_github_build_skripte(token: str, zahtjev_id: str, repo: str = GITHUB_REPO,
+                                  workflow: str = GITHUB_WORKFLOW_SKRIPTA, ref: str = "main",
+                                  post=None):
+    """Pokrece GitHub Actions workflow koji gradi PDF skripte za dani zahtjev_id.
+    Vraca (ok: bool, poruka: str). `token` je GitHub fine-grained token SAMO s pravom
+    'Actions: write' na ovaj repo (u Streamlit Secrets kao GITHUB_DISPATCH_TOKEN). Poruka greske
+    nikad ne sadrzi token. `post` je zamjenjiv radi testiranja (zadano requests.post)."""
+    post = post or requests.post
+    url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches"
+    try:
+        r = post(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                               "X-GitHub-Api-Version": "2022-11-28"},
+                 json={"ref": ref, "inputs": {"zahtjev_id": zahtjev_id}}, timeout=20)
+    except Exception as e:  # noqa: BLE001
+        return False, f"Nije moguce kontaktirati GitHub ({type(e).__name__})."
+    if r.status_code == 204:
+        return True, "Gradnja pokrenuta."
+    if r.status_code in (401, 403):
+        return False, "GitHub je odbio token (istekao ili bez prava 'Actions: write')."
+    if r.status_code == 404:
+        return False, "Workflow ili repo nije pronadjen (je li skripta.yml na grani main?)."
+    return False, f"GitHub je vratio gresku {r.status_code}."
+
+def preuzmi_datoteku_iz_drivea(drive_service, file_id: str) -> bytes:
+    """Sadrzaj Drive datoteke (npr. izgradjeni PDF skripte) kao bytes - za st.download_button."""
+    from googleapiclient.http import MediaIoBaseDownload
+    zahtjev = drive_service.files().get_media(fileId=file_id, supportsAllDrives=True)
+    buf = io.BytesIO()
+    preuzimac = MediaIoBaseDownload(buf, zahtjev)
+    gotovo = False
+    while not gotovo:
+        _, gotovo = preuzimac.next_chunk()
+    return buf.getvalue()
+
+def popis_zahtjeva_skripte(sheet, najvise: int = 8) -> list:
+    """Zadnjih `najvise` zahtjeva (najnoviji prvi) u istom obliku kao ucitaj_zadnji_zahtjev_skripte."""
+    ws = get_or_create_worksheet(sheet, "Skripta_zahtjevi", SKRIPTA_ZAHTJEVI_HEADERS)
+    vr = ws.get_all_values()
+    izlaz = []
+    for n in range(len(vr) - 1, 0, -1):
+        izlaz.append(_zahtjev_iz_retka(vr[0], vr[n], n + 1))
+        if len(izlaz) >= najvise:
+            break
+    return izlaz
 
 # --- PreTeXt XML generiranje (Korak 3.1) ---
 #
