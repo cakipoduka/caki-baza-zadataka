@@ -658,10 +658,16 @@ def _xml_escape(text):
             .replace("<", "&lt;")
             .replace(">", "&gt;"))
 
+def _escape_postotak_u_matematici(math):
+    r"""U LaTeX-u % pocinje komentar: '\(7.847%\)' ostavi formulu nezatvorenu ('Missing $ inserted').
+    Normalizacija OCR-a mice \% -> %, sto je ispravno u TEKSTU (PreTeXt ga tamo sam escapea), ali
+    unutar matematike PreTeXt prosljedjuje sadrzaj doslovno, pa % mora biti \%."""
+    return re.sub(r"(?<!\\)%", r"\\%", math)
+
 def _latex_to_pretext_math(text):
     # Zamijeni $...$ (inline LaTeX) u <m>...</m> (PreTeXt inline math oznaka).
     # Osnovna konverzija - ne hvata ugniježđene $ znakove unutar $...$.
-    return re.sub(r"\$([^$]+)\$", r"<m>\1</m>", text)
+    return re.sub(r"\$([^$]+)\$", lambda m: "<m>" + _escape_postotak_u_matematici(m.group(1)) + "</m>", text)
 
 def _pretext_text(raw_text):
     return _latex_to_pretext_math(_xml_escape(_normalizuj_ostatke_ocr_escapinga(raw_text)))
@@ -689,7 +695,7 @@ def _pretext_math_or_text(raw):
         return _pretext_text(raw)
     if _izgleda_kao_recenica(raw):
         return _xml_escape(raw)
-    return f"<m>{_xml_escape(raw)}</m>"
+    return f"<m>{_escape_postotak_u_matematici(_xml_escape(raw))}</m>"
 
 # Težina: sortiranje unutar potpoglavlja (lako -> srednje -> tesko) + vizualna oznaka
 # [izvor, boja+težina] na početku svakog zadatka. Nepoznata/prazna težina ide na KRAJ

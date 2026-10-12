@@ -89,15 +89,34 @@ def skini_slike(drive, folder_id: str, nazivi, odrediste: str) -> int:
     return skinuto
 
 
+def izvuci_latex_greske(tekst: str, najvise: int = 8) -> str:
+    """Iz izlaza `pretext build pdf` izvuce samo LaTeX greske ('! ...') i broj retka ('l.NNN'),
+    bez teksta izvora (da javni log ne sadrzi sadrzaj zadataka)."""
+    greske, zadnja = [], None
+    for linija in (tekst or "").splitlines():
+        if linija.startswith("! "):
+            zadnja = linija[:120]
+        elif zadnja is not None:
+            m = re.match(r"l\.(\d+)", linija)
+            if m:
+                greske.append(zadnja + "  (main.tex, redak " + m.group(1) + ")")
+                zadnja = None
+    if zadnja is not None:
+        greske.append(zadnja)
+    if not greske:
+        greske = [l[:160] for l in (tekst or "").strip().splitlines()[-4:]]
+    return "LaTeX greske:\n" + "\n".join(greske[:najvise])
+
+
 def pokreni_pretext_pdf(korijen: str, izvrsi=subprocess.run) -> str:
     """Pokrece `pretext build pdf` i vraca putanju do PDF-a (SkriptaGreska ako ne uspije).
     `izvrsi` je zamjenjiv radi testiranja."""
     r = izvrsi(["pretext", "build", "pdf"], cwd=korijen, capture_output=True, text=True, timeout=1500)
     pdfovi = glob.glob(os.path.join(korijen, "output", "pdf", "*.pdf"))
     if r.returncode != 0 or not pdfovi:
-        # u log samo zadnjih par redaka TeX-a (greske paketa), ne sadrzaj zadataka
-        zadnje = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-6:]
-        print("\n".join(zadnje))
+        # u log (javan na GitHubu) idu samo LaTeX poruke o greskama + broj retka u main.tex,
+        # NIKAD sadrzaj zadataka
+        print(izvuci_latex_greske((r.stdout or "") + "\n" + (r.stderr or "")))
         raise SkriptaGreska("Gradnja PDF-a nije uspjela (pogledaj log GitHub Actions).")
     return pdfovi[0]
 
