@@ -28,17 +28,94 @@ import tempfile
 
 import baza_zadataka_pipeline as bp
 
+# --- Izgled PDF-a (12.10.2026.) ---
+# A4, dva stupca, rjesenja na kraju (backmatter/solutions), tezina slovima L/S/T, CAKI podnozje.
+# Stil se dodaje kroz vlastiti XSL (STIL_XSL) koji nadograduje standardni PreTeXt LaTeX XSL
+# i samo upisuje dodatnu LaTeX preambulu (parametar latex.preamble.late).
+STUPCI = 2  # 1 = jedan stupac, 2 = dva stupca (ako slike prave probleme, vrati na 1)
+
 PUBLICATION_PTX = (
     '<?xml version="1.0" encoding="UTF-8"?>\n<publication>\n  <source>\n'
-    '    <directories external="../external" generated="../generated-assets"/>\n'
-    '  </source>\n  <html/>\n</publication>\n'
+    '    <directories generated="../generated-assets"/>\n'
+    '  </source>\n'
+    '  <common>\n'
+    # zadaci u tekstu bez rjesenja (rjesenja idu u poglavlje "Rjesenja" na kraju)
+    '    <exercise-divisional statement="yes" hint="yes" answer="no" solution="no"/>\n'
+    '  </common>\n'
+    '  <latex font-size="10" sides="one">\n'
+    '    <page><geometry>a4paper,left=1.8cm,right=1.8cm,top=1.9cm,bottom=2.4cm,columnsep=0.8cm</geometry></page>\n'
+    '  </latex>\n'
+    '  <html/>\n</publication>\n'
 )
 PROJECT_PTX = (
     '<?xml version="1.0" encoding="UTF-8"?>\n<project ptx-version="2">\n  <targets>\n'
     '    <target name="html" format="html"/>\n'
-    '    <target name="pdf" format="pdf" pdf-method="xelatex"/>\n'
+    '    <target name="pdf" format="pdf" pdf-method="xelatex" xsl="skripta_stil.xsl"/>\n'
     '  </targets>\n</project>\n'
 )
+
+# LaTeX preambula (kasna, iza svih PreTeXt definicija pa ih smije prepisati).
+# %%LEGENDA%% i %%STUPCI%% zamjenjuje stil_xsl().
+STIL_PREAMBULA = r"""
+%% ===== CAKI stil skripte =====
+\usepackage{xcolor}
+\definecolor{cakiplava}{HTML}{1F4E79}
+\definecolor{cakisiva}{HTML}{6B7280}
+\usepackage{polyglossia}
+\setmainlanguage{croatian}
+\usepackage{fancyhdr}
+\setlength{\headheight}{14pt}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0.3pt}
+\fancypagestyle{plain}{\fancyhf{}%
+  \fancyfoot[L]{\footnotesize\color{cakisiva}cakipoduka.com}%
+  \fancyfoot[C]{\footnotesize\color{cakisiva}Caki Centar}%
+  \fancyfoot[R]{\footnotesize\color{cakisiva}\thepage}}
+\pagestyle{plain}
+\setlength{\columnsep}{0.8cm}
+\setlength{\columnseprule}{0.2pt}
+\hypersetup{linkcolor=cakiplava,urlcolor=cakiplava,citecolor=cakiplava}
+\renewcommand{\ptxtriangle}{}
+\tcbset{exercisespacingstyle/.style={before skip={2.2ex plus 0.6ex}}}
+\makeatletter
+\renewcommand{\maketitle}{%
+  \ifnum%%STUPCI%%=2 \twocolumn[{\fi
+  \begin{center}
+    {\color{cakisiva}\small\scshape\@author\par}\vspace{1.2ex}
+    {\color{cakiplava}\LARGE\bfseries\@title\par}\vspace{1ex}
+    {\color{cakisiva}\small\today\par}\vspace{0.8ex}
+    {\small\color{cakisiva}%%LEGENDA%%\par}
+    {\color{cakiplava}\rule{\linewidth}{0.8pt}}
+  \end{center}\vspace{1ex}
+  \ifnum%%STUPCI%%=2 }]\fi}
+\makeatother
+\titleformat{\section}[hang]{\normalfont\Large\bfseries\color{cakiplava}}{\thesection}{0.7em}{#1}
+\titleformat{\subsection}[hang]{\normalfont\large\bfseries\color{cakiplava}}{\thesubsection}{0.7em}{#1}
+\titleformat{name=\subsection,numberless}[block]{\normalfont\large\bfseries\color{cakiplava}}{}{0pt}{#1}
+\titleformat{name=\subsubsection,numberless}[block]{\normalfont\normalsize\bfseries\color{cakisiva}}{}{0pt}{#1}
+\tcbset{divisionexercisestyle/.style={bwminimalstyle, runintitlestyle, exercisespacingstyle, left=0pt, breakable, before upper app={\ptxsetparstyle}}}
+\renewtcolorbox{divisionexercise}[4]{divisionexercisestyle,
+  before title={\textbf{\color{cakiplava}Zadatak \ifnum\value{subsection}>0 \thesubsection\else\thesection\fi.#1.}\enspace},
+  title={\notblank{#2}{#2}{}}, after title={\notblank{#2}{\space}{}},
+  phantom={\hypertarget{#4}{}},
+  after={\notblank{#3}{\par\rule{\ptxworkspacestrutwidth}{#3}\par\vfill}{\par}}}
+"""
+
+STIL_XSL = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">\n'
+    '  <xsl:import href="./core/pretext-latex.xsl"/>\n'
+    '  <xsl:param name="latex.preamble.late"><xsl:text>%%PREAMBULA%%</xsl:text></xsl:param>\n'
+    '</xsl:stylesheet>\n'
+)
+
+
+def stil_xsl(stupci: int = None) -> str:
+    """Vraca sadrzaj custom XSL-a sa stilom (legenda i broj stupaca umetnuti, XML-escapeano)."""
+    from xml.sax.saxutils import escape
+    n = STUPCI if stupci is None else stupci
+    preambula = STIL_PREAMBULA.replace("%%LEGENDA%%", bp.TEZINA_LEGENDA).replace("%%STUPCI%%", str(int(n)))
+    return STIL_XSL.replace("%%PREAMBULA%%", escape(preambula))
 
 
 class SkriptaGreska(Exception):
@@ -55,6 +132,9 @@ def napisi_pretext_projekt(korijen: str, xml: str, slike_dir: str) -> None:
         f.write(PUBLICATION_PTX)
     with open(os.path.join(korijen, "project.ptx"), "w", encoding="utf-8") as f:
         f.write(PROJECT_PTX)
+    os.makedirs(os.path.join(korijen, "xsl"), exist_ok=True)
+    with open(os.path.join(korijen, "xsl", "skripta_stil.xsl"), "w", encoding="utf-8") as f:
+        f.write(stil_xsl())
     cilj = os.path.join(korijen, "external", "images")
     if os.path.exists(cilj):
         shutil.rmtree(cilj)

@@ -725,16 +725,19 @@ def _puni_sort_key(row):
     return (_tezina_sort_key(row), _redoslijed_u_potpoglavlju_sort_key(row))
 
 _TEZINA_OZNAKA = {
-    "lako": "🟢 lagano",
-    "srednje": "🟠 srednje",
-    "tesko": "🔴 teško",
-    "teško": "🔴 teško",
+    # 12.10.2026.: slova umjesto emoji kruzica (fontovi u PDF-u nemaju emoji). Legenda je u
+    # naslovnom dijelu skripte (TEZINA_LEGENDA).
+    "lako": "L",
+    "lagano": "L",
+    "srednje": "S",
+    "tesko": "T",
+    "teško": "T",
 }
+TEZINA_LEGENDA = "Oznake težine: L – lagano, S – srednje, T – teško."
 
 def _oznaka_izvor_tezina(row):
-    """Gradi prefiks '[izvor, 🟢 lagano] ' ispred teksta zadatka. Boja ide preko emoji
-    kruga (radi identično u HTML izlazu bez diranja PreTeXt/CSS teme - PreTeXt namjerno
-    ne dopušta proizvoljan inline style po zadatku, boje idu isključivo kroz CSS klase teme).
+    """Gradi prefiks '[izvor, L] ' ispred teksta zadatka (L/S/T = lagano/srednje/teško,
+    vidi TEZINA_LEGENDA). Slova umjesto emoji kružića jer ih PDF fontovi ne ispisuju.
 
     Naziv izvora ovisi o izvor_tip (4 moguće vrijednosti u Sheetu: matura, zbirka,
     udzbenik, vlastiti_materijal):
@@ -1006,6 +1009,47 @@ def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, sl
     lines.append('</pretext>')
     return "\n".join(lines), broj_slika
 
+# 12.10.2026. - izgled PDF-a skripte: hrvatski nazivi blokova (PreTeXt nema hr-HR lokalizaciju,
+# pa ih docinfo/rename prepisuje), naslovni dio i legenda tezine.
+SKRIPTA_AUTOR = "Caki Centar"
+SKRIPTA_WEB = "cakipoduka.com"
+_SKRIPTA_RENAME = {
+    "exercises": "Zadaci", "exercise": "Zadatak", "example": "Primjer", "hint": "Uputa",
+    "solution": "Rješenje", "solutions": "Rješenja", "answer": "Odgovor",
+    "toc": "Sadržaj", "figure": "Slika", "table": "Tablica",
+}
+
+def _skripta_docinfo_lines():
+    lines = ['  <docinfo>']
+    lines.append('    <directories external="../external"/>')
+    for element, naziv in _SKRIPTA_RENAME.items():
+        lines.append(f'    <rename element="{element}">{_xml_escape(naziv)}</rename>')
+    lines.append('  </docinfo>')
+    return lines
+
+def _skripta_frontmatter_lines():
+    """Naslovni podaci (autor, web) u bibinfo; legenda tezine se ispisuje u LaTeX naslovu
+    (skripta_build.STIL_PREAMBULA)."""
+    return [
+        '    <frontmatter>',
+        '      <bibinfo>',
+        f'        <author><personname>{_xml_escape(SKRIPTA_AUTOR)}</personname>'
+        f'<affiliation><institution>{_xml_escape(SKRIPTA_WEB)}</institution></affiliation></author>',
+        '      </bibinfo>',
+        '      <titlepage><titlepage-items/></titlepage>',
+        '    </frontmatter>',
+    ]
+
+def _skripta_backmatter_lines():
+    """Rjesenja svih zadataka skupljena na kraju skripte (u tekstu ostaju samo zadaci)."""
+    return [
+        '    <backmatter>',
+        '      <solutions divisional="solution">',
+        '        <title>Rješenja</title>',
+        '      </solutions>',
+        '    </backmatter>',
+    ]
+
 def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, slike_izvor_dir,
                          teorija_po_potpoglavlju=None):
     """11.10.2026. - JEDNA funkcija koju Colab zove za skriptu: uzme SVE retke taba 'Zadaci'
@@ -1028,8 +1072,10 @@ def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, 
     redoslijed = [c for c in potpoglavlja_po_cjelini if c in po_cjelini]
     redoslijed += sorted(c for c in po_cjelini if c not in redoslijed)
 
-    lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>',
-             '  <article xml:id="skripta">', f'    <title>{_xml_escape(naslov)}</title>']
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>']
+    lines += _skripta_docinfo_lines()
+    lines += ['  <article xml:id="skripta">', f'    <title>{_xml_escape(naslov)}</title>']
+    lines += _skripta_frontmatter_lines()
     broj_slika = 0
     jedna = len(redoslijed) == 1
     for c in redoslijed:
@@ -1040,10 +1086,17 @@ def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, 
             po_cjelini[c], f"skripta-{c}", potpoglavlja_po_cjelini.get(c),
             images_dir_abs, slike_izvor_dir, cjelina=c,
             teorija_po_potpoglavlju=teorija_po_potpoglavlju, verzija_teorije=verzija)
+        if not jedna:
+            # cjelina je <section>, pa su potpoglavlja unutar nje <subsection> (PreTeXt ne
+            # dopusta <section> unutar <section>; bez ovoga je numeracija ravna 1,2,3...
+            # umjesto 1, 1.1, 1.2 i poglavlje "Rjesenja" ostaje prazno).
+            inner = [l.replace("<section ", "<subsection ").replace("</section>", "</subsection>")
+                     for l in inner]
         lines.extend(inner)
         broj_slika += s_
         if not jedna:
             lines.append('    </section>')
+    lines += _skripta_backmatter_lines()
     lines += ['  </article>', '</pretext>']
     return "\n".join(lines), broj_slika, len(odabrani), naslov
 

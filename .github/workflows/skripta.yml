@@ -33,7 +33,7 @@ jobs:
             texlive-fonts-recommended texlive-lang-european fonts-dejavu latexmk
 
       - name: Python paketi
-        run: pip install gspread google-auth google-api-python-client requests anthropic pretext
+        run: pip install gspread google-auth google-api-python-client requests anthropic "pretext==2.55.0"
 
       - name: Izgradi PDF
         env:

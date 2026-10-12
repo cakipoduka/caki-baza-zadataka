@@ -1,2 +1,13 @@
 __pycache__/ai_prijedlozi.cpython-310.pyc
 pages/__pycache__/7_ai_kontrola.cpython-310.pyc
+*.pyc
+
+# --- TAJNE: nikad na GitHub (dodano 11.10.2026., zadatak 03) ---
+.streamlit/secrets.toml
+secrets.toml
+*.json.key
+service_account*.json
+.env
+
+# --- Python smeće ---
+__pycache__/
