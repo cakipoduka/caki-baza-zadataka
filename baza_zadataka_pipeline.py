@@ -198,7 +198,7 @@ F2. konacan_odgovor za zadatke s brojčanim odgovorom UKLJUČUJE jedinicu (npr. 
 F3. Ispitna knjižica iz fizike ima 1. dio (višestruki izbor s četiri odgovora -> tip_zadatka="visestruki_izbor") i 2. dio (zadaci produženog odgovora s postupkom i mjernom jedinicom -> "prosireni_odgovor"). "kratki_odgovor" koristi samo kad se traži samo broj ili jedinica bez postupka.
 F4. Crteži, skice pokusa, grafovi (npr. v-t graf), strujni krugovi i zrake kod leća i zrcala su DIO zadatka: slika_zadana="da" i slika_url prema točki 12. NIKAD ne izmišljaj vrijednosti koje se vide samo na slici i ne možeš ih pročitati iz teksta. vizualni_potencijal je za fiziku uvijek "ne".
 F5. Popis konstanti i formula na početku ispita (npr. g, c, h, e, konstante plina) NIJE zadatak - ne pretvaraj ga u zadatke i ne dodaji konstante koje u tekstu zadatka ne stoje.
-F6. 'kategorija' je potpodručje iz šifrarnika (Mehanika, Termodinamika, Elektromagnetizam, Titranje, valovi i optika, Moderna fizika), a cjelina i potpoglavlje isključivo iz danog šifrarnika.
+F6. 'cjelina' i njezina 'kategorija' isključivo su iz danog šifrarnika (kategorija je grupa kojoj cjelina pripada, npr. Mehanika, Termodinamika). Potpoglavlje upiši samo ako je za tu cjelinu navedeno u šifrarniku potpoglavlja; ako za cjelinu nema potpoglavlja, ostavi polje potpoglavlje prazno.
 """,
 }
 
