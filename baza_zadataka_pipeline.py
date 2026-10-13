@@ -200,6 +200,15 @@ F4. Crteži, skice pokusa, grafovi (npr. v-t graf), strujni krugovi i zrake kod 
 F5. Popis konstanti i formula na početku ispita (npr. g, c, h, e, konstante plina) NIJE zadatak - ne pretvaraj ga u zadatke i ne dodaji konstante koje u tekstu zadatka ne stoje.
 F6. 'cjelina' i njezina 'kategorija' isključivo su iz danog šifrarnika (kategorija je grupa kojoj cjelina pripada, npr. Mehanika, Termodinamika). Potpoglavlje upiši samo ako je za tu cjelinu navedeno u šifrarniku potpoglavlja; ako za cjelinu nema potpoglavlja, ostavi polje potpoglavlje prazno.
 """,
+    "matematika_os": """
+=== PREDMET: MATEMATIKA ZA OSNOVNU ŠKOLU (5.-8. razred) ===
+Ovaj materijal je iz MATEMATIKE ZA OSNOVNU ŠKOLU (udžbenik, zbirka zadataka, ispit ili radni list za 5.-8. razred), a ne iz državne mature. Sve gore navedeno vrijedi, uz sljedeće dodatke:
+O1. 'kategorija', 'cjelina' i 'potpoglavlje' isključivo su iz danih šifrarnika. Cjelina odgovara POGLAVLJU udžbenika, a potpoglavlje LEKCIJI. Potpoglavlje upiši uvijek kad ijedno ponuđeno za tu cjelinu odgovara temi zadatka (to je finija klasifikacija od srednje škole, pa ne ostavljaj prazno bez razloga).
+O2. Dijelovi lekcije kao što su 'Zadatci za ponavljanje', 'Jednostavniji zadatci', 'Složeniji zadatci', 'Zabavni kutak' i 'Semafor' NISU potpoglavlja. Zadatak iz takvog dijela dobiva potpoglavlje LEKCIJE kojoj tematski pripada. Ako je dio označen kao 'Jednostavniji' težina je "lako", a ako je 'Složeniji' težina je "tesko" (inače težinu procijeni sam).
+O3. Zadaci su često kratki i brojčani. tip_zadatka="kratki_odgovor" koristi za zadatke u kojima se traži samo rezultat, dopunjavanje ili jedan odgovor, a "prosireni_odgovor" za konstrukcije, tekstualne zadatke i zadatke koji traže postupak. Zadatke dopunjavanja (praznine, tablice) zadrži u tekstu zadatka tako da praznine pišeš kao $\\ldots$, a zadatke spajanja ili zaokruživanja pretvori u višestruki izbor samo ako su ponuđeni odgovori jasno odvojeni.
+O4. Crteži, geometrijske konstrukcije, brojevni pravci, koordinatne mreže, grafikoni i tablice podataka koje je potrebno čitati su DIO zadatka: slika_zadana="da" i slika_url prema točki 12 (više crteža odvoji znakom |). Za zadatke tipa 'konstruiraj' rješenje je opis postupka iz izvora, a ako izvor ima samo crtež rješenja, rjesenje ostavi prazno i u status_provjere napiši "rješenje je crtež".
+O5. Decimalne brojeve piši s decimalnim zarezom u LaTeXu ($3{,}5$), postotke kao $15\\%$, a mjerne jedinice uspravno ($12\\,\\mathrm{cm}$, $3\\,\\mathrm{kg}$). Brojeve i tekst prepiši točno kao u izvoru; nemoj pojednostavljivati formulaciju zadatka.
+""",
 }
 
 

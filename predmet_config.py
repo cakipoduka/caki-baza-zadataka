@@ -1,5 +1,5 @@
 """
-CAKI - predmet_config.py (12.10.2026.)
+CAKI - predmet_config.py (12.10.2026.; 13.10.2026. dodan treci predmet "matematika_os")
 
 Jedno mjesto koje zna KOJI PREDMET je aktivan (matematika, fizika, ...) i koji Google Sheet,
 koji Drive folder sa slikama i koje postavke pripadaju tom predmetu.
@@ -15,6 +15,11 @@ ne nazivi):
     SLIKE_FOLDER_ID_FIZIKA = "XXXX"
 Dok tih redaka nema, predmet "fizika" se uopće ne nudi i aplikacija radi točno kao prije
 (samo matematika). Matematika i dalje koristi postojeće SHEET_ID i SLIKE_FOLDER_ID.
+
+Isto vrijedi za matematiku osnovne škole (5.-8. razred), slug "matematika_os":
+    SHEET_ID_MATEMATIKA_OS = "XXXX"
+    SLIKE_FOLDER_ID_MATEMATIKA_OS = "XXXX"
+    link: https://<aplikacija>/?predmet=matematika_os
 
 Ovaj modul NE uvozi streamlit na vrhu (da ga mogu koristiti i skripte/testovi bez njega);
 funkcija odaberi_predmet() ga uvozi tek kad se pozove.
@@ -40,6 +45,16 @@ PREDMETI = {
         "razine": ["A", "B", "-"],            # državna matura iz matematike ima razine A i B
         "kategorije_vrednovanja": _KATEGORIJE_MATEMATIKA,
         "slug": "matematika",
+    },
+    "matematika_os": {
+        "naziv": "Matematika (osnovna škola)",
+        "naslov_aplikacije": "CAKI Matematika OŠ",
+        "zaglavlje_pdf": "MATEMATIKA OŠ",
+        "sheet_kljuc": "SHEET_ID_MATEMATIKA_OS",
+        "slike_kljuc": "SLIKE_FOLDER_ID_MATEMATIKA_OS",
+        "razine": ["-"],                      # osnovna škola nema razine A/B
+        "kategorije_vrednovanja": [],
+        "slug": "matematika_os",
     },
     "fizika": {
         "naziv": "Fizika",
