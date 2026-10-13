@@ -250,7 +250,11 @@ def izgradi(zahtjev_id: str, sheet, drive, slike_folder_id: str, skripte_folder_
         if not odabrani:
             raise SkriptaGreska("Nijedan zadatak ne zadovoljava filtre.")
         slike_dir = os.path.join(radni_dir, "slike_izvor")
-        skinuto = skini_slike(drive, slike_folder_id, [x for r in odabrani for x in bp.razdvoji_slike(r.get("slika_putanja"))], slike_dir)
+        # Slike zadatka (slika_putanja) I slike rješenja (slika_rjesenje_putanja, neobavezan stupac).
+        potrebne_slike = [x for r in odabrani
+                          for polje in ("slika_putanja", "slika_rjesenje_putanja")
+                          for x in bp.razdvoji_slike(r.get(polje))]
+        skinuto = skini_slike(drive, slike_folder_id, potrebne_slike, slike_dir)
         images_izlaz = os.path.join(radni_dir, "images_izlaz")
         os.makedirs(images_izlaz, exist_ok=True)
         xml, _, n, _ = bp.izgradi_skriptu_xml(

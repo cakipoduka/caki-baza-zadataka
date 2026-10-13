@@ -709,6 +709,27 @@ def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
         if get(row, "rjesenje"):
             st.markdown("**Rješenje:**")
             st.write(get(row, "rjesenje"))
+        # Slike rješenja (neobavezan stupac slika_rjesenje_putanja, 13.10.2026.) - samo pregled;
+        # uvoz ide skupno (Sheet + upload u 02_SLIKE), vidi upute za uvoz Element udžbenika.
+        _slike_rj = razdvoji_slike(get(row, "slika_rjesenje_putanja"))
+        if _slike_rj:
+            st.caption(f"🖼️ Slike rješenja ({len(_slike_rj)}): " + ", ".join(_slike_rj))
+            if st.button("👁️ Prikaži slike rješenja", key=f"prikazi_rj_{broj_retka}"):
+                for _sl in _slike_rj:
+                    try:
+                        _q = _sl.replace("\\", "\\\\").replace("'", "\\'")
+                        _rez = drive_service.files().list(
+                            q=f"name='{_q}' and '{SLIKE_FOLDER_ID}' in parents and trashed=false",
+                            fields="files(id,name)", supportsAllDrives=True, includeItemsFromAllDrives=True,
+                        ).execute()
+                        _dat = _rez.get("files", [])
+                        if _dat:
+                            st.image(drive_service.files().get_media(fileId=_dat[0]["id"], supportsAllDrives=True).execute(),
+                                     caption=_sl, width=400)
+                        else:
+                            st.warning(f"Slika rješenja {_sl} nije pronađena u 02_SLIKE folderu na Driveu.")
+                    except Exception as e:
+                        st.error(f"Neuspjelo dohvaćanje slike {_sl}: {e}")
         if get(row, "konacan_odgovor"):
             st.markdown(f"**Konačan odgovor:** {get(row, 'konacan_odgovor')}")
         if get(row, "uputa"):

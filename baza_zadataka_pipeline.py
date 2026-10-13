@@ -85,6 +85,13 @@ ZADACI_HEADERS = [
     # fizički dodaj kao NOVE ZADNJE stupce u tabu 'Zadaci', TIM REDOSLIJEDOM, odmah iza biblioteka_izvora.
     # Vidi skupine_zadataka.py.
     "uloga", "roditelj_id", "oznaka_stavke",
+    # 🆕 (13.10.2026.) Slike koje idu u RJEŠENJE (npr. skica/graf uz postupak) - nazivi datoteka u
+    # 02_SLIKE odvojeni znakom "|" (isto kao slika_putanja, vidi razdvoji_slike). Ispisuju se u
+    # <solution> NAKON teksta rješenja (PreTeXt/skripta). U Test Builderu se ne ispisuju jer on
+    # u odjeljku rješenja prikazuje samo konačan odgovor. NEOBAVEZAN stupac, DODAN NA KRAJU (iza
+    # oznaka_stavke): ako ga Sheet nema, sve radi kao prije. Fizički dodaj kao NOVI ZADNJI stupac
+    # u tabu 'Zadaci' (zaglavlje točno: slika_rjesenje_putanja), tek NAKON uloga/roditelj_id/oznaka_stavke.
+    "slika_rjesenje_putanja",
 ]
 
 SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
@@ -854,11 +861,24 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
         lines.append(f'          <p>{_pretext_math_or_text(uputa)}</p>')
         lines.append(f'        </hint>')
 
-    if rjesenje:
+    # Slike rješenja (stupac slika_rjesenje_putanja): kopiraju se u images/ i ispisuju u <solution>
+    # iza teksta rješenja. Nedostajuća datoteka se preskače uz upozorenje (kao kod slike zadatka).
+    slike_rjesenja_linije = []
+    for naziv_datoteke in (os.path.basename(x) for x in razdvoji_slike(row.get('slika_rjesenje_putanja'))):
+        izvorna = os.path.join(slike_izvor_dir, naziv_datoteke)
+        if os.path.exists(izvorna):
+            shutil.copyfile(izvorna, os.path.join(images_dir_abs, naziv_datoteke))
+            slike_rjesenja_linije.append(f'          <image source="images/{_xml_escape(naziv_datoteke)}" width="70%"/>')
+        else:
+            print(f"    ⚠️ Slika rješenja nije pronađena na disku za zadatak #{row.get('id', '')}: {izvorna}")
+
+    if rjesenje or slike_rjesenja_linije:
         lines.append(f'        <solution>')
         if tip_zadatka == "visestruki_izbor" and konacan_odgovor:
             lines.append(f'          <p>Točan odgovor: {_pretext_math_or_text(konacan_odgovor)}</p>')
-        lines.append(f'          <p>{_pretext_math_or_text(rjesenje)}</p>')
+        if rjesenje:
+            lines.append(f'          <p>{_pretext_math_or_text(rjesenje)}</p>')
+        lines.extend(slike_rjesenja_linije)
         lines.append(f'        </solution>')
     elif konacan_odgovor:
         lines.append(f'        <solution>')
@@ -1640,6 +1660,21 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
             "tim redoslijedom, zaglavlja točno kako piše) pa ponovi obradu. Ništa nije upisano."
         )
 
+    # Neobavezni stupac slika_rjesenje_putanja (13.10.2026.): mora biti ZADNJI stupac, iza oznaka_stavke.
+    ima_stupac_slika_rj = "slika_rjesenje_putanja" in headers
+    if ima_stupac_slika_rj:
+        if not ima_nove_stupce:
+            raise RuntimeError(
+                "U tabu 'Zadaci' postoji stupac 'slika_rjesenje_putanja', a nedostaju uloga, roditelj_id i "
+                "oznaka_stavke. Redoslijed zadnjih stupaca mora biti: uloga, roditelj_id, oznaka_stavke, "
+                "slika_rjesenje_putanja. Ništa nije upisano."
+            )
+        if headers.index("slika_rjesenje_putanja") != ZADACI_HEADERS.index("slika_rjesenje_putanja"):
+            raise RuntimeError(
+                "Stupac 'slika_rjesenje_putanja' u tabu 'Zadaci' nije na očekivanom mjestu (mora biti odmah "
+                f"iza 'oznaka_stavke', stupac broj {ZADACI_HEADERS.index('slika_rjesenje_putanja') + 1}). Ništa nije upisano."
+            )
+
     _idx_naziv = ZADACI_HEADERS.index("izvor_naziv")
     _idx_latex = ZADACI_HEADERS.index("tekst_zadatka_latex")
     _idx_cjelina = ZADACI_HEADERS.index("cjelina")
@@ -1786,6 +1821,8 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
         ]
         if ima_nove_stupce:
             redak += [uloga, roditelj_id, oznaka]
+            if ima_stupac_slika_rj:
+                redak.append(z.get("slika_rjesenje_putanja", ""))
         return redak
 
     def _dodaj_novi(z, m, uloga="", roditelj_id="", oznaka=""):
