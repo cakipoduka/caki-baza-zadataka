@@ -54,6 +54,7 @@ from baza_zadataka_pipeline import (
     get_or_create_worksheet,
     mathpix_ocr_datoteka,
     prikazi_opcije_markdown,
+    razdvoji_slike,
 )
 from ai_prijedlozi import (
     RAZDVOJI, INFO_KOZMETIKA, je_kozmetika_opcija, UPOZORENJE_DOLARI, omotaj_konacan_odgovor, UPOZORENJE_SKRACIVANJE, je_samo_dolari, je_sumnjivo_skracivanje, naslov_prijedloga, oznaci_zamijenjene,
@@ -780,13 +781,14 @@ def dohvati_sliku(naziv):
 
 
 def prikazi_zadatak_iz_baze(z):
-    putanja = os.path.basename((z.get("slika_putanja") or "").strip())
-    if putanja:
-        slika = dohvati_sliku(putanja)
-        if slika:
-            st.image(slika, width=380, caption="Slika zadatka")
-        else:
-            st.warning(f"Zadatak ima sliku ({putanja}), ali nije pronađena na Driveu.")
+    nazivi_slika = [os.path.basename(x) for x in razdvoji_slike(z.get("slika_putanja"))]
+    if nazivi_slika:
+        for putanja in nazivi_slika:
+            slika = dohvati_sliku(putanja)
+            if slika:
+                st.image(slika, width=380, caption="Slika zadatka" if len(nazivi_slika) == 1 else f"Slika zadatka: {putanja}")
+            else:
+                st.warning(f"Zadatak ima sliku ({putanja}), ali nije pronađena na Driveu.")
     elif z.get("slika_zadana") == "da":
         st.warning("Zadatak je označen da ima sliku, ali slika nije povezana (slika_putanja je prazna).")
     with st.expander("📝 Cijeli zadatak (kako je trenutno u bazi)"):

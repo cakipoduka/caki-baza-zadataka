@@ -173,7 +173,7 @@ podzadatku. Umjesto toga vrati JEDAN objekt SKUPINE (uloga="skupina") i ODMAH iz
 9. tip_rjesenja_izvor: "puni_postupak" ako rješenje sadrži korake, "samo_rezultat" ako je samo finalni odgovor, inače prazno.
 10. Ako nisi siguran u OCR neke formule/rješenja, kratko napomeni u status_provjere (npr. "OCR nesiguran kod zadatka 5, provjeriti simbol"), inače ostavi prazno.
 11. tip_zadatka: "visestruki_izbor" (ima ponuđene odgovore A/B/C/D), "kratki_odgovor" (traži se kratak numerički/simbolički odgovor, npr. "Odgovor: ____"), ili "prosireni_odgovor" (traži se prikaz cijelog postupka rješavanja).
-12. slika_zadana: "da" ako je u tekstu ispita (Mathpix Markdown) uz ovaj zadatak priložena slika/graf/dijagram koji je DIO zadatka (student mora pročitati podatke sa slike da riješi zadatak) - PREPOZNAJ TO PO MARKDOWN REFERENCI NA SLIKU (oblika ![](url) ili slično) koja se nalazi neposredno uz tekst tog zadatka. Ako je slika_zadana="da", OBAVEZNO u polje slika_url upiši TOČAN URL te slike, prekopiran iz Mathpix Markdown teksta (ne izmišljaj URL). Ako nema takve slike, slika_zadana="ne" i slika_url prazan.
+12. slika_zadana: "da" ako je u tekstu ispita (Mathpix Markdown) uz ovaj zadatak priložena slika/graf/dijagram koji je DIO zadatka (student mora pročitati podatke sa slike da riješi zadatak) - PREPOZNAJ TO PO MARKDOWN REFERENCI NA SLIKU (oblika ![](url) ili slično) koja se nalazi neposredno uz tekst tog zadatka. Ako je slika_zadana="da", OBAVEZNO u polje slika_url upiši TOČAN URL te slike, prekopiran iz Mathpix Markdown teksta (ne izmišljaj URL). Ako uz isti zadatak stoji VIŠE slika (npr. "slika 1." i "slika 2." ili sheme uz svaku ponuđenu opciju), upiši SVE njihove URL-ove u slika_url odvojene znakom | (okomita crta), redoslijedom kojim se pojavljuju u materijalu, i ne izostavi nijednu. Ako nema takve slike, slika_zadana="ne" i slika_url prazan.
 VAŽNO: slika_zadana i vizualni_potencijal se međusobno isključuju - zadatak sa zadanom slikom NIKAD ne dobiva vizualni_potencijal="da" (ne rekonstruiramo zadanu sliku preko GeoGebre, samo je izrežemo iz originala).
 13. ponudjeni_odgovori: SAMO za tip_zadatka="visestruki_izbor" - JSON lista ponuđenih odgovora BEZ oznaka A/B/C/D, redoslijedom kako se pojavljuju (npr. ["5", "4.6", "4.58", "4.573"]). Za sve ostale tipove zadataka, prazna lista [].
 14. konacan_odgovor: KRATAK, čist finalni odgovor, odvojen od punog postupka u polju rjesenje. Za visestruki_izbor: samo slovo točnog odgovora (npr. "C"). Za kratki_odgovor/prosireni_odgovor: kratka vrijednost (npr. "3", "1/2", "x=5"). Ako rjesenje nije dano (vidi točku 3), ostavi prazno.
@@ -196,7 +196,7 @@ Ovaj materijal je iz FIZIKE (državna matura iz fizike, zbirka zadataka iz fizik
 F1. Fizikalne veličine i mjerne jedinice piši u LaTeX matematici unutar $...$: veličine kurzivom, jedinice uspravno (\\mathrm{...}) i s tankim razmakom između broja i jedinice, npr. $v = 3{,}5\\,\\mathrm{m/s}$, $F = 12\\,\\mathrm{N}$, $T = 300\\,\\mathrm{K}$, $a = 2\\,\\mathrm{m/s^2}$. Brojeve i decimalni zarez/točku prepiši točno kako piše u izvoru, jedinice nemoj pretvarati ni brojeve zaokruživati.
 F2. konacan_odgovor za zadatke s brojčanim odgovorom UKLJUČUJE jedinicu (npr. "3,5 m/s"); za višestruki izbor je samo slovo.
 F3. Ispitna knjižica iz fizike ima 1. dio (višestruki izbor s četiri odgovora -> tip_zadatka="visestruki_izbor") i 2. dio (zadaci produženog odgovora s postupkom i mjernom jedinicom -> "prosireni_odgovor"). "kratki_odgovor" koristi samo kad se traži samo broj ili jedinica bez postupka.
-F4. Crteži, skice pokusa, grafovi (npr. v-t graf), strujni krugovi i zrake kod leća i zrcala su DIO zadatka: slika_zadana="da" i slika_url prema točki 12. NIKAD ne izmišljaj vrijednosti koje se vide samo na slici i ne možeš ih pročitati iz teksta. vizualni_potencijal je za fiziku uvijek "ne".
+F4. Crteži, skice pokusa, grafovi (npr. v-t graf), strujni krugovi i zrake kod leća i zrcala su DIO zadatka: slika_zadana="da" i slika_url prema točki 12 (kad zadatak ima više crteža, npr. "slika 1." i "slika 2.", u slika_url idu SVI URL-ovi odvojeni znakom |). NIKAD ne izmišljaj vrijednosti koje se vide samo na slici i ne možeš ih pročitati iz teksta. vizualni_potencijal je za fiziku uvijek "ne".
 F5. Popis konstanti i formula na početku ispita (npr. g, c, h, e, konstante plina) NIJE zadatak - ne pretvaraj ga u zadatke i ne dodaji konstante koje u tekstu zadatka ne stoje.
 F6. 'cjelina' i njezina 'kategorija' isključivo su iz danog šifrarnika (kategorija je grupa kojoj cjelina pripada, npr. Mehanika, Termodinamika). Potpoglavlje upiši samo ako je za tu cjelinu navedeno u šifrarniku potpoglavlja; ako za cjelinu nema potpoglavlja, ostavi polje potpoglavlje prazno.
 """,
@@ -819,10 +819,9 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
     lines.append(f'          <p>{oznaka}{tekst}</p>')
 
     slika_ok = False
-    if slika_putanja:
-        # slika_putanja je SAMO naziv datoteke (izravna referenca, ispravljeno u Koraku 3) -
-        # puni izvor je 02_SLIKE/<naziv>, kopiramo u 03_PRETEXT_IZVOR/images/<naziv>.
-        naziv_datoteke = os.path.basename(slika_putanja)
+    # slika_putanja je SAMO naziv datoteke (ili više njih odvojenih "|", vidi razdvoji_slike) -
+    # puni izvor je 02_SLIKE/<naziv>, kopiramo u 03_PRETEXT_IZVOR/images/<naziv>.
+    for naziv_datoteke in (os.path.basename(x) for x in razdvoji_slike(slika_putanja)):
         izvorna = os.path.join(slike_izvor_dir, naziv_datoteke)
         if os.path.exists(izvorna):
             shutil.copyfile(izvorna, os.path.join(images_dir_abs, naziv_datoteke))
@@ -1475,6 +1474,28 @@ def upload_image_to_drive_with_retry(sa_info: dict, folder_id: str, filename: st
             continue
     raise zadnja_greska
 
+# --- Više slika uz jedan zadatak (13.10.2026.) ---
+# Stupci slika_putanja (nazivi datoteka u 02_SLIKE) i slika_url (URL-ovi iz Mathpixa, samo pri uvozu)
+# mogu sadržavati VIŠE vrijednosti odvojenih znakom "|", redoslijedom kojim slike stoje uz zadatak
+# (npr. fizika: "slika 1." i "slika 2." uz isti zadatak). Jedna vrijednost = stari oblik, bez ikakve
+# promjene. Sve što čita slike mora proći kroz razdvoji_slike().
+SLIKE_RAZDJELNIK = "|"
+
+
+def razdvoji_slike(vrijednost) -> list:
+    """'a.png | b.png' -> ['a.png', 'b.png']; prazno/None -> []. Zadržava redoslijed, bez duplikata."""
+    rezultat = []
+    for dio in str(vrijednost or "").split(SLIKE_RAZDJELNIK):
+        dio = dio.strip()
+        if dio and dio not in rezultat:
+            rezultat.append(dio)
+    return rezultat
+
+
+def spoji_slike(popis) -> str:
+    return SLIKE_RAZDJELNIK.join(x for x in (str(p).strip() for p in popis or []) if x)
+
+
 def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
                             drive_service, slike_folder_id, log=None):
     """
@@ -1488,20 +1509,25 @@ def preuzmi_i_spremi_slike(zadaci, izvor_naziv, mathpix_app_id, mathpix_app_key,
     broj_preuzetih = 0
     for z in zadaci:
         if z.get("slika_zadana") == "da" and z.get("slika_url"):
-            try:
-                headers = {"app_id": mathpix_app_id, "app_key": mathpix_app_key}
-                resp = requests.get(z["slika_url"], headers=headers, timeout=30)
-                resp.raise_for_status()
-                naziv = f"{izvor_naziv}_zad{z.get('privremeni_broj', '0')}.png".replace(" ", "_")
-                upload_image_to_drive(drive_service, slike_folder_id, naziv, resp.content)
-                z["slika_putanja"] = naziv
-                broj_preuzetih += 1
-                if log:
-                    log(f"🖼️ Slika spremljena za zadatak #{z.get('privremeni_broj')}: {naziv}")
-            except Exception as e:
-                if log:
-                    log(f"⚠️ Neuspjelo preuzimanje slike za zadatak #{z.get('privremeni_broj')}: {e}")
-                z["slika_putanja"] = ""
+            urlovi = razdvoji_slike(z["slika_url"])
+            osnova = f"{izvor_naziv}_zad{z.get('privremeni_broj', '0')}".replace(" ", "_")
+            spremljene = []
+            for n, url in enumerate(urlovi, 1):
+                # Jedna slika zadržava stari naziv (<osnova>.png); više slika ide kao <osnova>_1.png, _2.png...
+                naziv = f"{osnova}.png" if len(urlovi) == 1 else f"{osnova}_{n}.png"
+                try:
+                    headers = {"app_id": mathpix_app_id, "app_key": mathpix_app_key}
+                    resp = requests.get(url, headers=headers, timeout=30)
+                    resp.raise_for_status()
+                    upload_image_to_drive(drive_service, slike_folder_id, naziv, resp.content)
+                    spremljene.append(naziv)
+                    broj_preuzetih += 1
+                    if log:
+                        log(f"🖼️ Slika spremljena za zadatak #{z.get('privremeni_broj')}: {naziv}")
+                except Exception as e:
+                    if log:
+                        log(f"⚠️ Neuspjelo preuzimanje slike {n}/{len(urlovi)} za zadatak #{z.get('privremeni_broj')}: {e}")
+            z["slika_putanja"] = spoji_slike(spremljene)
         else:
             z["slika_putanja"] = z.get("slika_putanja", "")
     return zadaci

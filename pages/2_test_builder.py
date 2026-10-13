@@ -50,6 +50,7 @@ from baza_zadataka_pipeline import (
     get_gspread_client,
     get_potpoglavlja_po_cjelini,
     prikazi_opcije_markdown,
+    razdvoji_slike,
 )
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
@@ -692,10 +693,11 @@ with col_pretraga:
                         st.markdown(("✅ " if _zauzeta else "") + (_s.get("tekst_zadatka_latex", "") or ""))
                     if _kv and not _zauzeta:
                         _izabrane_ids.add(_s.get("id"))
-                if row.get("slika_zadana") == "da" and row.get("slika_putanja", "").strip():
-                    _slika_bytes = dohvati_sliku_bytes(row["slika_putanja"].strip())
-                    if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                        st.image(_slika_bytes, width=130)
+                if row.get("slika_zadana") == "da":
+                    for _naziv_slike in razdvoji_slike(row.get("slika_putanja", "")):
+                        _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
+                        if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
+                            st.image(_slika_bytes, width=130)
                 if not _slobodne:
                     st.button("✅ Već dodano", key=f"add_{row.get('id')}", disabled=True)
                 else:
@@ -720,7 +722,7 @@ with col_pretraga:
                 _opc_raw = [o.strip() for o in str(row.get("ponudjeni_odgovori", "")).split("||") if o.strip()]
                 if _opc_raw:
                     st.markdown(prikazi_opcije_markdown(_opc_raw))
-            if row.get("slika_zadana") == "da" and row.get("slika_putanja", "").strip():
+            if row.get("slika_zadana") == "da" and razdvoji_slike(row.get("slika_putanja", "")):
                 # Sličica izravno u popisu (popravak 14.9.2026., §25.11) - prije je
                 # trebalo kliknuti "Prikaži sliku" za SVAKI redak posebno; sad se mala
                 # sličica prikazuje odmah (Streamlitov st.image ima ugrađenu ikonu za
@@ -729,16 +731,21 @@ with col_pretraga:
                 # zadataka sa slikama odjednom (svaka nova slika = Drive API poziv),
                 # ali dohvati_sliku_bytes je keširan 10 min pa ponovni pregled iste
                 # stranice/filtera ne ponavlja iste pozive.
-                _slika_bytes = dohvati_sliku_bytes(row["slika_putanja"].strip())
-                if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                    st.image(_slika_bytes, width=130)
-                elif _slika_bytes:
-                    st.warning(
-                        f"⚠️ Slika '{row['slika_putanja'].strip()}' izgleda oštećena/neispravna "
-                        "(nije uspjelo dekodiranje) - provjeri original na Driveu."
-                    )
-                else:
-                    st.warning("Slika nije pronađena na Driveu (možda stari/neispravan zapis).")
+                # Više slika uz jedan zadatak ("slika 1.", "slika 2.") - sve se prikazuju jedna do druge.
+                _nazivi_slika = razdvoji_slike(row.get("slika_putanja", ""))
+                _kol_slike = st.columns(min(len(_nazivi_slika), 4)) if len(_nazivi_slika) > 1 else [st.container()]
+                for _i_sl, _naziv_slike in enumerate(_nazivi_slika):
+                    with _kol_slike[_i_sl % len(_kol_slike)]:
+                        _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
+                        if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
+                            st.image(_slika_bytes, width=130)
+                        elif _slika_bytes:
+                            st.warning(
+                                f"⚠️ Slika '{_naziv_slike}' izgleda oštećena/neispravna "
+                                "(nije uspjelo dekodiranje) - provjeri original na Driveu."
+                            )
+                        else:
+                            st.warning("Slika nije pronađena na Driveu (možda stari/neispravan zapis).")
             if _vec_dodan:
                 st.button("✅ Već dodano", key=f"add_{row.get('id')}", disabled=True)
             elif st.button("➕ Dodaj", key=f"add_{row.get('id')}"):
@@ -885,17 +892,17 @@ with col_odabrano:
                         "Prikaži ponuđene odgovore (A/B/C/D) za ovaj zadatak",
                         value=z.get("prikazi_opcije", True), key=f"mc_prikazi_{idx}",
                     )
-                if z.get("slika_putanja"):
-                    _slika_bytes = dohvati_sliku_bytes(z["slika_putanja"])
+                for _naziv_slike in razdvoji_slike(z.get("slika_putanja")):
+                    _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
                     if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
                         st.image(_slika_bytes, width=220)
                     elif _slika_bytes:
                         st.warning(
-                            f"⚠️ Slika '{z['slika_putanja']}' izgleda oštećena/neispravna "
+                            f"⚠️ Slika '{_naziv_slike}' izgleda oštećena/neispravna "
                             "(nije uspjelo dekodiranje) - provjeri original na Driveu."
                         )
                     else:
-                        st.warning(f"⚠️ Slika '{z['slika_putanja']}' nije pronađena na Driveu.")
+                        st.warning(f"⚠️ Slika '{_naziv_slike}' nije pronađena na Driveu.")
                 z["bodovi"] = st.text_input("Bodovi", value=z["bodovi"], key=f"bod_{idx}")
 
                 st.caption("Kategorije vrednovanja (može više odjednom, bodovi po kategoriji):")
@@ -1176,8 +1183,9 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
                 opcije_za_prikaz.append(mamac_tekst.strip())
             tekst += izgradi_opcije_blok(opcije_za_prikaz)
 
-        putanja = z.get("slika_putanja")
-        slika_rel = f"images/{putanja}" if putanja and slike_bytes.get(putanja) else ""
+        # Više slika uz zadatak: 4. argument \\zadatakbod je lista putanja odvojena ZAREZOM
+        # (caki-style.sty ih slaže jednu uz drugu). Jedna slika = isti oblik kao prije.
+        slika_rel = ",".join(f"images/{x}" for x in razdvoji_slike(z.get("slika_putanja")) if slike_bytes.get(x))
         zad_lines.append(
             f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}{{{slika_rel}}}{{{tip_z}}}{{{kategorije_tex}}}"
         )
@@ -1301,12 +1309,12 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
     slike_bytes = {}
     nedostaju_slike = []
     for z in st.session_state.odabrani:
-        putanja = z.get("slika_putanja")
-        if putanja and putanja not in slike_bytes:
-            _bytes = dohvati_sliku_bytes(putanja)
-            slike_bytes[putanja] = _bytes
-            if not _bytes:
-                nedostaju_slike.append(putanja)
+        for putanja in razdvoji_slike(z.get("slika_putanja")):
+            if putanja not in slike_bytes:
+                _bytes = dohvati_sliku_bytes(putanja)
+                slike_bytes[putanja] = _bytes
+                if not _bytes:
+                    nedostaju_slike.append(putanja)
     if nedostaju_slike:
         st.warning(
             f"⚠️ {len(nedostaju_slike)} slika nije pronađena na Driveu (nastavljam bez njih): "

@@ -40,6 +40,8 @@ from baza_zadataka_pipeline import (
     nadopuni_ili_dodaj_zadatke,
     preuzmi_i_spremi_slike,
     prikazi_opcije_markdown,
+    razdvoji_slike,
+    spoji_slike,
     upload_image_to_drive_with_retry,
     zapisi_log_obrade,
 )
@@ -301,7 +303,7 @@ def stranica_obradi_ispit():
             zadaci = preuzmi_i_spremi_slike(
                 zadaci, izvor_naziv, mathpix_id, mathpix_key, drive_service, slike_folder_id, log=log
             )
-            broj_slika = sum(1 for z in zadaci if z.get("slika_putanja"))
+            broj_slika = sum(len(razdvoji_slike(z.get("slika_putanja"))) for z in zadaci)
             zapisi_log_obrade(sheet, izvor_naziv, "slike", "gotovo", f"{broj_slika} slika", log=log)
 
             # 5. Upis u Sheet (s detekcijom duplikata) - ovo je korak koji uspoređuje svaki
@@ -1085,43 +1087,60 @@ def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
     st.divider()
     st.subheader("🖼️ Slika")
 
-    trenutna_slika = get(row, "slika_putanja").strip()
+    trenutne_slike = razdvoji_slike(get(row, "slika_putanja"))
     slike_folder_id = SLIKE_FOLDER_ID
 
-    if trenutna_slika:
-        st.info(f"Ovaj zadatak već ima sliku: **{trenutna_slika}** — upload ispod će je zamijeniti.")
-        if st.button("👁️ Prikaži trenutnu sliku", key=f"prikazi_{broj_retka}"):
-            try:
-                rezultat = drive_service.files().list(
-                    q=f"name='{trenutna_slika}' and '{slike_folder_id}' in parents and trashed=false",
-                    fields="files(id,name)", supportsAllDrives=True, includeItemsFromAllDrives=True,
-                ).execute()
-                datoteke = rezultat.get("files", [])
-                if datoteke:
-                    sadrzaj = drive_service.files().get_media(fileId=datoteke[0]["id"], supportsAllDrives=True).execute()
-                    st.image(sadrzaj, caption=trenutna_slika, width=400)
-                else:
-                    st.warning("Slika nije pronađena u 02_SLIKE folderu na Driveu (možda stari/neispravan zapis).")
-            except Exception as e:
-                st.error(f"Neuspjelo dohvaćanje slike: {e}")
+    if trenutne_slike:
+        popis = ", ".join(f"**{x}**" for x in trenutne_slike)
+        st.info(
+            f"Ovaj zadatak ima {len(trenutne_slike)} "
+            f"{'sliku' if len(trenutne_slike) == 1 else 'slike'}: {popis}"
+        )
+        if st.button("👁️ Prikaži trenutne slike", key=f"prikazi_{broj_retka}"):
+            for trenutna_slika in trenutne_slike:
+                try:
+                    q_naziv = trenutna_slika.replace("\\", "\\\\").replace("'", "\\'")
+                    rezultat = drive_service.files().list(
+                        q=f"name='{q_naziv}' and '{slike_folder_id}' in parents and trashed=false",
+                        fields="files(id,name)", supportsAllDrives=True, includeItemsFromAllDrives=True,
+                    ).execute()
+                    datoteke = rezultat.get("files", [])
+                    if datoteke:
+                        sadrzaj = drive_service.files().get_media(fileId=datoteke[0]["id"], supportsAllDrives=True).execute()
+                        st.image(sadrzaj, caption=trenutna_slika, width=400)
+                    else:
+                        st.warning(f"Slika {trenutna_slika} nije pronađena u 02_SLIKE folderu na Driveu (možda stari/neispravan zapis).")
+                except Exception as e:
+                    st.error(f"Neuspjelo dohvaćanje slike {trenutna_slika}: {e}")
     else:
         st.caption("Ovaj zadatak trenutno nema sliku.")
 
-    nova_slika = st.file_uploader(
-        "Nova slika", type=["png", "jpg", "jpeg", "gif", "webp"], key=f"upload_{broj_retka}"
+    nove_slike = st.file_uploader(
+        "Nova slika (ili više njih, npr. 'slika 1.' i 'slika 2.' - redoslijed je kako ih odabereš)",
+        type=["png", "jpg", "jpeg", "gif", "webp"], key=f"upload_{broj_retka}", accept_multiple_files=True,
     )
 
-    if not nova_slika:
+    if not nove_slike:
         return
 
-    st.image(nova_slika, caption="Pregled prije spremanja", width=400)
+    nacin = "zamijeni"
+    if trenutne_slike:
+        nacin = st.radio(
+            "Što napraviti s postojećim slikama?",
+            ["dodaj", "zamijeni"], key=f"nacin_slike_{broj_retka}", horizontal=True,
+            format_func=lambda v: "➕ Dodaj uz postojeće" if v == "dodaj" else "♻️ Zamijeni sve novima",
+        )
 
-    if st.button("💾 Spremi sliku za ovaj zadatak", type="primary", key=f"spremi_{broj_retka}"):
-        ekstenzija = os.path.splitext(nova_slika.name)[1].lower() or ".png"
-        naziv_datoteke = f"{get(row, 'id')}{ekstenzija}"
-        mime, _ = mimetypes.guess_type(nova_slika.name)
+    for _n, nova_slika in enumerate(nove_slike, 1):
+        st.image(nova_slika, caption=f"Pregled {_n}/{len(nove_slike)} prije spremanja", width=400)
 
-        with st.spinner("Spremam sliku i ažuriram bazu..."):
+    if st.button("💾 Spremi slike za ovaj zadatak", type="primary", key=f"spremi_{broj_retka}"):
+        # Nazivi: jedna slika = <id>.<ekstenzija> (kao dosad). Više slika = <id>_1.png, <id>_2.png...
+        # Kod "dodaj" brojanje nastavlja iza postojećih, da se nijedna datoteka ne prepiše.
+        pocetni_broj = len(trenutne_slike) if nacin == "dodaj" else 0
+        ukupno_slika = pocetni_broj + len(nove_slike)
+        spremljeni_nazivi = []
+        with st.spinner("Spremam slike i ažuriram bazu..."):
             try:
                 # NAPOMENA (11.9.2026., §25.8): NE koristimo globalni keširani
                 # `drive_service` ovdje (izgrađen jednom preko @st.cache_resource
@@ -1131,19 +1150,31 @@ def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
                 # sam izgradi svjez drive_service (i ponovi jednom ako zatreba),
                 # bez diranja globalnog keširanog objekta koji ostatak app-a koristi.
                 sa_info_za_upload = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
-                upload_image_to_drive_with_retry(
-                    sa_info_za_upload, slike_folder_id, naziv_datoteke,
-                    nova_slika.getvalue(), mimetype=mime or "image/png",
-                )
+                for _n, nova_slika in enumerate(nove_slike, 1):
+                    ekstenzija = os.path.splitext(nova_slika.name)[1].lower() or ".png"
+                    if ukupno_slika == 1:
+                        naziv_datoteke = f"{get(row, 'id')}{ekstenzija}"
+                    else:
+                        naziv_datoteke = f"{get(row, 'id')}_{pocetni_broj + _n}{ekstenzija}"
+                    mime, _ = mimetypes.guess_type(nova_slika.name)
+                    upload_image_to_drive_with_retry(
+                        sa_info_za_upload, slike_folder_id, naziv_datoteke,
+                        nova_slika.getvalue(), mimetype=mime or "image/png",
+                    )
+                    spremljeni_nazivi.append(naziv_datoteke)
+                sve_slike = (trenutne_slike if nacin == "dodaj" else []) + spremljeni_nazivi
                 c_putanja = _col_letter("slika_putanja")
                 c_zadana = _col_letter("slika_zadana")
-                ws_zadaci.update(range_name=f"{c_putanja}{broj_retka}", values=[[naziv_datoteke]])
+                ws_zadaci.update(range_name=f"{c_putanja}{broj_retka}", values=[[spoji_slike(sve_slike)]])
                 ws_zadaci.update(range_name=f"{c_zadana}{broj_retka}", values=[["da"]])
             except Exception as e:
                 st.error(f"Greška: {e}")
                 st.stop()
 
-        st.success(f"✅ Slika spremljena kao `{naziv_datoteke}` i povezana sa zadatkom #{get(row, 'id')}.")
+        st.success(
+            f"✅ Spremljeno {len(spremljeni_nazivi)} novih slika ({', '.join(spremljeni_nazivi)}); "
+            f"zadatak #{get(row, 'id')} sada ima {len(sve_slike)} slika."
+        )
         _ucitaj_zadatke_za_pretragu.clear()
         st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
 

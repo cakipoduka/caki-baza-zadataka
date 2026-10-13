@@ -458,6 +458,21 @@
     \fancyhead[R]{\small\sffamily\color{MathAccent} #2}
 }
 
+% \cakislike{lista} - jedna ili VIŠE slika uz zadatak (13.10.2026.). Lista je popis putanja odvojen
+% ZAREZOM (npr. "images/a.png,images/b.png" za "slika 1." i "slika 2."). Jedna slika izgleda točno kao
+% prije (55% širine); dvije stoje jedna uz drugu (po 46%); tri i više po 30% (prelamaju se u redove).
+\newcounter{cakislikan}
+\newcommand{\cakislikabroji}[1]{\stepcounter{cakislikan}}
+\newcommand{\cakislikaukljuci}[1]{\includegraphics[width=\cakisirinaslike\linewidth]{#1}\hspace{0.02\linewidth}}
+\newcommand{\cakislike}[1]{%
+    \setcounter{cakislikan}{0}%
+    \forcsvlist{\cakislikabroji}{#1}%
+    \ifnum\value{cakislikan}=1 \def\cakisirinaslike{0.55}\else
+    \ifnum\value{cakislikan}=2 \def\cakisirinaslike{0.46}\else
+    \def\cakisirinaslike{0.30}\fi\fi
+    \forcsvlist{\cakislikaukljuci}{#1}%
+}
+
 % \zadatakbod{tekst}{video_url ili prazno}{bodovi ili prazno}{slika (relativna
 % putanja unutar kompajlacijskog foldera) ili prazno}{tip_zadatka ili prazno}
 % {kategorije vrednovanja - već formatiran LaTeX tekst ili prazno}
@@ -495,7 +510,7 @@
         \ifblank{#4}{}{%
             \par\vspace{2mm}
             \centering
-            \includegraphics[width=0.55\linewidth]{#4}
+            \cakislike{#4}%
             \par
         }%
         \ifstrequal{#5}{kratki_odgovor}{%
