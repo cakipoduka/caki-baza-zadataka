@@ -32,6 +32,7 @@ from datetime import datetime
 
 import streamlit as st
 
+import predmet_config
 from baza_zadataka_pipeline import (
     _col_letter,
     TEORIJA_HEADERS,
@@ -70,26 +71,47 @@ def provjeri_lozinku() -> bool:
 if not provjeri_lozinku():
     st.stop()
 
+# Predmet (12.10.2026.) - svaki predmet ima svoj Sheet (v. predmet_config.py).
+PREDMET = predmet_config.odaberi_predmet(st)
+
 
 # ---------------------------------------------------------------
 # Google Sheets
 # ---------------------------------------------------------------
 
 @st.cache_resource
-def init_sheet():
+def _init_sheet_za(predmet):
     sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
     gc = get_gspread_client(sa_info)
-    return gc.open_by_key(st.secrets["SHEET_ID"])
+    return gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
+
+
+def init_sheet():
+    return _init_sheet_za(PREDMET)
 
 
 @st.cache_data(ttl=3600)
+def _ucitaj_sifrarnik_potpoglavlja_za(predmet):
+    return get_potpoglavlja_po_cjelini(_init_sheet_za(predmet))
+
+
 def _ucitaj_sifrarnik_potpoglavlja():
-    return get_potpoglavlja_po_cjelini(init_sheet())
+    return _ucitaj_sifrarnik_potpoglavlja_za(PREDMET)
+
+
+_ucitaj_sifrarnik_potpoglavlja.clear = _ucitaj_sifrarnik_potpoglavlja_za.clear
 
 
 @st.cache_data(ttl=60)
+def _ucitaj_teoriju_za(predmet):
+    return get_teorija_po_potpoglavlju(_init_sheet_za(predmet))
+
+
 def _ucitaj_teoriju():
-    return get_teorija_po_potpoglavlju(init_sheet())
+    return _ucitaj_teoriju_za(PREDMET)
+
+
+_ucitaj_teoriju.clear = _ucitaj_teoriju_za.clear
 
 
 def _teorija_worksheet():

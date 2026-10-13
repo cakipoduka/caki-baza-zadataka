@@ -254,7 +254,10 @@
 \renewcommand{\footrulewidth}{0.4pt}
 \renewcommand{\footrule}{\color{MathBorder}\hrule width\headwidth height \footrulewidth \vskip-\footrulewidth}
 
-\fancyhead[L]{\small\sffamily\bfseries\color{MathPrimary} MATEMATIKA \ \textcolor{MathAccent}{$\mathbf{\cdot}$}\ \ ZBIRKA ZADATAKA}
+% Predmet u zaglavlju (12.10.2026.): Test Builder prije \usepackage{caki-style} definira
+% \cakipredmet (npr. FIZIKA); ako ga nitko nije definirao, ostaje MATEMATIKA kao dosad.
+\providecommand{\cakipredmet}{MATEMATIKA}
+\fancyhead[L]{\small\sffamily\bfseries\color{MathPrimary} \cakipredmet{} \ \textcolor{MathAccent}{$\mathbf{\cdot}$}\ \ ZBIRKA ZADATAKA}
 \fancyhead[R]{\small\sffamily\color{MathAccent}\leftmark}
 % IZMJENA (8.10.2026., na izricit zahtjev, PRIJEDLOG teksta - lako promjenjivo
 % ovdje na jednom mjestu): umjesto interne odrednice "Generirano pomocu...",

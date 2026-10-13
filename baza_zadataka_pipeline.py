@@ -161,7 +161,8 @@ podzadatku. Umjesto toga vrati JEDAN objekt SKUPINE (uloga="skupina") i ODMAH iz
    npr. 'Ako je m=..., n=..., koliko je ...?') je običan zadatak: uloga="samostalan".
  - Svaki običan zadatak ima uloga="samostalan".
 2. Za svaki zadatak izvuci ČIST TEKST PITANJA u polje tekst_zadatka_latex (LaTeX matematika unutar $...$, bez naredbi za formatiranje cijelog dokumenta). VAŽNO: NE uključuj ponuđene odgovore A/B/C/D u ovo polje - oni idu zasebno, vidi točku 13.
-3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN, OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
+3. Ako je u ovoj poruci dan odjeljak 'TEKST RJEŠENJA/BODOVANJA', pronađi odgovarajuće rješenje za svaki zadatak po broju i uključi puni postupak ako postoji, inače samo finalni rezultat. AKO TAJ ODJELJAK NIJE DAN I rješenje nije ni ugrađeno izravno u tekst ispita (vidi točku 3a), OBAVEZNO ostavi polje rjesenje prazno ("") - NE smiješ sam rješavati zadatak niti nagađati odgovor, čak i ako znaš rješenje.
+3a. RJEŠENJE UGRAĐENO ISPOD ZADATKA (čest slučaj u zbirkama i na ispitima s fakulteta): ako u SAMOM tekstu ispita odmah ispod zadatka, a prije sljedećeg zadatka, stoji rješenje označeno s 'RJ:', 'Rj.:', 'Rješenje:' ili 'R:' (npr. 'RJ: a = 3 m/s²'), to JE službeno rješenje tog zadatka. Prepiši ga doslovno u polje rjesenje (puni postupak ako je naveden, inače samo rezultat), izvuci kratki odgovor u konacan_odgovor i NE uključuj taj dio u tekst_zadatka_latex. Ovo vrijedi i kad odjeljak 'TEKST RJEŠENJA/BODOVANJA' nije dan; ako je dan i sadrži rješenje za isti zadatak, prednost ima odjeljak. Oznaku 'Odgovor: ____' s praznom crtom NIKAD ne smatraj rješenjem (to je mjesto za upis učenika). Ako ispod zadatka nema takve oznake, vrijedi točka 3 - rješenje ostaje prazno.
 4. Dodijeli TOČNO JEDNU kategoriju i cjelinu IZ DANOG ŠIFRARNIKA — ne izmišljaj nove nazive, koristi postojeće doslovno.
 4b. Dodijeli TOČNO JEDNO potpoglavlje IZ DANOG ŠIFRARNIKA POTPOGLAVLJA, isključivo od onih navedenih za dodijeljenu cjelinu — ne izmišljaj nove nazive. Ako niti jedno ponuđeno potpoglavlje za tu cjelinu ne odgovara (rijetko), ostavi polje potpoglavlje prazno ("") umjesto nagađanja.
 4c. Ako izvorni materijal sadrži EKSPLICITNU uputu/naznaku za rješavanje odvojenu od punog rješenja (npr. "Uputa: ..." ili "Naznaka: ..." prije samog rješenja), izvuci je doslovno u polje uputa. NIKAD ne izmišljaj uputu koje nema u izvoru - ako je nema, polje uputa ostaje prazno ("").
@@ -183,6 +184,29 @@ privremeni_broj, uloga, tekst_zadatka_latex, kategorija, cjelina, potpoglavlje, 
 
 KRITIČNO za ispravnost JSON-a: ako bilo koje polje sadrži navodnik (npr. zapis kuta u stupnjevima/minutama/sekundama poput 12°34'56", oznaka inča, ili citat unutar teksta zadatka), TAJ NAVODNIK MORAŠ escapeati kao \" unutar JSON stringa. Isto vrijedi za obrnutu kosu crtu (\\ -> \\\\) i nove retke unutar stringa (koristi \\n, ne stvarni prijelom retka). Jedan neescapean navodnik ili obrnuta kosa crta učini CIJELI JSON odgovor neispravnim i cijela obrada zadataka propadne - budi posebno pažljiv kod zapisa kutova i LaTeX izraza.
 """
+
+# --- Dodaci prompta po predmetu (12.10.2026.) ---
+# EXTRACTION_SYSTEM_PROMPT gore je napisan za matematiku. Za ostale predmete mu se dodaje
+# odjeljak koji mijenja samo ono što se razlikuje (jedinice, tipovi zadataka, crteži...).
+# Matematika (zadani predmet) NE dobiva ništa: ponašanje je isto kao prije.
+PREDMET_PROMPT_DODACI = {
+    "fizika": """
+=== PREDMET: FIZIKA ===
+Ovaj materijal je iz FIZIKE (državna matura iz fizike, zbirka zadataka iz fizike ili ispit s fakulteta), a ne iz matematike. Sve gore navedeno vrijedi, uz sljedeće dodatke:
+F1. Fizikalne veličine i mjerne jedinice piši u LaTeX matematici unutar $...$: veličine kurzivom, jedinice uspravno (\\mathrm{...}) i s tankim razmakom između broja i jedinice, npr. $v = 3{,}5\\,\\mathrm{m/s}$, $F = 12\\,\\mathrm{N}$, $T = 300\\,\\mathrm{K}$, $a = 2\\,\\mathrm{m/s^2}$. Brojeve i decimalni zarez/točku prepiši točno kako piše u izvoru, jedinice nemoj pretvarati ni brojeve zaokruživati.
+F2. konacan_odgovor za zadatke s brojčanim odgovorom UKLJUČUJE jedinicu (npr. "3,5 m/s"); za višestruki izbor je samo slovo.
+F3. Ispitna knjižica iz fizike ima 1. dio (višestruki izbor s četiri odgovora -> tip_zadatka="visestruki_izbor") i 2. dio (zadaci produženog odgovora s postupkom i mjernom jedinicom -> "prosireni_odgovor"). "kratki_odgovor" koristi samo kad se traži samo broj ili jedinica bez postupka.
+F4. Crteži, skice pokusa, grafovi (npr. v-t graf), strujni krugovi i zrake kod leća i zrcala su DIO zadatka: slika_zadana="da" i slika_url prema točki 12. NIKAD ne izmišljaj vrijednosti koje se vide samo na slici i ne možeš ih pročitati iz teksta. vizualni_potencijal je za fiziku uvijek "ne".
+F5. Popis konstanti i formula na početku ispita (npr. g, c, h, e, konstante plina) NIJE zadatak - ne pretvaraj ga u zadatke i ne dodaji konstante koje u tekstu zadatka ne stoje.
+F6. 'kategorija' je potpodručje iz šifrarnika (Mehanika, Termodinamika, Elektromagnetizam, Titranje, valovi i optika, Moderna fizika), a cjelina i potpoglavlje isključivo iz danog šifrarnika.
+""",
+}
+
+
+def sastavi_extraction_prompt(predmet="matematika"):
+    """Cijeli system prompt za Claudeovo strukturiranje zadataka za dani predmet."""
+    return EXTRACTION_SYSTEM_PROMPT + PREDMET_PROMPT_DODACI.get((predmet or "matematika").strip().lower(), "")
+
 
 # --- Google auth (Service Account) ---
 
@@ -1272,7 +1296,8 @@ EXTRACTION_MAX_TOKENS = 40000
 
 def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
                                 sifrarnik_potpoglavlja_text="", model="claude-sonnet-5",
-                                _preostala_dubina=2, log=None, _preostali_pokusaji_praznog=2):
+                                _preostala_dubina=2, log=None, _preostali_pokusaji_praznog=2,
+                                predmet="matematika"):
     client = anthropic.Anthropic(api_key=anthropic_api_key)
     user_content = f"""ŠIFRARNIK (koristi isključivo ove kategorije/cjeline, doslovno):
 {sifrarnik_text}
@@ -1289,7 +1314,7 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     with client.messages.stream(
         model=model,
         max_tokens=EXTRACTION_MAX_TOKENS,
-        system=EXTRACTION_SYSTEM_PROMPT,
+        system=sastavi_extraction_prompt(predmet),
         messages=[{"role": "user", "content": user_content}],
         # Claude Sonnet 5 po defaultu koristi "adaptive thinking" (effort "high"), a tokeni
         # potrošeni na razmišljanje broje se u ISTI max_tokens budžet kao i sam odgovor -
@@ -1323,10 +1348,10 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
                 prijelom = polovica
             dio1 = extract_zadaci_with_claude(ispit_md[:prijelom], rjesenja_md, sifrarnik_text,
                                                anthropic_api_key, sifrarnik_potpoglavlja_text,
-                                               model, _preostala_dubina - 1, log)
+                                               model, _preostala_dubina - 1, log, predmet=predmet)
             dio2 = extract_zadaci_with_claude(ispit_md[prijelom:], rjesenja_md, sifrarnik_text,
                                                anthropic_api_key, sifrarnik_potpoglavlja_text,
-                                               model, _preostala_dubina - 1, log)
+                                               model, _preostala_dubina - 1, log, predmet=predmet)
             return dio1 + dio2
         elif log:
             log("⚠️ UPOZORENJE: odgovor odrezan čak i nakon maksimalnog dijeljenja - rezultat je vjerojatno nepotpun.")
@@ -1392,7 +1417,7 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
             return extract_zadaci_with_claude(
                 ispit_md, rjesenja_md, sifrarnik_text, anthropic_api_key,
                 sifrarnik_potpoglavlja_text, model, _preostala_dubina, log,
-                _preostali_pokusaji_praznog - 1,
+                _preostali_pokusaji_praznog - 1, predmet=predmet,
             )
         raise ValueError(
             f"Claude je vratio prazan odgovor i nakon ponovnih pokušaja "

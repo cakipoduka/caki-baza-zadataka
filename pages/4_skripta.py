@@ -18,6 +18,7 @@ import json
 
 import streamlit as st
 
+import predmet_config
 from baza_zadataka_pipeline import (
     get_drive_service,
     get_gspread_client,
@@ -62,22 +63,38 @@ if not provjeri_lozinku():
 # Google Sheets
 # ---------------------------------------------------------------
 
+# Predmet (12.10.2026.) - svaki predmet ima svoj Sheet (v. predmet_config.py).
+PREDMET = predmet_config.odaberi_predmet(st)
+
+
 @st.cache_resource
-def init_sheet():
+def _init_sheet_za(predmet):
     sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
     gc = get_gspread_client(sa_info)
-    return gc.open_by_key(st.secrets["SHEET_ID"])
+    return gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
+
+
+def init_sheet():
+    return _init_sheet_za(PREDMET)
 
 
 @st.cache_data(ttl=3600)
+def _ucitaj_cjeline_za(predmet):
+    return sorted(get_sifrarnik_cjelina(_init_sheet_za(predmet)).keys())
+
+
 def _ucitaj_cjeline():
-    return sorted(get_sifrarnik_cjelina(init_sheet()).keys())
+    return _ucitaj_cjeline_za(PREDMET)
 
 
 @st.cache_data(ttl=600)
-def _ucitaj_zadatke():
+def _ucitaj_zadatke_za(predmet):
     """Svi retci taba Zadaci (samo za brojac i popis vrijednosti filtara - build radi Colab)."""
-    return init_sheet().worksheet("Zadaci").get_all_records()
+    return _init_sheet_za(predmet).worksheet("Zadaci").get_all_records()
+
+
+def _ucitaj_zadatke():
+    return _ucitaj_zadatke_za(PREDMET)
 
 
 # ---------------------------------------------------------------
@@ -180,12 +197,13 @@ with n2:
 
 st.divider()
 _token = st.secrets.get("GITHUB_DISPATCH_TOKEN")
-_pdf_spreman = bool(_token) and bool(st.secrets.get("SKRIPTE_FOLDER_ID"))
+# Automatska gradnja (GitHub radnik) zasad čita samo matematički Sheet; za ostale predmete koristi Colab (Korak 3.1s).
+_pdf_spreman = bool(_token) and bool(st.secrets.get("SKRIPTE_FOLDER_ID")) and PREDMET == predmet_config.ZADANI_PREDMET
 c1, c2 = st.columns(2)
 with c1:
     if st.button("📄 Izgradi PDF (automatski, ~5 min)", type="primary",
                  disabled=not _pogodaka or not _pdf_spreman,
-                 help=None if _pdf_spreman else "Automatska gradnja još nije uključena (nedostaju tajne GITHUB_DISPATCH_TOKEN / SKRIPTE_FOLDER_ID)."):
+                 help=None if _pdf_spreman else ("Automatska gradnja zasad radi samo za matematiku - za ovaj predmet koristi „Samo zapiši zahtjev (za Colab)“." if PREDMET != predmet_config.ZADANI_PREDMET else "Automatska gradnja još nije uključena (nedostaju tajne GITHUB_DISPATCH_TOKEN / SKRIPTE_FOLDER_ID).")):
         _zid = spremi_zahtjev_skripte(init_sheet(), verzija_teorije=verzija, filtri=filtri,
                                    naslov=naslov, podnaslov=podnaslov)
         _ok, _poruka = pokreni_github_build_skripte(_token, _zid)

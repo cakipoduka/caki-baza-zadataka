@@ -47,6 +47,7 @@ import requests
 import streamlit as st
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
+import predmet_config
 from baza_zadataka_pipeline import (
     get_drive_service,
     get_gspread_client,
@@ -116,6 +117,9 @@ def provjeri_lozinku() -> bool:
 
 if not provjeri_lozinku():
     st.stop()
+
+# Zasad samo matematika (12.10.2026.): ne smije pisati po krivom Sheetu kad je odabran drugi predmet.
+predmet_config.zahtijevaj_matematiku(st, "AI kontrola zadataka")
 
 
 # ---------------------------------------------------------------

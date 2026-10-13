@@ -44,6 +44,7 @@ try:
 except Exception:
     _SKUPINE_OK = False
 
+import predmet_config
 from baza_zadataka_pipeline import (
     get_drive_service,
     get_gspread_client,
@@ -122,21 +123,41 @@ if not provjeri_lozinku():
     st.stop()
 
 
+# Predmet (matematika / fizika / ...) - 12.10.2026. Svaki predmet ima SVOJ Sheet i SVOJ folder sa
+# slikama (predmet_config.py); odabir je u bočnoj traci i dijeli se sa svim stranicama aplikacije.
+PREDMET = predmet_config.odaberi_predmet(st)
+# Kategorije vrednovanja (UZV/RP/MK) postoje samo za matematiku; za ostale predmete je lista prazna.
+KATEGORIJE_INFO[:] = predmet_config.kategorije_vrednovanja(PREDMET)  # na mjestu (lista iz gornje definicije)
+if st.session_state.get("_tb_predmet", PREDMET) != PREDMET:
+    # Predmet je promijenjen usred rada: ne miješaj odabrane zadatke i nacrt dvaju predmeta.
+    for _k in ("odabrani", "draft_provjera_ucinjena", "_pronadjen_draft"):
+        st.session_state.pop(_k, None)
+st.session_state["_tb_predmet"] = PREDMET
+
+
 # ---------------------------------------------------------------
 # Google Sheets — dohvat zadataka (keširano 5 min da ne udaramo API)
 # ---------------------------------------------------------------
 
 @st.cache_resource
-def init_spreadsheet():
+def _init_spreadsheet_za(predmet):
     import json
     sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
     gc = get_gspread_client(sa_info)
-    return gc.open_by_key(st.secrets["SHEET_ID"])
+    return gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
+
+
+def init_spreadsheet():
+    return _init_spreadsheet_za(PREDMET)
 
 
 @st.cache_resource
+def _init_sheet_za(predmet):
+    return _init_spreadsheet_za(predmet).worksheet("Zadaci")
+
+
 def init_sheet():
-    return init_spreadsheet().worksheet("Zadaci")
+    return _init_sheet_za(PREDMET)
 
 
 @st.cache_resource
@@ -147,7 +168,7 @@ def init_drive():
 
 
 @st.cache_data(ttl=600)
-def dohvati_sliku_bytes(naziv_datoteke):
+def _dohvati_sliku_bytes_za(naziv_datoteke, predmet):
     """Dohvaća bajtove slike iz istog 02_SLIKE Drive foldera koji koristi i
     app.py (stranica 'Dodaj/zamijeni sliku'). Vraća None ako nije pronađena
     (npr. slika_putanja u bazi nije više valjana) umjesto da baci grešku -
@@ -155,7 +176,7 @@ def dohvati_sliku_bytes(naziv_datoteke):
     if not naziv_datoteke:
         return None
     drive_service = init_drive()
-    slike_folder_id = st.secrets["SLIKE_FOLDER_ID"]
+    slike_folder_id = predmet_config.slike_folder_id(predmet, st.secrets)
     try:
         rezultat = drive_service.files().list(
             q=f"name='{naziv_datoteke}' and '{slike_folder_id}' in parents and trashed=false",
@@ -167,6 +188,13 @@ def dohvati_sliku_bytes(naziv_datoteke):
         return drive_service.files().get_media(fileId=datoteke[0]["id"], supportsAllDrives=True).execute()
     except Exception:
         return None
+
+
+def dohvati_sliku_bytes(naziv_datoteke):
+    return _dohvati_sliku_bytes_za(naziv_datoteke, PREDMET)
+
+
+dohvati_sliku_bytes.clear = _dohvati_sliku_bytes_za.clear
 
 
 def slika_valjana_za_prikaz(slika_bytes):
@@ -191,21 +219,35 @@ def slika_valjana_za_prikaz(slika_bytes):
 
 
 @st.cache_data(ttl=300)
-def ucitaj_zadatke():
-    ws = init_sheet()
+def _ucitaj_zadatke_za(predmet):
+    ws = _init_sheet_za(predmet)
     return ws.get_all_records()
 
 
+def ucitaj_zadatke():
+    return _ucitaj_zadatke_za(PREDMET)
+
+
+ucitaj_zadatke.clear = _ucitaj_zadatke_za.clear
+
+
 @st.cache_data(ttl=600)
-def ucitaj_potpoglavlja_po_cjelini():
+def _ucitaj_potpoglavlja_po_cjelini_za(predmet):
     """{cjelina: [(potpoglavlje, redoslijed), ...]} iz taba 'Sifrarnik_potpoglavlja',
     za filter "Potpoglavlje" u pretrazi (§1) - da izbornik prati redoslijed iz šifrarnika,
     ne abecedni/slučajan poredak. Ako tab ne postoji ili je čitanje neuspješno, vraća {}
     - pozivatelj se tada oslanja na fallback izveden izravno iz stvarnih zadataka."""
     try:
-        return get_potpoglavlja_po_cjelini(init_spreadsheet())
+        return get_potpoglavlja_po_cjelini(_init_spreadsheet_za(predmet))
     except Exception:
         return {}
+
+
+def ucitaj_potpoglavlja_po_cjelini():
+    return _ucitaj_potpoglavlja_po_cjelini_za(PREDMET)
+
+
+ucitaj_potpoglavlja_po_cjelini.clear = _ucitaj_potpoglavlja_po_cjelini_za.clear
 
 
 # ---------------------------------------------------------------
@@ -242,13 +284,21 @@ def _dohvati_ili_kreiraj_tab(naziv, headers):
 
 
 @st.cache_resource
-def init_predlosci_ws():
+def _init_predlosci_ws_za(predmet):
     return _dohvati_ili_kreiraj_tab("TestBuilder_predlosci", PREDLOSCI_HEADERS)
 
 
+def init_predlosci_ws():
+    return _init_predlosci_ws_za(PREDMET)
+
+
 @st.cache_resource
-def init_draft_ws():
+def _init_draft_ws_za(predmet):
     return _dohvati_ili_kreiraj_tab("TestBuilder_draft", DRAFT_HEADERS)
+
+
+def init_draft_ws():
+    return _init_draft_ws_za(PREDMET)
 
 
 def _stanje_za_spremanje(naslov_val, tip_dok_val, prikazi_rjesenja_val):
@@ -1311,6 +1361,7 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
         .replace("{{UKUPNO_BODOVA}}", ukupno_bodova)
         .replace("{{KATEGORIJE_REDOVI}}", kategorije_redovi_tex)
         .replace("{{KRAJ_OZNAKA}}", kraj_oznaka)
+        .replace("{{PREDMET_ZAGLAVLJE}}", predmet_config.postavke(PREDMET)["zaglavlje_pdf"])
         .replace("{{RJESENJA_SEKCIJA}}", rjesenja_sekcija)
     )
 

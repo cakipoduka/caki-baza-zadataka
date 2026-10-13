@@ -129,6 +129,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 import streamlit as st
 
+import predmet_config
 from baza_zadataka_pipeline import (
     get_gspread_client,
     get_or_create_worksheet,
@@ -162,6 +163,9 @@ def provjeri_lozinku() -> bool:
 
 if not provjeri_lozinku():
     st.stop()
+
+# Zasad samo matematika (12.10.2026.): ne smije pisati po krivom Sheetu kad je odabran drugi predmet.
+predmet_config.zahtijevaj_matematiku(st, "WP tečajevi po cjelini")
 
 ADMIN_NAMES = {"caki"}
 st.sidebar.text_input("Tvoje ime", key="autor_ime_izgradi")

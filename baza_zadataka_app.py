@@ -23,6 +23,7 @@ from datetime import datetime
 
 import streamlit as st
 
+import predmet_config
 from baza_zadataka_pipeline import (
     SLOVA_PONUDJENIH_ODGOVORA,
     _col_letter,
@@ -77,7 +78,7 @@ except Exception:
 # u pipeline.mathpix_ocr_datoteka() - ovdje samo dopuštamo oba u Streamlit file_upload widgetu.
 OCR_TIPOVI_DATOTEKA = ["pdf", "png", "jpg", "jpeg", "gif", "webp"]
 
-st.set_page_config(page_title="CAKI Matematika — Obrada ispita", page_icon="📚", layout="wide")
+st.set_page_config(page_title="CAKI — Obrada ispita", page_icon="📚", layout="wide")
 
 
 # --- Jednostavna zaštita lozinkom (protiv slučajnih posjetitelja s interneta, ne protiv suradnika) ---
@@ -92,7 +93,7 @@ def provjeri_lozinku() -> bool:
     if st.session_state.get("autoriziran"):
         return True
 
-    st.title("📚 CAKI Matematika")
+    st.title("📚 CAKI — baza zadataka")
     st.text_input("Lozinka", type="password", key="lozinka_unos", on_change=na_unos)
     if st.session_state.get("autoriziran") is False:
         st.error("Pogrešna lozinka.")
@@ -105,13 +106,25 @@ if not provjeri_lozinku():
 
 # --- Google klijenti (keširano - ne spaja se iznova na svaki rerun) ---
 
+# Predmet (matematika / fizika / ...) - 12.10.2026. Bira se u bočnoj traci (ili ?predmet= u
+# linku); svaki predmet ima SVOJ Google Sheet i SVOJ folder sa slikama (vidi predmet_config.py).
+PREDMET = predmet_config.odaberi_predmet(st)
+PREDMET_NAZIV = predmet_config.postavke(PREDMET)["naziv"]
+NASLOV_APLIKACIJE = predmet_config.postavke(PREDMET)["naslov_aplikacije"]
+SLIKE_FOLDER_ID = predmet_config.slike_folder_id(PREDMET, st.secrets)
+
+
 @st.cache_resource
-def init_google_clients():
+def _init_google_clients_za(predmet):
     sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
     gc = get_gspread_client(sa_info)
     drive_service = get_drive_service(sa_info)
-    sheet = gc.open_by_key(st.secrets["SHEET_ID"])
+    sheet = gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
     return drive_service, sheet
+
+
+def init_google_clients():
+    return _init_google_clients_za(PREDMET)
 
 
 drive_service, sheet = init_google_clients()
@@ -123,7 +136,7 @@ ws_zadaci = sheet.worksheet("Zadaci")
 # ============================================================
 
 def stranica_obradi_ispit():
-    st.title("📚 CAKI Matematika — Obrada ispita")
+    st.title(f"📚 {NASLOV_APLIKACIJE} — Obrada ispita")
     st.caption("Upload PDF-ova → OCR → Claude strukturiranje → upis u bazu")
 
     # --- Izvještaj o ZADNJOJ obradi. Ostaje vidljiv dok se ne pokrene nova obrada (ili se
@@ -205,7 +218,7 @@ def stranica_obradi_ispit():
         st.subheader("2. Metapodaci")
         col1, col2, col3 = st.columns(3)
         izvor_tip = col1.selectbox("Izvor", ["matura", "zbirka", "udzbenik", "vlastiti_materijal"])
-        razina = col2.selectbox("Razina", ["A", "B", "-"])
+        razina = col2.selectbox("Razina", predmet_config.razine(PREDMET))
         godina = col3.text_input("Godina", "")
 
         posalji = st.form_submit_button("🚀 Obradi")
@@ -242,7 +255,7 @@ def stranica_obradi_ispit():
     mathpix_id = st.secrets["MATHPIX_APP_ID"]
     mathpix_key = st.secrets["MATHPIX_APP_KEY"]
     anthropic_key = st.secrets["ANTHROPIC_API_KEY"]
-    slike_folder_id = st.secrets["SLIKE_FOLDER_ID"]
+    slike_folder_id = SLIKE_FOLDER_ID
 
     zapisi_log_obrade(sheet, izvor_naziv, "pocetak", "u_tijeku", f"{broj_pdf_ulaza} datoteka", log=log)
 
@@ -276,7 +289,7 @@ def stranica_obradi_ispit():
             sifrarnik_potpoglavlja_text = build_sifrarnik_potpoglavlja_text(sheet)
             zadaci = extract_zadaci_with_claude(
                 ispit_md, rjesenja_md, sifrarnik_text, anthropic_key,
-                sifrarnik_potpoglavlja_text, log=log,
+                sifrarnik_potpoglavlja_text, log=log, predmet=PREDMET,
             )
             log(f"✅ Claude vratio {len(zadaci)} zadataka")
             zapisi_log_obrade(
@@ -343,12 +356,20 @@ def stranica_obradi_ispit():
 # ============================================================
 
 @st.cache_data(ttl=300)
-def _ucitaj_zadatke_za_pretragu():
+def _ucitaj_zadatke_za_pretragu_za(predmet):
     """Učitava sve zadatke (za pretragu/odabir) - keširano 5 min da ne udara
-    Sheets API na svaki keystroke u polju za pretragu."""
+    Sheets API na svaki keystroke u polju za pretragu. `predmet` je tu samo da keš bude
+    odvojen po predmetu (ws_zadaci je već Sheet aktivnog predmeta)."""
     all_values = ws_zadaci.get_all_values()
     headers = all_values[0]
     return headers, all_values[1:]
+
+
+def _ucitaj_zadatke_za_pretragu():
+    return _ucitaj_zadatke_za_pretragu_za(PREDMET)
+
+
+_ucitaj_zadatke_za_pretragu.clear = _ucitaj_zadatke_za_pretragu_za.clear
 
 
 def _get_polje(row, idx, col):
@@ -357,11 +378,18 @@ def _get_polje(row, idx, col):
 
 
 @st.cache_data(ttl=600)
-def _ucitaj_sifrarnik():
+def _ucitaj_sifrarnik_za(predmet):
     """Šifrarnik cjelina (s pripadajućom kategorijom) i potpoglavlja po cjelini, za padajuće
     izbornike u sekciji kategorizacije na stranici '🔍✏️ Provjera i uređivanje zadataka' - keširano 10 min (šifrarnik
     se mijenja mnogo rjeđe nego sama baza zadataka, otud dulji ttl nego kod _ucitaj_zadatke_za_pretragu)."""
     return get_sifrarnik_cjelina(sheet), get_potpoglavlja_po_cjelini(sheet)
+
+
+def _ucitaj_sifrarnik():
+    return _ucitaj_sifrarnik_za(PREDMET)
+
+
+_ucitaj_sifrarnik.clear = _ucitaj_sifrarnik_za.clear
 
 
 def _pretrazi_zadatke(headers, redovi, upit, max_rezultata=30):
@@ -1058,7 +1086,7 @@ def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
     st.subheader("🖼️ Slika")
 
     trenutna_slika = get(row, "slika_putanja").strip()
-    slike_folder_id = st.secrets["SLIKE_FOLDER_ID"]
+    slike_folder_id = SLIKE_FOLDER_ID
 
     if trenutna_slika:
         st.info(f"Ovaj zadatak već ima sliku: **{trenutna_slika}** — upload ispod će je zamijeniti.")
