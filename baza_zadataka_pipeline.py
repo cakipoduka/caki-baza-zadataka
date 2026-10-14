@@ -92,6 +92,14 @@ ZADACI_HEADERS = [
     # oznaka_stavke): ako ga Sheet nema, sve radi kao prije. Fizički dodaj kao NOVI ZADNJI stupac
     # u tabu 'Zadaci' (zaglavlje točno: slika_rjesenje_putanja), tek NAKON uloga/roditelj_id/oznaka_stavke.
     "slika_rjesenje_putanja",
+    # 🆕 (15.10.2026.) PRIJEVOD zadatka na engleski (za Test Builder / PDF za print). Svi stupci su NEOBAVEZNI i
+    # DODANI NA KRAJU (iza slika_rjesenje_putanja): ako ih Sheet nema, sve radi kao prije (uvoz zadataka ih ne
+    # dira). Fizički dodaj kao NOVE ZADNJE stupce u tabu 'Zadaci' svakog predmeta, TIM REDOSLIJEDOM, zaglavlja
+    # točno kako piše. Pišu ih samo prijevod_zadataka.py / Test Builder, nikad uvoz. prijevod_status je
+    # nepregledan | pregledan | provjeri; prijevod_otisak = md5 hrvatskog izvornika (promijeni li se izvornik,
+    # prijevod je zastario). U PDF smije samo status "pregledan". Vidi prijevod_zadataka.py.
+    "tekst_zadatka_latex_en", "ponudjeni_odgovori_en", "rjesenje_en", "konacan_odgovor_en",
+    "prijevod_status", "prijevod_otisak",
 ]
 
 SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
