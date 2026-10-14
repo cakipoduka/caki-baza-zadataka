@@ -23,6 +23,7 @@ from datetime import datetime
 
 import streamlit as st
 
+import caki_stabilnost  # noqa: F401  (uključuje faulthandler: pri padu u C kodu log dobije Python stack)
 import predmet_config
 from baza_zadataka_pipeline import (
     SLOVA_PONUDJENIH_ODGOVORA,

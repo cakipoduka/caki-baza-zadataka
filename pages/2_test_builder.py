@@ -23,7 +23,8 @@ import tempfile
 
 import gspread
 import streamlit as st
-from PIL import Image
+
+from caki_stabilnost import DRIVE_LOCK, slika_html, slika_izgleda_valjano
 
 try:
     # Skupine zadataka (uvod + stavke a), b), c)) - 10.10.2026. Zaštićen import: ako modul
@@ -178,15 +179,19 @@ def _dohvati_sliku_bytes_za(naziv_datoteke, predmet):
         return None
     drive_service = init_drive()
     slike_folder_id = predmet_config.slike_folder_id(predmet, st.secrets)
+    naziv_q = naziv_datoteke.replace("\\", "\\\\").replace("'", "\\'")
     try:
-        rezultat = drive_service.files().list(
-            q=f"name='{naziv_datoteke}' and '{slike_folder_id}' in parents and trashed=false",
-            fields="files(id,name)", supportsAllDrives=True, includeItemsFromAllDrives=True,
-        ).execute()
-        datoteke = rezultat.get("files", [])
-        if not datoteke:
-            return None
-        return drive_service.files().get_media(fileId=datoteke[0]["id"], supportsAllDrives=True).execute()
+        # DRIVE_LOCK: Drive servis (httplib2) nije sigurna za istodobne pozive iz vise dretvi
+        # (v. caki_stabilnost.py) - pozivi za slike idu jedan po jedan.
+        with DRIVE_LOCK:
+            rezultat = drive_service.files().list(
+                q=f"name='{naziv_q}' and '{slike_folder_id}' in parents and trashed=false",
+                fields="files(id,name)", supportsAllDrives=True, includeItemsFromAllDrives=True,
+            ).execute()
+            datoteke = rezultat.get("files", [])
+            if not datoteke:
+                return None
+            return drive_service.files().get_media(fileId=datoteke[0]["id"], supportsAllDrives=True).execute()
     except Exception:
         return None
 
@@ -199,24 +204,15 @@ dohvati_sliku_bytes.clear = _dohvati_sliku_bytes_za.clear
 
 
 def slika_valjana_za_prikaz(slika_bytes):
-    """Provjerava da su bajtovi STVARNO dekodirljiva slika prije nego se proslijede
-    Streamlitovom st.image(). Dodano 15.9.2026. nakon pada cijelog procesa
-    ('free(): corrupted unsorted chunks', bez ijednog Python tracebacka) kad je
-    odabir 2 cjeline odjednom u pretrazi prvi put u rezultate uključio veći broj
-    slika istovremeno - st.image() interno dekodira sliku preko Pillowa/C
-    biblioteka (libjpeg/libpng/libwebp), a te biblioteke na oštećenoj/nepotpunoj/
-    pogrešnoj datoteci mogu srušiti CIJELI proces umjesto da bace Python iznimku
-    - obična try/except OKO st.image() to ne bi uhvatila. Zato provjeravamo
-    PRIJE poziva, s Image.verify() (ne puno dekodiranje, ali dovoljno da otkrije
-    veliku većinu stvarnih slučajeva: kriv tip datoteke, prekinut upload...).
-    Napomena: ovo ne jamči 100% da baš svaka moguća greška u dekoderu neće nikad
-    srušiti proces, ali pokriva realne uzroke koji se stvarno događaju."""
-    try:
-        with Image.open(io.BytesIO(slika_bytes)) as _im:
-            _im.verify()
-        return True
-    except Exception:
-        return False
+    """Slika se na serveru VISE NE dekodira (Pillow/libpng/libjpeg/libwebp su vec srusili cijeli
+    proces - 15.9. i 14.10.2026., v. caki_stabilnost.py). Provjerava se samo zaglavlje datoteke
+    (PNG/JPEG/GIF/WebP) i velicina; sam prikaz radi preglednik preko data: URI-ja."""
+    return slika_izgleda_valjano(slika_bytes)
+
+
+def prikazi_sliku_html(slika_bytes, width=130):
+    """Umjesto st.image(): ugradi sliku u <img> (dekodira je preglednik, ne server)."""
+    st.markdown(slika_html(slika_bytes, width=width), unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=300)
@@ -697,7 +693,7 @@ with col_pretraga:
                     for _naziv_slike in razdvoji_slike(row.get("slika_putanja", "")):
                         _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
                         if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                            st.image(_slika_bytes, width=130)
+                            prikazi_sliku_html(_slika_bytes, width=130)
                 if not _slobodne:
                     st.button("✅ Već dodano", key=f"add_{row.get('id')}", disabled=True)
                 else:
@@ -738,7 +734,7 @@ with col_pretraga:
                     with _kol_slike[_i_sl % len(_kol_slike)]:
                         _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
                         if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                            st.image(_slika_bytes, width=130)
+                            prikazi_sliku_html(_slika_bytes, width=130)
                         elif _slika_bytes:
                             st.warning(
                                 f"⚠️ Slika '{_naziv_slike}' izgleda oštećena/neispravna "
@@ -895,7 +891,7 @@ with col_odabrano:
                 for _naziv_slike in razdvoji_slike(z.get("slika_putanja")):
                     _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
                     if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                        st.image(_slika_bytes, width=220)
+                        prikazi_sliku_html(_slika_bytes, width=220)
                     elif _slika_bytes:
                         st.warning(
                             f"⚠️ Slika '{_naziv_slike}' izgleda oštećena/neispravna "
