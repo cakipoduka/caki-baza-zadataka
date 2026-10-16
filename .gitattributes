@@ -1,0 +1,19 @@
+# --- Zavrseci redaka: isti na svakom racunalu (dodano 15.10.2026., nalaz 8) ---
+# U gitu se sprema LF, a na Windows disk se vraca CRLF. Bez ovoga isti kod zna
+# izgledati kao tisuce izmjena (v. izvjesce 15.10.2026., nalaz 8).
+* text=auto eol=crlf
+
+# Ovo MORA ostati LF — inace bash u GitHub Actions puca na znak \r
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sh   text eol=lf
+
+# Binarno: git ne dira sadrzaj
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.pdf  binary
+*.xlsx binary
+*.ico  binary
+*.pyc  binary

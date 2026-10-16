@@ -1395,7 +1395,7 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
             log_tail = ""
             for _ in range(2):  # dva prolaza (breakable okviri, fancyhdr)
                 result = subprocess.run(
-                    ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+                    ["pdflatex", "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
                     cwd=tmpdir, capture_output=True, text=True, timeout=60,
                     encoding="utf-8", errors="replace",
                 )
