@@ -1416,3 +1416,45 @@ if st.button("🖨️ Generiraj PDF", type="primary", disabled=not st.session_st
                 "⬇️ Preuzmi PDF", data=pdf_bytes,
                 file_name=f"{naslov.replace(' ', '_')}.pdf", mime="application/pdf",
             )
+
+# ============================================================
+# 📝 OBJAVI KAO ONLINE TEST (19.10.2026.)
+# Korak 3 sustava online testova (MASTER_BAZA §37.4). Odabrani zadaci spremaju se u CRM
+# Sheet (tab `Testovi_zakazani`); učenik ih rješava u portalu Moj CAKI (caki-booking-termina).
+# Ne dira bazu zadataka ni pipeline_upisi.py — upisuje JEDAN redak u drugi Sheet.
+# ============================================================
+try:
+    import testovi_online as _online_testovi
+
+    @st.cache_resource
+    def _crm_sheet_za_testove(_crm_id):
+        import json as _json
+        _sa = _json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+        return get_gspread_client(_sa).open_by_key(_crm_id)
+
+    try:
+        # ID se čita PRIJE stvaranja klijenta: ako tajna nije upisana, ne zovemo Google.
+        _online_sheet = _crm_sheet_za_testove(st.secrets["CRM_SHEET_ID"])
+    except Exception as _greska_crm:  # noqa: BLE001 — Caki mora vidjeti što Google kaže
+        _online_sheet, _online_greska = None, str(_greska_crm)
+    else:
+        _online_greska = ""
+
+    if _online_sheet is None:
+        st.divider()
+        st.subheader("📝 Objavi kao online test")
+        st.warning(
+            "Za online testove ovoj aplikaciji treba pristup CRM Sheetu. U Streamlit Secrets "
+            "dodaj `CRM_SHEET_ID` (ID Sheeta „CAKI CRM — Prijave i baza”) i daj servisnom računu "
+            "pravo uređivanja na taj Sheet.\n\n"
+            f"Google javlja: {_online_greska}"
+        )
+    else:
+        try:
+            _online_testovi.prikazi_objavu(st, _online_sheet, st.session_state.odabrani, PREDMET)
+        except Exception as _e_objava:  # noqa: BLE001 — PDF dio stranice mora raditi i ako ovo zapne
+            st.warning(f"Objava online testa trenutno nije dostupna: {_e_objava}")
+except Exception:  # noqa: BLE001 — nova mogućnost ne smije srušiti Test Builder
+    st.divider()
+    st.info("Modul `testovi_online.py` nije dostupan u ovoj kopiji repozitorija — objava online testa "
+            "nije uključena. (Test Builder i PDF rade kao prije.)")
