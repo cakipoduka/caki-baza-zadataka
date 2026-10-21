@@ -456,6 +456,11 @@ def dodaj_zadatak(row, bodovi_default=""):
         "slika_putanja": row.get("slika_putanja", "").strip() if row.get("slika_zadana") == "da" else "",
         "rjesenje": row.get("rjesenje", ""),
         "konacan_odgovor": row.get("konacan_odgovor", ""),
+        # 21.10.2026.: klasifikacija se zamrzava u online test (analiza po cjelinama u
+        # 📝 Testovi). PDF/LaTeX je ne koristi — samo se prenosi dalje.
+        "cjelina": row.get("cjelina", ""),
+        "potpoglavlje": row.get("potpoglavlje", ""),
+        "tezina": row.get("tezina", ""),
         # Kategorije vrednovanja (UZV/RP/MK) s bodovima po kategoriji - profesor
         # ih bira ovdje u Test Builderu, ne dolaze iz baze (vidi KATEGORIJE_INFO gore).
         "kategorije": {},
@@ -782,6 +787,7 @@ with col_pretraga:
                     "slika_putanja": "",
                     "rjesenje": rucni_rjesenje,
                     "konacan_odgovor": rucni_konacan,
+                    "cjelina": "", "potpoglavlje": "", "tezina": "",
                     "kategorije": {},
                 })
                 st.rerun()

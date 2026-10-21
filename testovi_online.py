@@ -33,6 +33,7 @@ TEST_HEADERS = [
     "test_id", "naziv", "predmet", "ucenik_id", "ime_djeteta", "program", "razina",
     "zadaci_json", "broj_zadataka", "bodovi_ukupno", "trajanje_min",
     "otvara_od", "zatvara_do", "aktivan", "autor", "kreirano", "napomena",
+    "serija",       # 21.10.2026.: oznaka zajedničke objave za više učenika (grupa/kanta)
 ]
 
 # Program na koji se test odnosi (prazno = svi učenici). Ista lista kao program_tip u Prijavama.
@@ -113,6 +114,12 @@ def pripremi_zadatke(odabrani) -> tuple[list[dict], list[str]]:
             "odgovor": odgovor,
             "bodovi": broj_bodova(z.get("bodovi")),
             "slika": _tekst(z.get("slika_putanja")),
+            # 21.10.2026.: klasifikacija ide u zamrznutu kopiju da 📝 Testovi može
+            # pokazati uspjeh PO CJELINAMA („razred pao na trigonometriji”).
+            # Portal je ne čita — ne smeta mu.
+            "cjelina": _tekst(z.get("cjelina")),
+            "potpoglavlje": _tekst(z.get("potpoglavlje")),
+            "tezina": _tekst(z.get("tezina")),
         })
 
     return zadaci, problemi
@@ -164,6 +171,13 @@ def osiguraj_tab(sheet):
         fali = [h for h in TEST_HEADERS if h not in zaglavlje]
         if fali:
             # Samo dopuni stupce na kraj — postojeće podatke ne diramo.
+            # 21.10.2026.: kad zaglavlje dobije novi stupac (npr. `serija`), tab u Googleu
+            # zna biti uži od novog zaglavlja, a upis izvan mreže Google odbija — zato se
+            # mreža prvo proširi. Ako proširenje nije podržano, pokušava se upis kao prije.
+            try:
+                ws.add_cols(len(fali))
+            except Exception:                       # noqa: BLE001 — lažni Sheet / starije verzije
+                pass
             ws.update(values=[zaglavlje + fali], range_name="A1")
     return ws
 
@@ -178,7 +192,8 @@ def _postojeci_idovi(ws) -> list[str]:
 def objavi_test(sheet, *, zadaci: list[dict], naziv: str, predmet: str = "",
                 ucenik_id: str = "", ime_djeteta: str = "", program: str = "",
                 trajanje_min=45, otvara_od: str = "", zatvara_do: str = "",
-                aktivan: bool = True, autor: str = "", napomena: str = "") -> dict:
+                aktivan: bool = True, autor: str = "", napomena: str = "",
+                serija: str = "") -> dict:
     """Upisuje JEDAN redak u `Testovi_zakazani` (jedan API poziv) i vraća upisani redak."""
     ws = osiguraj_tab(sheet)
     test_id = novi_test_id(_postojeci_idovi(ws))
@@ -202,9 +217,74 @@ def objavi_test(sheet, *, zadaci: list[dict], naziv: str, predmet: str = "",
         "autor": _tekst(autor),
         "kreirano": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "napomena": _tekst(napomena),
+        "serija": _tekst(serija),
     }
     ws.append_row([redak[h] for h in TEST_HEADERS], value_input_option="RAW")
     return redak
+
+
+def objavi_za_ucenike(sheet, *, zadaci: list[dict], ucenici, naziv: str, predmet: str = "",
+                      program: str = "", trajanje_min=45, otvara_od: str = "",
+                      zatvara_do: str = "", aktivan: bool = True, autor: str = "",
+                      napomena: str = "", serija: str = "") -> list[dict]:
+    """Isti test za VIŠE učenika: po jedan redak za svakoga, u JEDNOM upisu (`append_rows`).
+
+    Zašto po redak: portal (`caki-booking-termina/testovi_online.py`) bira test po
+    `ucenik_id`, pa tako radi bez ijedne izmjene portala. Zašto jedan upis: Sheets
+    write-kvota je 60/min po servisnom računu (nalaz 18.10.), a razred od 20 učenika
+    ne smije potrošiti 20 poziva.
+
+    `ucenici` je popis dictova ({"ucenik_id", "ime_djeteta"}) ili popis šifri.
+    Vraća popis upisanih redaka (svaki sa svojim `test_id`).
+    """
+    popis = list(ucenici or [])
+    if not popis:
+        raise ValueError("Nema učenika za koje bi se test objavio.")
+    if not zadaci:
+        raise ValueError("Nema zadataka za objavu.")
+
+    ws = osiguraj_tab(sheet)
+    postojeci = _postojeci_idovi(ws)
+    bodovi_ukupno = sum(float(z.get("bodovi") or 1) for z in zadaci)
+    zadaci_json = json.dumps(zadaci, ensure_ascii=False)
+    kreirano = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    redci: list[dict] = []
+    for u in popis:
+        if isinstance(u, dict):
+            uid = _tekst(u.get("ucenik_id")).upper()
+            ime = _tekst(u.get("ime_djeteta"))
+        else:
+            uid, ime = _tekst(u).upper(), ""
+        if not uid:
+            continue
+        test_id = novi_test_id(postojeci)
+        postojeci.append(test_id)              # sljedeći krug ne smije dobiti isti ID
+        redci.append({
+            "test_id": test_id,
+            "naziv": _tekst(naziv),
+            "predmet": _tekst(predmet),
+            "ucenik_id": uid,
+            "ime_djeteta": ime,
+            "program": _tekst(program),
+            "razina": "",
+            "zadaci_json": zadaci_json,
+            "broj_zadataka": len(zadaci),
+            "bodovi_ukupno": round(bodovi_ukupno, 2),
+            "trajanje_min": int(trajanje_min),
+            "otvara_od": _tekst(otvara_od)[:10],
+            "zatvara_do": _tekst(zatvara_do)[:10],
+            "aktivan": STATUS_AKTIVAN if aktivan else "Ne",
+            "autor": _tekst(autor),
+            "kreirano": kreirano,
+            "napomena": _tekst(napomena),
+            "serija": _tekst(serija),
+        })
+
+    if not redci:
+        raise ValueError("Nijedan učenik nema šifru — nema što objaviti.")
+    ws.append_rows([[r[h] for h in TEST_HEADERS] for r in redci], value_input_option="RAW")
+    return redci
 
 
 def load_testovi(sheet) -> list[dict]:
@@ -339,6 +419,6 @@ def naziv_predmeta(predmet: str) -> str:
 __all__ = [
     "TEST_TAB", "TEST_HEADERS", "PROGRAMI", "STATUS_AKTIVAN",
     "novi_test_id", "broj_bodova", "pripremi_zadatke", "provjeri_objavu",
-    "osiguraj_tab", "objavi_test", "load_testovi", "zadaci_iz_retka",
+    "osiguraj_tab", "objavi_test", "objavi_za_ucenike", "load_testovi", "zadaci_iz_retka",
     "prikazi_objavu", "naziv_predmeta",
 ]
