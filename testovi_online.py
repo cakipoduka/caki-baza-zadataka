@@ -42,6 +42,50 @@ PROGRAMI = ["", "Upisi", "Matura", "Instrukcije"]
 STATUS_AKTIVAN = "Da"
 
 
+def _poruka_json(naziv_kljuca: str, sto: str) -> str:
+    return (f"`{naziv_kljuca}` u Streamlit Secrets {sto}.\n\n"
+            "**Kako popraviti:** otvori Secrets → taj ključ → mora biti JSON servisnog računa "
+            "(`{\"type\": \"service_account\", …}`). Najčešća greška je da `private_key` sadrži "
+            "STVARNE prijelome redaka — u JSON-u mora stajati `\\n` (jedna linija), ili se cijeli JSON "
+            "zalijepi u TOML s trostrukim navodnicima. Ne stavljaj navodnike oko cijelog JSON-a.")
+
+
+def sa_info_iz_teksta(tekst, naziv_kljuca: str = "GOOGLE_SERVICE_ACCOUNT_JSON") -> dict:
+    """JSON servisnog računa iz Secrets — tolerantno na uobičajene pogreške pri lijepljenju.
+
+    Zašto postoji (21.10.2026.): u Secrets je zalijepljen JSON u kojem `private_key` ima STVARNE
+    prijelome redaka umjesto `\\n`. `json.loads` to odbija („Invalid control character at: line 5
+    column 46”), stranica padne, a poruka je glasila na krivu stranu („CRM Sheet se ne može otvoriti”
+    / „dodaj servisni račun na Sheet”) iako je Sheet bio ispravno podijeljen. Takav se JSON ovdje
+    prihvati (`strict=False`) jer se nakon parsiranja dobije isti ključ kakav Google očekuje.
+
+    Prihvaća i JSON u navodnicima (zalijepljen s `"…"`), BOM na početku i višak praznina.
+    Ako ni to ne prođe, greška kaže TOČNO koji ključ u Secrets je u pitanju i što napraviti.
+    """
+    import json
+    t = str(tekst or "").replace("\ufeff", "").strip()
+    if len(t) >= 2 and t[0] == t[-1] and t[0] in ("'", '"') and t[1:2] == "{":
+        t = t[1:-1].strip()                       # zalijepljen s navodnicima oko cijelog JSON-a
+    podaci, zadnja = None, None
+    for strogo in (True, False):                  # False dopušta stvarne \n unutar stringa
+        try:
+            podaci = json.loads(t, strict=strogo)
+            break
+        except json.JSONDecodeError as e:
+            zadnja = e
+    if podaci is None:
+        raise ValueError(_poruka_json(naziv_kljuca, f"nije ispravan JSON ({zadnja})"))
+    if not isinstance(podaci, dict):
+        raise ValueError(_poruka_json(naziv_kljuca, "nije JSON objekt (mora biti od `{` do `}`)"))
+    fale = [k for k in ("private_key", "client_email", "token_uri") if not str(podaci.get(k) or "").strip()]
+    if fale:
+        raise ValueError(_poruka_json(naziv_kljuca, "nema obavezna polja: " + ", ".join(fale)))
+    if "BEGIN" not in str(podaci["private_key"])[:60]:
+        raise ValueError(_poruka_json(naziv_kljuca, "polje `private_key` ne sadrži "
+                                                    "„-----BEGIN PRIVATE KEY-----”"))
+    return podaci
+
+
 def sa_info_za_testove(st) -> dict:
     """Servisni racun za sustav testiranja (Testovi_zakazani/Rezultati_testova).
 
@@ -51,11 +95,13 @@ def sa_info_za_testove(st) -> dict:
     `GOOGLE_SERVICE_ACCOUNT_JSON_TESTOVI` ako postoji u Secrets, inace pada natrag na
     dijeljeni `GOOGLE_SERVICE_ACCOUNT_JSON` -- nista ne puca prije nego Caki postavi
     novi racun.
+
+    Parsiranje ide kroz `sa_info_iz_teksta` (21.10.2026.) da stvarni prijelom retka u
+    `private_key` ne sruši cijelu stranicu.
     """
-    import json
     kljuc = ("GOOGLE_SERVICE_ACCOUNT_JSON_TESTOVI" if "GOOGLE_SERVICE_ACCOUNT_JSON_TESTOVI" in st.secrets
              else "GOOGLE_SERVICE_ACCOUNT_JSON")
-    return json.loads(st.secrets[kljuc])
+    return sa_info_iz_teksta(st.secrets[kljuc], kljuc)
 
 
 # ============================================================
@@ -437,4 +483,5 @@ __all__ = [
     "novi_test_id", "broj_bodova", "pripremi_zadatke", "provjeri_objavu",
     "osiguraj_tab", "objavi_test", "objavi_za_ucenike", "load_testovi", "zadaci_iz_retka",
     "prikazi_objavu", "naziv_predmeta",
+    "sa_info_za_testove", "sa_info_iz_teksta",
 ]

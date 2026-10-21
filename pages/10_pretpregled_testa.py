@@ -56,6 +56,9 @@ st.caption("Rjesavas test kao sto bi ga vidio ucenik -- nista se ne sprema ni u 
 
 try:
     sheet = _crm_sheet(st.secrets["CRM_SHEET_ID"])
+except ValueError as e:  # noqa: BLE001 -- 21.10.2026.: greška u Secrets, ne u pristupu Sheetu
+    st.error(f"Greška u Secrets: {e}")
+    st.stop()
 except Exception as e:  # noqa: BLE001 -- Caki mora vidjeti sto Google kaze
     st.warning(
         "Treba `CRM_SHEET_ID` u Secrets (isti kao za „Objavi kao online test“ u Test Builderu).\n\n"

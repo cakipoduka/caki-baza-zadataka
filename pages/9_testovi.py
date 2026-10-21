@@ -73,6 +73,11 @@ def _crm_sheet(crm_id: str):
 crm_id = str(st.secrets["CRM_SHEET_ID"])
 try:
     sheet = _crm_sheet(crm_id)
+except ValueError as e:                                 # noqa: BLE001 — greška u Secrets, ne u Sheetu
+    # 21.10.2026.: dosad je svaka greška ovdje glasila „dodaj servisni račun na Sheet”, pa je i
+    # pokvaren JSON u Secrets vodio na pogrešnu stranu. Sada se takva greška prepoznaje.
+    st.error(f"Greška u Secrets: {e}")
+    st.stop()
 except Exception as e:                                  # noqa: BLE001 — Caki mora vidjeti grešku
     st.error(f"CRM Sheet se ne može otvoriti: {e}")
     st.caption("Provjeri da je servisni račun dodan na Sheet „CAKI CRM — Prijave i baza” "
