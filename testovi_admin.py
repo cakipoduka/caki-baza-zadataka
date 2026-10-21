@@ -27,13 +27,23 @@ STUPAC `serija` (priprema za korak 2 — zadavanje po grupi)
 """
 from __future__ import annotations
 
+import importlib.util as _importlib_util
 import json
+import os as _os
 import re
 from datetime import date, datetime
 
 from gspread.utils import rowcol_to_a1
 
-import testovi_online as _online
+# 21.10.2026.: modul `testovi_online` postoji i u portalu (`caki-booking-termina`) pod ISTIM
+# imenom. Običan `import testovi_online` znao bi (u zajedničkom pytest procesu, i u svakom
+# alatu koji drži sys.modules) dohvatiti PORTALSKU kopiju — koja nema `TEST_HEADERS` ni
+# `STATUS_AKTIVAN`. Zato se učitava točno datoteka iz OVE mape, bez obzira na sys.path.
+_ONLINE_PUT = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "testovi_online.py")
+_spec_online = _importlib_util.spec_from_file_location("testovi_online_baza", _ONLINE_PUT)
+_online = _importlib_util.module_from_spec(_spec_online)
+_spec_online.loader.exec_module(_online)
+del _spec_online
 
 TEST_TAB = _online.TEST_TAB                 # "Testovi_zakazani"
 REZ_TAB = "Rezultati_testova"
@@ -54,6 +64,7 @@ GRANICA_CELIJE = 45000                      # Google: jedna ćelija najviše 50.
 GRUPE_TAB = "Grupe"
 REZERVACIJE_TAB = "Rezervacije"
 RASPORED_PREFIKS = "Raspored_Matura"
+POCETAK_TAB = "Test_pocetak"      # piše ga PORTAL pri otvaranju testa (21.10.2026.)
 
 DANI_REDOM = ("Ponedjeljak", "Utorak", "Srijeda", "Četvrtak", "Petak", "Subota", "Nedjelja")
 
@@ -423,6 +434,58 @@ def ucenici_bez_predaje(redci, rezultati) -> list[str]:
 def ucenici_koji_nisu_predali(test, rezultati) -> list[str]:
     """Jedan redak testa -> šifre onih koji nisu predali (prazno ako nije zadan pojedincu)."""
     return ucenici_bez_predaje([test], rezultati)
+
+
+def load_pocetke(sheet) -> list[dict]:
+    """Počeci rješavanja iz taba `Test_pocetak` (piše ih portal). Prazno ako tab nema."""
+    return _load_opcionalni_tab(sheet, POCETAK_TAB)
+
+
+def zapoceli_bez_predaje(redci, pocetci, rezultati, sada=None) -> list[dict]:
+    """Učenici koji su OTVORILI test, a nisu predali — za odabranu test/seriju.
+
+    `minuta` = koliko minuta rješavaju (ako se zna vrijeme), inače None. Sortirano od
+    najdulje otvorenog — to je ono što Caki prvo pogleda („je li zapeo?”).
+    """
+    idovi = {_tekst((t or {}).get("test_id")) for t in redci or [] if _tekst((t or {}).get("test_id"))}
+    if not idovi:
+        return []
+    predali = {(_tekst(r.get("test_id")), _tekst(r.get("ucenik_id")).upper())
+               for r in rezultati or []}
+    sada = sada or datetime.now()
+
+    izlaz = []
+    for p in pocetci or []:
+        tid = _tekst(p.get("test_id"))
+        uid = _tekst(p.get("ucenik_id")).upper()
+        if tid not in idovi or not uid or (tid, uid) in predali:
+            continue
+        minuta = None
+        try:
+            pocetak = datetime.fromisoformat(_tekst(p.get("pocetak"))).replace(tzinfo=None)
+            minuta = int((sada - pocetak).total_seconds() // 60)
+        except (TypeError, ValueError):
+            pocetak = None
+        izlaz.append({
+            "test_id": tid,
+            "ucenik_id": uid,
+            "pocetak": _tekst(p.get("pocetak"))[:16],
+            "minuta": minuta if (minuta is None or minuta >= 0) else None,
+        })
+
+    izlaz.sort(key=lambda z: (z["minuta"] is None, -(z["minuta"] or 0), z["ucenik_id"]))
+    return izlaz
+
+
+def tablica_zapocelih(zapoceli):
+    import pandas as pd
+
+    return pd.DataFrame([{
+        "Učenik": z["ucenik_id"],
+        "Počeo": z["pocetak"],
+        "Rješava (min)": z["minuta"] if z["minuta"] is not None else "",
+        "Test": z["test_id"],
+    } for z in zapoceli or []])
 
 
 def _cjelina_zadatka(z) -> str:
@@ -1093,6 +1156,75 @@ def csv_uspjeha(uspjeh) -> str:
 # Provjere prije spremanja
 # ============================================================
 
+# ============================================================
+# 🧪 Provjera nakon pusha — je li sve spojeno
+# ============================================================
+
+def dijagnostika(sheet) -> list[dict]:
+    """Popis provjera nakon deploya: koji tabovi postoje i imaju li očekivane stupce.
+
+    Vraća [{"naziv", "status": "ok"|"napomena"|"greška", "opis"}]. Ne mijenja ništa —
+    samo čita jedan popis tabova i po zaglavlje. Namijenjeno kartici 🩺 Provjere, da Caki
+    nakon Push + Reboot u jednom pogledu vidi je li sustav spojen.
+    """
+    try:
+        tabovi = {w.title: w for w in sheet.worksheets()}
+    except Exception as e:                              # noqa: BLE001
+        return [{"naziv": "CRM Sheet", "status": "greška",
+                 "opis": f"ne može se otvoriti ({e}) — provjeri SHEET_ID i prava računa"}]
+
+    nalazi = [{"naziv": "CRM Sheet", "status": "ok",
+               "opis": f"otvoren, {len(tabovi)} tabova"}]
+
+    def _stupci(naziv_taba: str, obavezni: tuple) -> None:
+        ws = tabovi.get(naziv_taba)
+        if ws is None:
+            nalazi.append({"naziv": naziv_taba, "status": "napomena",
+                           "opis": "tab još ne postoji — nastaje sam pri prvom upisu"})
+            return
+        try:
+            zaglavlje = [_tekst(h) for h in ws.row_values(1)]
+        except Exception as e:                          # noqa: BLE001
+            nalazi.append({"naziv": naziv_taba, "status": "greška",
+                           "opis": f"zaglavlje se ne može pročitati ({e})"})
+            return
+        fali = [h for h in obavezni if h not in zaglavlje]
+        if fali:
+            nalazi.append({"naziv": naziv_taba, "status": "napomena",
+                           "opis": "nedostaju stupci: " + ", ".join(fali)})
+        else:
+            nalazi.append({"naziv": naziv_taba, "status": "ok",
+                           "opis": f"{len(zaglavlje)} stupaca, sve na mjestu"})
+
+    _stupci(TEST_TAB, ("test_id", "naziv", "zadaci_json", "aktivan", SERIJA_STUPAC))
+    _stupci(REZ_TAB, ("rezultat_id", "test_id", "ucenik_id", "bodovi", "detalji_json"))
+    _stupci(POCETAK_TAB, ("test_id", "ucenik_id", "pocetak"))
+
+    ws_testovi = tabovi.get(TEST_TAB)
+    if ws_testovi is not None:
+        try:
+            idovi = [_tekst(v) for v in ws_testovi.col_values(1)[1:] if _tekst(v)]
+        except Exception:                               # noqa: BLE001
+            idovi = []
+        dupli = sorted({i for i in idovi if idovi.count(i) > 1})
+        if dupli:
+            nalazi.append({"naziv": "Jedinstveni ID-evi testova", "status": "greška",
+                           "opis": "ponavlja se: " + ", ".join(dupli[:5])})
+        elif idovi:
+            nalazi.append({"naziv": "Jedinstveni ID-evi testova", "status": "ok",
+                           "opis": f"{len(idovi)} testova, nijedan dvaput"})
+
+    return nalazi
+
+
+def sazetak_dijagnostike(nalazi) -> dict:
+    """{"greska": n, "napomena": m, "ok": k} — za brzi prikaz na vrhu."""
+    brojevi = {"greška": 0, "napomena": 0, "ok": 0}
+    for n in nalazi or []:
+        brojevi[n.get("status", "ok")] = brojevi.get(n.get("status", "ok"), 0) + 1
+    return brojevi
+
+
 def provjeri_izmjene(naziv, trajanje, otvara_od, zatvara_do) -> list[str]:
     """Popis grešaka za uređivanje testa (prazan = može se spremiti)."""
     greske: list[str] = []
@@ -1239,6 +1371,60 @@ def postavi_aktivan_seriju(sheet, testovi, serija, aktivan: bool) -> int:
         raise ValueError("Serija nema nijedan redak — osvježi stranicu.")
     return _azuriraj_vise_redaka(sheet, redci,
                                  {"aktivan": STATUS_AKTIVAN if aktivan else "Ne"})
+
+
+def _obrisi_redke_gdje(ws, stupac: int, vrijednosti: set[str]) -> int:
+    """Briše retke u kojima je vrijednost u `stupac` (1-based) u zadanom skupu.
+
+    Briše ODOZDO prema gore da se indeksi ne pomaknu. Vraća broj obrisanih redaka.
+    """
+    vrijednosti = {_tekst(v) for v in vrijednosti if _tekst(v)}
+    if not vrijednosti:
+        return 0
+    u_tablici = [_tekst(v) for v in ws.col_values(stupac)]
+    za_brisanje = [i + 1 for i, v in enumerate(u_tablici) if v in vrijednosti]
+    for redak in sorted(za_brisanje, reverse=True):
+        ws.delete_rows(redak)
+    return len(za_brisanje)
+
+
+def _obrisi_testove_i_rezultate(sheet, test_idovi: set[str], i_rezultate: bool) -> dict:
+    ws_testovi = sheet.worksheet(TEST_TAB)
+    broj_testova = _obrisi_redke_gdje(ws_testovi, 1, test_idovi)
+
+    broj_rezultata = 0
+    if i_rezultate:
+        try:
+            ws_rez = sheet.worksheet(REZ_TAB)
+        except Exception:                               # noqa: BLE001 — tab još ne postoji
+            ws_rez = None
+        if ws_rez is not None:
+            broj_rezultata = _obrisi_redke_gdje(ws_rez, 2, test_idovi)
+    return {"testova": broj_testova, "rezultata": broj_rezultata}
+
+
+def obrisi_test(sheet, test_id: str, i_rezultate: bool = True) -> dict:
+    """TRAJNO briše test (i, po želji, njegove rezultate) — nestaje iz Moj CAKI i iz rezultata.
+
+    Vraća {"testova": n, "rezultata": m}. Za „samo sakrij” koristi `postavi_aktivan(False)` —
+    deaktiviran test učenik ne vidi, a rezultati ostaju.
+    """
+    tid = _tekst(test_id)
+    if not tid:
+        raise ValueError("Nema što obrisati — test nije odabran.")
+    rez = _obrisi_testove_i_rezultate(sheet, {tid}, i_rezultate)
+    if not rez["testova"]:
+        raise ValueError(f"Test `{tid}` nije pronađen u tabu `{TEST_TAB}` — osvježi stranicu.")
+    return rez
+
+
+def obrisi_seriju(sheet, testovi, serija, i_rezultate: bool = True) -> dict:
+    """TRAJNO briše sve retke jedne objave (grupa/kanta) i, po želji, njihove rezultate."""
+    redci = testovi_serije(testovi, serija)
+    idovi = {_tekst(t.get("test_id")) for t in redci if _tekst(t.get("test_id"))}
+    if not idovi:
+        raise ValueError("Serija nema nijedan redak — osvježi stranicu.")
+    return _obrisi_testove_i_rezultate(sheet, idovi, i_rezultate)
 
 
 def kloniraj_test(sheet, test_id: str, naziv: str = "", otvara_od: str = "",
@@ -1480,6 +1666,44 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                              f"Serija `{serija_popis}`: "
                              f"{'deaktivirano' if _aktivan(test) else 'aktivirano'} {n_ser} testova.")
 
+        with st.expander("🗑️ Obriši test (trajno)"):
+            st.caption("Brisanje uklanja test **iz Moj CAKI** (učenik ga više ne vidi) i briše "
+                       "njegove rezultate iz tablice rezultata. **Nema povratka.** Ako želiš da "
+                       "ga učenik samo prestane vidjeti, a rezultati ostanu — koristi "
+                       "**⏸️ Deaktiviraj**.")
+            potvrda = st.checkbox(
+                f"Svjesno brišem test „{_tekst(test.get('naziv'))}” ({odabrani_id})",
+                key=f"ta_brisi_pot_{odabrani_id}")
+            i_rez = st.checkbox("Obriši i rezultate tog testa", value=True,
+                                key=f"ta_brisi_rez_{odabrani_id}")
+            if st.button("🗑️ Obriši test", key=f"ta_brisi_{odabrani_id}", disabled=not potvrda):
+                try:
+                    rez_brisanja = obrisi_test(sheet, odabrani_id, i_rezultate=i_rez)
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    _osvjezi(st, "success",
+                             f"🗑️ Obrisano: **{rez_brisanja['testova']}** test(ova), "
+                             f"**{rez_brisanja['rezultata']}** rezultat(a).")
+
+            if serija_popis:
+                st.divider()
+                cijela = testovi_serije(testovi, serija_popis)
+                potvrda_ser = st.checkbox(
+                    f"Svjesno brišem CIJELU seriju „{serija_popis}” "
+                    f"({len(cijela)} učenika)", key=f"ta_brisi_ser_pot_{odabrani_id}")
+                if st.button(f"🗑️ Obriši cijelu seriju ({len(cijela)})",
+                             key=f"ta_brisi_ser_{odabrani_id}", disabled=not potvrda_ser):
+                    try:
+                        rez_ser = obrisi_seriju(sheet, testovi, serija_popis, i_rezultate=i_rez)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        _osvjezi(st, "success",
+                                 f"🗑️ Obrisana serija `{serija_popis}`: "
+                                 f"**{rez_ser['testova']}** test(ova), "
+                                 f"**{rez_ser['rezultata']}** rezultat(a).")
+
         with st.expander("👁️ Kako ovaj test vidi učenik (s točnim odgovorima)"):
             prikazi_pregled(st, test)
 
@@ -1595,6 +1819,19 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                 d2.download_button("⬇️ CSV — uspjeh po zadatku", data=csv_uspjeha(uspjeh).encode("utf-8-sig"),
                                    file_name=f"test_{odabrani_r}_uspjeh.csv", mime="text/csv",
                                    key=f"ta_csv_usp_{odabrani_r}")
+
+        # 🕓 Započeli, nisu predali — čita tab `Test_pocetak` koji piše portal
+        try:
+            pocetci = load_pocetke(sheet)
+        except Exception:                           # noqa: BLE001 — tab još ne postoji
+            pocetci = []
+        zapoceli = zapoceli_bez_predaje(redci_r, pocetci, moji)
+        if zapoceli:
+            st.markdown(f"**🕓 Započeli, nisu predali ({len(zapoceli)})**")
+            st.dataframe(tablica_zapocelih(zapoceli), hide_index=True, width="stretch")
+            st.caption("Podatak dolazi iz taba `Test_pocetak` — portal ga upiše kad učenik otvori "
+                       "test. Ako „Rješava (min)” prelazi predviđeno trajanje, učenik je vjerojatno "
+                       "zapeo ili odustao.")
 
     # ------------------------------------------------ 👤 po učeniku
     with tab_ucenik:
@@ -1753,6 +1990,16 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
 
     # ------------------------------------------------ 🩺 provjere
     with tab_provjere:
+        st.markdown("**🧪 Provjera nakon pusha** — je li sve spojeno")
+        try:
+            nalazi_dij = dijagnostika(sheet)
+        except Exception as e:                      # noqa: BLE001 — ni dijagnostika ne ruši stranicu
+            nalazi_dij = [{"naziv": "Dijagnostika", "status": "greška", "opis": str(e)}]
+        for n in nalazi_dij:
+            ikona = {"ok": "✅", "napomena": "⚠️", "greška": "❌"}.get(n["status"], "ℹ️")
+            st.markdown(f"{ikona} **{n['naziv']}** — {n['opis']}")
+
+        st.divider()
         nalazi = problemi(testovi, rezultati, danas=danas)
         if not nalazi:
             st.success("Svi objavljeni testovi izgledaju dobro — nema što popraviti. 🎉")
@@ -1793,13 +2040,14 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
 
 __all__ = [
     "TEST_TAB", "REZ_TAB", "REZ_HEADERS", "SERIJA_STUPAC", "STATUS_AKTIVAN", "GRANICA_CELIJE",
-    "GRUPE_TAB", "REZERVACIJE_TAB", "RASPORED_PREFIKS", "DANI_REDOM",
+    "GRUPE_TAB", "REZERVACIJE_TAB", "RASPORED_PREFIKS", "DANI_REDOM", "POCETAK_TAB",
     "load_testovi", "load_rezultati", "load_grupe", "load_rezervacije",
     "naziv_taba_rasporeda", "load_raspored_mature", "ucenici_upisa", "kante_mature",
     "zadaci_iz_testa", "detalji_iz_retka", "nadji_test",
     "filtruj_rezultate", "filtruj_po_predmetu", "cilj_opis",
     "serija_iz_retka", "testovi_serije", "jedinstvena_serija", "oznaka_serije",
     "sazetak", "uspjeh_po_zadatku", "ucenici_bez_predaje", "ucenici_koji_nisu_predali",
+    "load_pocetke", "zapoceli_bez_predaje", "tablica_zapocelih",
     "uspjeh_po_cjelinama", "spremnost_baze",
     "ucenici_s_rezultatima", "povijest_ucenika", "sazetak_ucenika", "slabe_cjeline_ucenika",
     "promaseni_zadaci", "tekst_sazetka_za_roditelja",
