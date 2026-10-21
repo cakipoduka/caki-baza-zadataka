@@ -19,6 +19,7 @@ Ako se stvarno ocjenjivanje promijeni, promijeni i ovdje.
 SECRETS: GOOGLE_SERVICE_ACCOUNT_JSON, APP_PASSWORD, CRM_SHEET_ID (iste kao Test Builder
 za objavu online testa).
 """
+import uputa_u_aplikaciji as _uputa  # 21.10.2026.: upute UNUTAR aplikacije (sklopivi blok)
 import streamlit as st
 
 import testovi_online as _online
@@ -51,6 +52,7 @@ def _crm_sheet(_crm_id):
 
 
 st.title("\U0001f441️ Pretpregled testa")
+_uputa.prikazi(st, "pretpregled")
 st.caption("Rjesavas test kao sto bi ga vidio ucenik -- nista se ne sprema ni u jedan Sheet. "
            "Samo za tvoju provjeru prije/nakon objave.")
 

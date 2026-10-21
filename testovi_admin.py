@@ -35,6 +35,13 @@ from datetime import date, datetime
 
 from gspread.utils import rowcol_to_a1
 
+# 21.10.2026.: upute unutar aplikacije. Zaštićen uvoz — modul s uputama NE smije blokirati
+# testovi_admin (koristi se i iz testova koji taj modul ne trebaju).
+try:
+    import uputa_u_aplikaciji as _uputa
+except Exception:  # noqa: BLE001
+    _uputa = None
+
 # 21.10.2026.: modul `testovi_online` postoji i u portalu (`caki-booking-termina`) pod ISTIM
 # imenom. Običan `import testovi_online` znao bi (u zajedničkom pytest procesu, i u svakom
 # alatu koji drži sys.modules) dohvatiti PORTALSKU kopiju — koja nema `TEST_HEADERS` ni
@@ -933,6 +940,103 @@ def slabe_cjeline_ucenika(rezultati, testovi, ucenik_id) -> list[dict]:
     return izlaz
 
 
+def _bloom_razina(z) -> str:
+    """Bloom razina zadatka ('1'–'5') ili '' ako nije označena. Oznaka je u zamrznutom testu."""
+    b = _tekst((z or {}).get("bloom"))
+    return b if b in _online.BLOOM_NAZIVI else ""
+
+
+def bloom_profil_ucenika(rezultati, testovi, ucenik_id) -> list[dict]:
+    """Uspjeh po Bloomovim razinama kroz SVE testove učenika (samo označeni zadaci).
+
+    Odgovara na pitanje koje se brojkom ne može odgovoriti: „zna formule, ali ih ne prenosi na
+    zadatak” = visoke razine 1–2, niske 3–4. Razina se čita iz ZAMRZNUTE kopije u testu.
+    """
+    uid = _tekst(ucenik_id).upper()
+    po: dict[str, dict] = {}
+    for r in rezultati or []:
+        if _tekst(r.get("ucenik_id")).upper() != uid:
+            continue
+        test = nadji_test(testovi, r.get("test_id"))
+        zadaci = zadaci_iz_testa(test) if test else []
+        for i, d in enumerate(detalji_iz_retka(r)):
+            if not isinstance(d, dict) or i >= len(zadaci):
+                continue
+            razina = _bloom_razina(zadaci[i])
+            if not razina:
+                continue
+            s = po.setdefault(razina, {"razina": razina, "naziv": _online.BLOOM_NAZIVI[razina],
+                                       "tocno": 0, "ukupno": 0})
+            s["ukupno"] += 1
+            if d.get("tocno"):
+                s["tocno"] += 1
+    izlaz = list(po.values())
+    for s in izlaz:
+        s["postotak"] = int(round(100 * s["tocno"] / s["ukupno"])) if s["ukupno"] else 0
+    izlaz.sort(key=lambda s: s["razina"])
+    return izlaz
+
+
+def tablica_bloom(profil):
+    """Profil po Bloom razinama kao pandas tablica."""
+    import pandas as pd
+    return pd.DataFrame([{
+        "Razina": f"{s['razina']} · {s['naziv']}",
+        "Zadataka": s["ukupno"],
+        "Točno": s["tocno"],
+        "Uspjeh": s["postotak"],
+    } for s in (profil or [])])
+
+
+def nacrt_testa(test) -> dict:
+    """Raspodjela zadataka po Bloom razinama + upozorenja o VALJANOSTI testa (nacrt).
+
+    Ovo je provjera kakvoće testa, ne učenika: test koji mjeri samo razinu 1 ne pokazuje razumije
+    li učenik gradivo, a test bez razine 4 ne pokazuje može li znanje prenijeti.
+    """
+    zadaci = zadaci_iz_testa(test)
+    brojevi = {k: 0 for k in _online.BLOOM_NAZIVI}
+    neoznaceno = 0
+    for z in zadaci:
+        b = _bloom_razina(z)
+        if b:
+            brojevi[b] += 1
+        else:
+            neoznaceno += 1
+    ukupno = len(zadaci)
+    oznaceno = ukupno - neoznaceno
+    upozorenja = []
+    if neoznaceno:
+        upozorenja.append(f"{neoznaceno} od {ukupno} zadataka nema Bloom razinu — analiza po "
+                          "razinama ih preskače (označavaju se u Test Builderu, uz Bodove).")
+    if oznaceno >= 5:
+        naj = max(brojevi, key=lambda k: brojevi[k])
+        if brojevi[naj] / oznaceno > 0.7:
+            upozorenja.append(f"{brojevi[naj]} od {oznaceno} označenih zadataka je razina "
+                              f"{naj} ({_online.BLOOM_NAZIVI[naj]}) — test mjeri uglavnom jednu vještinu.")
+        if brojevi["4"] == 0:
+            upozorenja.append("Nijedan zadatak nije razina 4 (Analiziraj) — test ne pokazuje može li "
+                              "učenik prenijeti znanje na novi zadatak.")
+        if brojevi["1"] / oznaceno > 0.4:
+            upozorenja.append(f"{brojevi['1']} zadataka je razina 1 (Zapamti) — ocjena može nahraniti "
+                              "znanje koje učenik ne zna primijeniti.")
+    return {"ukupno": ukupno, "oznaceno": oznaceno, "neoznaceno": neoznaceno,
+            "po_razini": [{"razina": k, "naziv": v, "zadataka": brojevi[k]} for k, v in
+                          _online.BLOOM_NAZIVI.items()],
+            "upozorenja": upozorenja}
+
+
+def tablica_nacrta(nacrt):
+    """Raspodjela zadataka po razinama kao pandas tablica."""
+    import pandas as pd
+    return pd.DataFrame([{
+        "Razina": f"{s['razina']} · {s['naziv']}",
+        "Zadataka": s["zadataka"],
+        "Udio": (f"{int(round(100 * s['zadataka'] / nacrt['oznaceno']))} %"
+                 if nacrt.get("oznaceno") else "—"),
+    } for s in (nacrt or {}).get("po_razini", [])])
+
+
 def promaseni_zadaci(rezultati, testovi, ucenik_id, limit: int = 20) -> list[dict]:
     """Zadaci koje učenik nije riješio točno (kroz sve testove), najnoviji prvi."""
     uid = _tekst(ucenik_id).upper()
@@ -974,7 +1078,9 @@ def tekst_sazetka_za_roditelja(rezultati, testovi, ucenik_id) -> str:
     if cjeline:
         redci.append("Najviše za vježbati: " +
                      ", ".join(f"{s['cjelina']} ({s['postotak']} %)" for s in cjeline) + ".")
-    redci.append("Detalji i točni odgovori: Moj CAKI → 📝 Testovi.")
+    # 21.10.2026.: rješenja se u portalu otvaraju TEK nakon roka, pa tekst to mora reći točno
+    # (prije je pisalo samo „Detalji i točni odgovori”, što je bilo netočno — portal ih nije ni imao).
+    redci.append("Pregled rješenja: Moj CAKI → 📝 Testovi (otvara se odmah po isteku roka za pisanje).")
     return "\n".join(redci)
 
 
@@ -1867,6 +1973,19 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                              column_config={"%": st.column_config.ProgressColumn(
                                  min_value=0, max_value=100, format="%d %%")})
 
+            # 21.10.2026.: 🧠 profil po Bloomovim razinama — razlika između „zna” i „zna primijeniti”.
+            bloom_u = bloom_profil_ucenika(rezultati, testovi, odabrani_u)
+            if bloom_u:
+                st.markdown("**🧠 Po razinama razmišljanja (Bloom)** — kroz sve testove")
+                st.caption("Samo zadaci kojima je razina označena u Test Builderu. Visoke 1–2 i niske 3–4 "
+                           "znače da učenik zna formule, ali ih ne prenosi na zadatak.")
+                st.dataframe(tablica_bloom(bloom_u), hide_index=True, width="stretch",
+                             column_config={"Uspjeh": st.column_config.ProgressColumn(
+                                 min_value=0, max_value=100, format="%d %%")})
+            else:
+                st.caption("🧠 Bloom razine još nisu označene ni za jedan zadatak ovog učenika — "
+                           "označavaju se u Test Builderu, uz polje Bodovi.")
+
             promaseni = promaseni_zadaci(rezultati, testovi, odabrani_u)
             if promaseni:
                 with st.expander(f"❌ Zadatci koje nije riješio točno ({len(promaseni)})"):
@@ -1958,6 +2077,9 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
 
     # ------------------------------------------------ 🎯 spremnost baze
     with tab_baza:
+        # 21.10.2026.: uputa UNUTAR funkcije (Cakijev zahtjev) — profesor ne izlazi iz aplikacije.
+        if _uputa:
+            _uputa.prikazi(st, "spremnost")
         st.markdown("**Koliko je baze spremno za online test**")
         st.caption("**Spreman** = zadatak nije skupina (uvod + stavke a/b/c) i ima upisan "
                    "**konačan odgovor**. Bez konačnog odgovora test se ne može automatski "

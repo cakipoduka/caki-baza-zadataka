@@ -18,6 +18,7 @@ samo sučelje. Pisanje ide SAMO u tab `Testovi_zakazani`; `Rezultati_testova`, `
 SECRETS: GOOGLE_SERVICE_ACCOUNT_JSON, APP_PASSWORD, CRM_SHEET_ID (ID Sheeta
 „CAKI CRM — Prijave i baza”, isti kao u Test Builderu za objavu online testa).
 """
+import uputa_u_aplikaciji as _uputa  # 21.10.2026.: upute UNUTAR aplikacije (sklopivi blok)
 import json
 
 import streamlit as st
@@ -51,6 +52,7 @@ predmet = predmet_config.odaberi_predmet(st)
 postavke = predmet_config.postavke(predmet)
 
 st.title("📝 Testovi — rezultati i upravljanje")
+_uputa.prikazi(st, "testovi")
 st.caption(f"Predmet: **{postavke['naziv']}** · podaci iz CRM Sheeta "
            f"(tabovi `Testovi_zakazani` i `Rezultati_testova`)")
 

@@ -10,6 +10,7 @@ Očekuje da su u istom repozitoriju/folderu prisutne datoteke:
 
 Streamlit Cloud: za pdflatex, dodaj packages.txt (vidi README.md).
 """
+import uputa_u_aplikaciji as _uputa  # 21.10.2026.: upute UNUTAR aplikacije (sklopivi blok)
 import copy
 import datetime
 import hashlib
@@ -25,6 +26,10 @@ import gspread
 import streamlit as st
 
 from caki_stabilnost import DRIVE_LOCK, slika_html, slika_izgleda_valjano
+
+# 21.10.2026.: 🧠 Bloom razine — isti popis kao u sustavu testova (jedan izvor istine).
+from testovi_online import BLOOM_OPCIJE as _BLOOM_OPCIJE, BLOOM_OPIS as _BLOOM_OPIS, \
+    BLOOM_NAZIVI as _BLOOM_NAZIVI
 
 try:
     # Skupine zadataka (uvod + stavke a), b), c)) - 10.10.2026. Zaštićen import: ako modul
@@ -510,6 +515,7 @@ def ukloni(idx):
 # ---------------------------------------------------------------
 
 st.title("📝 CAKI Test Builder")
+_uputa.prikazi(st, "test_builder")
 st.caption("Odaberi zadatke iz baze ili dodaj ručne, posloži redoslijed, unesi metapodatke, generiraj PDF.")
 
 # ---------------------------------------------------------------
@@ -906,6 +912,20 @@ with col_odabrano:
                     else:
                         st.warning(f"⚠️ Slika '{_naziv_slike}' nije pronađena na Driveu.")
                 z["bodovi"] = st.text_input("Bodovi", value=z["bodovi"], key=f"bod_{idx}")
+
+                # 21.10.2026.: 🧠 Bloom razina — označava se OVDJE i samo za zadatke koji stvarno uđu
+                # u test (lijeno označavanje: 20.000 zadataka u bazi se ne dira). Zamrzava se u test i
+                # služi za profil učenika po razinama razmišljanja (📊 Rezultati → 👤 Po učeniku).
+                _bloom_sad = str(z.get("bloom") or "").strip()
+                z["bloom"] = st.selectbox(
+                    "🧠 Bloom razina (za analizu napretka)", _BLOOM_OPCIJE,
+                    index=_BLOOM_OPCIJE.index(_bloom_sad) if _bloom_sad in _BLOOM_OPCIJE else 0,
+                    format_func=lambda b: (f"{b} · {_BLOOM_NAZIVI[b]}" if b in _BLOOM_NAZIVI
+                                           else "— nije označeno (preskače se u analizi) —"),
+                    key=f"bloom_{idx}",
+                    help="Nije isto kao TEŽINA: težak zadatak može biti razina 1 („nabroji sve "
+                         "identitete”), a lagan razina 3 („izračunaj 15 % od 240”).\n\n"
+                         + "\n".join(f"{k} · {v} — {_BLOOM_OPIS[k]}" for k, v in _BLOOM_NAZIVI.items()))
 
                 st.caption("Kategorije vrednovanja (može više odjednom, bodovi po kategoriji):")
                 kat_cols = st.columns(3)

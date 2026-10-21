@@ -12,6 +12,7 @@ SECRETS: GOOGLE_SERVICE_ACCOUNT_JSON, MATHPIX_APP_ID, MATHPIX_APP_KEY, APP_PASSW
          + barem jedan od ANTHROPIC_API_KEY / DEEPSEEK_API_KEY. Opcionalno: UVOZ_FOLDER_ID (zadani folder).
 Servisni račun mora imati pravo UREĐIVANJA (Content manager / Editor) na folderu - upisuje _uvoz_cache.
 """
+import uputa_u_aplikaciji as _uputa  # 21.10.2026.: upute UNUTAR aplikacije (sklopivi blok)
 import json
 import re
 
@@ -51,6 +52,7 @@ if not provjeri_lozinku():
 
 predmet = predmet_config.odaberi_predmet(st)
 st.title("📥 Uvoz zadataka iz foldera (slike i PDF-ovi)")
+_uputa.prikazi(st, "uvoz")
 st.caption(f"Predmet: {predmet_config.postavke(predmet)['naziv']} · prompt verzija {uf.PROMPT_VERZIJA}")
 
 

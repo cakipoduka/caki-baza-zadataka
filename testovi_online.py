@@ -41,6 +41,35 @@ PROGRAMI = ["", "Upisi", "Matura", "Instrukcije"]
 
 STATUS_AKTIVAN = "Da"
 
+# 21.10.2026.: 🧠 Bloomove razine (revidirana taksonomija) — JEDAN popis za sve aplikacije.
+# VAŽNO: `tezina` (lako/srednje/teško) NIJE isto što i Bloom. Težak zadatak može biti razina 1
+# („nabroji sve identitete”), a lagan razina 3 („izračunaj 15 % od 240”). Zato je zasebno polje.
+BLOOM_NAZIVI = {"1": "Zapamti", "2": "Razumije", "3": "Primijeni", "4": "Analiziraj", "5": "Vrednuj"}
+BLOOM_OPCIJE = [""] + list(BLOOM_NAZIVI)
+BLOOM_OPIS = {
+    "1": "reprodukcija definicije, formule ili činjenice",
+    "2": "objašnjenje, prepoznavanje ekvivalentnog oblika, čitanje grafa",
+    "3": "rutinski postupak na novim brojevima (klasičan ispitni zadatak)",
+    "4": "više koraka, povezivanje cjelina, odabir metode",
+    "5": "provjera je li tuđi postupak točan / nalaženje pogreške",
+}
+
+
+def bloom_naziv(vrijednost) -> str:
+    """'3' -> 'Primijeni'; prazno/ nepoznato -> ''."""
+    return BLOOM_NAZIVI.get(_tekst_globalno(vrijednost), "")
+
+
+def _tekst_globalno(v) -> str:
+    s = "" if v is None else str(v).strip()
+    return "" if s.lower() in ("nan", "none") else s
+
+
+def bloom_opis(vrijednost) -> str:
+    """'3' -> 'Primijeni — rutinski postupak na novim brojevima' (za pomoć u sučelju)."""
+    v = _tekst_globalno(vrijednost)
+    return f"{BLOOM_NAZIVI[v]} — {BLOOM_OPIS[v]}" if v in BLOOM_NAZIVI else ""
+
 
 def _poruka_json(naziv_kljuca: str, sto: str) -> str:
     return (f"`{naziv_kljuca}` u Streamlit Secrets {sto}.\n\n"
@@ -182,6 +211,10 @@ def pripremi_zadatke(odabrani) -> tuple[list[dict], list[str]]:
             "cjelina": _tekst(z.get("cjelina")),
             "potpoglavlje": _tekst(z.get("potpoglavlje")),
             "tezina": _tekst(z.get("tezina")),
+            # 21.10.2026.: 🧠 Bloom razina (1–5), označena LIJENO u Test Builderu — samo za zadatke
+            # koji stvarno uđu u test, da se ne mora označiti 20.000 zadataka. Služi za profil
+            # učenika po razinama razmišljanja (📊 Rezultati → 👤 Po učeniku).
+            "bloom": _tekst(z.get("bloom")),
         })
 
     return zadaci, problemi
