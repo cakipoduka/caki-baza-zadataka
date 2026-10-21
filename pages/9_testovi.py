@@ -124,6 +124,22 @@ def _zadaci_baze(predmet_slug: str):
     return get_or_create_worksheet(sheet_, "Zadaci", ZADACI_HEADERS).get_all_records()
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _cjeline_sifrarnika(predmet_slug: str) -> list:
+    """Popis cjelina iz taba `Sifrarnik_cjelina` (21.10.2026.) — da se u pokrivenosti vide
+    cjeline koje u bazi imaju NULA zadataka. Ako taba nema, vraća [] i pokrivenost radi bez njega."""
+    sheet_ = get_gspread_client(_sa_info()).open_by_key(
+        predmet_config.sheet_id(predmet_slug, st.secrets))
+    try:
+        ws = sheet_.worksheet("Sifrarnik_cjelina")
+    except Exception:                                   # noqa: BLE001 — tab ne postoji
+        return []
+    zagl = [str(h).strip().lower() for h in (ws.row_values(1) or [])]
+    i = zagl.index("cjelina") if "cjelina" in zagl else 1
+    return [str(r[i]).strip() for r in ws.get_all_values()[1:]
+            if len(r) > i and str(r[i]).strip()]
+
+
 with st.sidebar:
     st.divider()
     if st.button("🔄 Osvježi testove i rezultate"):
@@ -166,4 +182,7 @@ if samo_predmet:
 
 ta.prikazi_stranicu(st, sheet, testovi, rezultati, predmet=predmet if samo_predmet else "",
                     autor="Caki", grupe=_grupe_upisa(crm_id), kante=_kante_mature(crm_id),
-                    ucitaj_bazu=lambda: _zadaci_baze(predmet))
+                    ucitaj_bazu=lambda: _zadaci_baze(predmet),
+                    # 21.10.2026.: popis cjelina iz ŠIFRARNIKA — da se vidi koje su prazne
+                    # (Cakijev nalaz iz fizike: 35 od 55 cjelina nema nijedan zadatak).
+                    ucitaj_sifrarnik=lambda: _cjeline_sifrarnika(predmet))

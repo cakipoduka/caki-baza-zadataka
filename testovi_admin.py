@@ -1175,6 +1175,87 @@ def tablica_spremnosti(rez) -> "object":
     } for s in (rez or {}).get("po_cjelini", [])])
 
 
+# ============================================================
+# 🧩 Pokrivenost baze po cjelinama i potpoglavljima (21.10.2026.)
+# ============================================================
+
+def pokrivenost_cjelina(zadaci, cjeline_iz_sifrarnika=None) -> dict:
+    """Je li baza POKRIVENA po cjelinama i potpoglavljima — nije isto što `spremnost_baze`.
+
+    `spremnost_baze` odgovara „može li se zadatak objaviti”; ovo odgovara „postoji li ijedan
+    zadatak iz te cjeline”. Cakijev nalaz iz fizike (21.10.2026.): 1842 zadatka, ali samo 21 od
+    55 cjelina iz šifrarnika ima ijedan zadatak, a potpoglavlje nema nijedan.
+
+    `cjeline_iz_sifrarnika` = popis cjelina iz taba `Sifrarnik_cjelina` (nije obavezan — bez njega
+    se ne računaju prazne cjeline ni cjeline izvan šifrarnika).
+    """
+    po: dict[str, dict] = {}
+    bez_cjeline = 0
+    s_potpoglavljem = 0
+    for z in zadaci or []:
+        cj = _tekst(z.get("cjelina"))
+        if not cj:
+            bez_cjeline += 1
+            cj = "— bez cjeline —"
+        s = po.setdefault(cj, {"cjelina": cj, "zadataka": 0, "potpoglavlja": set(), "spremno": 0})
+        s["zadataka"] += 1
+        pp = _tekst(z.get("potpoglavlje"))
+        if pp:
+            s["potpoglavlja"].add(pp)
+            s_potpoglavljem += 1
+        if _tekst(z.get("konacan_odgovor")) and _tekst(z.get("uloga")).lower() != "skupina":
+            s["spremno"] += 1
+
+    redci = []
+    for s in po.values():
+        redci.append({"cjelina": s["cjelina"], "zadataka": s["zadataka"],
+                      "potpoglavlja": len(s["potpoglavlja"]), "spremno": s["spremno"]})
+    redci.sort(key=lambda r: (r["zadataka"], r["cjelina"]))
+
+    ukupno = len(zadaci or [])
+    rez = {
+        "ukupno": ukupno,
+        "cjelina": {"razlicitih": len(po), "bez_cjeline": bez_cjeline},
+        "potpoglavlje": {"popunjeno": s_potpoglavljem,
+                         "postotak": int(round(100 * s_potpoglavljem / ukupno)) if ukupno else 0},
+        "po_cjelini": redci,
+        "prazne_cjeline": [],
+        "izvan_sifrarnika": [],
+        "tanke": [r["cjelina"] for r in redci if 0 < r["zadataka"] <= 5],
+    }
+
+    if cjeline_iz_sifrarnika:
+        sif = [c for c in (_tekst(x) for x in cjeline_iz_sifrarnika) if c]
+        ima = {r["cjelina"] for r in redci if r["cjelina"] != "— bez cjeline —"}
+        rez["prazne_cjeline"] = sorted(set(sif) - ima)
+        rez["izvan_sifrarnika"] = sorted(ima - set(sif))
+    return rez
+
+
+def tablica_pokrivenosti(rez) -> "object":
+    """Cjeline poredane od najmanje pokrivene (prva je ona koju treba popuniti)."""
+    import pandas as pd
+
+    return pd.DataFrame([{
+        "Cjelina": r["cjelina"],
+        "Zadataka": r["zadataka"],
+        "Spremno": r["spremno"],
+        "Potpoglavlja": r["potpoglavlja"],
+        "Status": ("🚨 prazna" if r["zadataka"] == 0 else
+                   ("⚠️ tanka (≤5)" if r["zadataka"] <= 5 else "")),
+    } for r in (rez or {}).get("po_cjelini", [])])
+
+
+def csv_pokrivenosti(rez) -> str:
+    """CSV pokrivenosti po cjelinama (za Excel) — uključuje i prazne cjeline iz šifrarnika."""
+    redci = ["cjelina,zadataka,spremno,potpoglavlja,status"]
+    for r in (rez or {}).get("po_cjelini", []):
+        redci.append(f"{r['cjelina']},{r['zadataka']},{r['spremno']},{r['potpoglavlja']},")
+    for c in (rez or {}).get("prazne_cjeline", []):
+        redci.append(f"{c},0,0,0,prazna")
+    return "\n".join(redci)
+
+
 def csv_spremnosti(rez) -> str:
     linije = ["cjelina;zadataka;spremno;postotak;skupine;visestruki"]
     for s in (rez or {}).get("po_cjelini", []):
@@ -1638,7 +1719,7 @@ def prikazi_pregled(st, test) -> None:
 
 def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                      danas=None, autor: str = "", grupe=None, kante=None,
-                     ucitaj_bazu=None) -> None:
+                     ucitaj_bazu=None, ucitaj_sifrarnik=None) -> None:
     """Cijela stranica 📝 Testovi: popis, uređivanje, pregled, rezultati, zadavanje grupi,
     spremnost baze i provjere.
 
@@ -2107,6 +2188,43 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                                    data=csv_spremnosti(rez).encode("utf-8-sig"),
                                    file_name="spremnost_baze.csv", mime="text/csv",
                                    key="ta_csv_baza")
+
+                # 21.10.2026. (Cakijev nalaz iz fizike): „spremno” nije isto što i „pokriveno”.
+                # Baza može biti 100 % spremna, a pola cjelina iz šifrarnika prazno.
+                st.divider()
+                st.markdown("**🧩 Pokrivenost po cjelinama i potpoglavljima**")
+                st.caption("Razlika od tablice gore: tamo je „može li se zadatak objaviti”, ovdje je "
+                           "„postoji li ijedan zadatak iz te cjeline i je li razvrstan po potpoglavlju”.")
+                cjeline_sif = None
+                if ucitaj_sifrarnik is not None:
+                    try:
+                        cjeline_sif = ucitaj_sifrarnik()
+                    except Exception as e_sif:      # noqa: BLE001 — šifrarnik ne smije rušiti stranicu
+                        st.caption(f"Šifrarnik nije pročitan ({e_sif}) — prazne cjeline se ne mogu izračunati.")
+                pok = pokrivenost_cjelina(zadaci_baze, cjeline_sif)
+                p1, p2, p3, p4 = st.columns(4)
+                p1.metric("Cjelina u bazi", pok["cjelina"]["razlicitih"])
+                p2.metric("Cjelina u šifrarniku", len(cjeline_sif) if cjeline_sif else "—",
+                          help="Ako je šifrarnik dostupan; inače se ne računa.")
+                p3.metric("Praznih cjelina", len(pok["prazne_cjeline"]) if cjeline_sif else "—",
+                          help="Cjeline iz šifrarnika bez ijednog zadatka.")
+                p4.metric("S potpoglavljem", f"{pok['potpoglavlje']['postotak']} %",
+                          help=f"{pok['potpoglavlje']['popunjeno']} od {pok['ukupno']} zadataka ima "
+                               "upisano potpoglavlje.")
+                st.dataframe(tablica_pokrivenosti(pok), hide_index=True, width="stretch")
+                if pok["prazne_cjeline"]:
+                    st.warning(f"**{len(pok['prazne_cjeline'])} cjelina iz šifrarnika nema nijedan zadatak:** "
+                               + ", ".join(pok["prazne_cjeline"][:12])
+                               + (" …" if len(pok["prazne_cjeline"]) > 12 else ""))
+                if pok["izvan_sifrarnika"]:
+                    st.info("**Cjeline koje postoje u bazi, a nema ih u šifrarniku** (dodane ručno ili "
+                            "drugim imenom): " + ", ".join(pok["izvan_sifrarnika"]))
+                if pok["tanke"]:
+                    st.caption("Tanke cjeline (≤ 5 zadataka): " + ", ".join(pok["tanke"]))
+                st.download_button("⬇️ CSV — pokrivenost po cjelinama",
+                                   data=csv_pokrivenosti(pok).encode("utf-8-sig"),
+                                   file_name="pokrivenost_cjelina.csv", mime="text/csv",
+                                   key="ta_csv_pokrivenost")
         else:
             st.info("Označi kvačicu da se izračuna — čita se tab `Zadaci` ovog predmeta.")
 

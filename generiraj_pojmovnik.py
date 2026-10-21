@@ -17,6 +17,7 @@ import re
 
 from baza_zadataka_pipeline import get_gspread_client, get_or_create_worksheet
 
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 POJMOVNIK_HEADERS = ["cjelina", "potpoglavlje", "pojam", "recenica_definicije"]
 
 # Recenica = sve od pocetka retka (ili proslog zavrsetka recenice) do prve tocke NAKON
@@ -69,7 +70,7 @@ if __name__ == "__main__":
 
     import streamlit as st
 
-    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa_info = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
     gc = get_gspread_client(sa_info)
     ss = gc.open_by_key(st.secrets["SHEET_ID"])
     broj = generiraj_pojmovnik(ss)

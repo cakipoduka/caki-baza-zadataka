@@ -30,6 +30,7 @@ from caki_stabilnost import DRIVE_LOCK, slika_html, slika_izgleda_valjano
 # 21.10.2026.: 🧠 Bloom razine — isti popis kao u sustavu testova (jedan izvor istine).
 from testovi_online import BLOOM_OPCIJE as _BLOOM_OPCIJE, BLOOM_OPIS as _BLOOM_OPIS, \
     BLOOM_NAZIVI as _BLOOM_NAZIVI
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 
 try:
     # Skupine zadataka (uvod + stavke a), b), c)) - 10.10.2026. Zaštićen import: ako modul
@@ -149,7 +150,7 @@ st.session_state["_tb_predmet"] = PREDMET
 @st.cache_resource
 def _init_spreadsheet_za(predmet):
     import json
-    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa_info = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
     gc = get_gspread_client(sa_info)
     return gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
 
@@ -170,7 +171,7 @@ def init_sheet():
 @st.cache_resource
 def init_drive():
     import json
-    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa_info = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
     return get_drive_service(sa_info)
 
 

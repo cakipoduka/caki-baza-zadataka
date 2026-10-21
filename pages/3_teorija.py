@@ -44,6 +44,7 @@ from baza_zadataka_pipeline import (
 )
 from teorija_markup import ukloni_markup_za_pregled
 
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 st.set_page_config(page_title="CAKI Teorija", page_icon="📖", layout="wide")
 
 
@@ -81,7 +82,7 @@ PREDMET = predmet_config.odaberi_predmet(st)
 
 @st.cache_resource
 def _init_sheet_za(predmet):
-    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa_info = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
     gc = get_gspread_client(sa_info)
     return gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
 

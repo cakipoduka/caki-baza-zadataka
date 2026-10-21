@@ -137,6 +137,7 @@ from baza_zadataka_pipeline import (
     get_potpoglavlja_po_cjelini,
 )
 
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 st.set_page_config(page_title="CAKI — Izgradi WP tečajeve", page_icon="🏗️", layout="wide")
 
 
@@ -409,7 +410,7 @@ TECAJ_MAPPING_HEADERS = [
 
 @st.cache_resource
 def init_sheet():
-    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa_info = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
     gc = get_gspread_client(sa_info)
     return gc.open_by_key(st.secrets["SHEET_ID"])
 

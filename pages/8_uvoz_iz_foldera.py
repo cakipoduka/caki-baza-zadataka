@@ -31,6 +31,7 @@ from baza_zadataka_pipeline import (
     nadopuni_ili_dodaj_zadatke,
 )
 
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 st.set_page_config(page_title="CAKI — Uvoz iz foldera", page_icon="📥", layout="wide")
 
 
@@ -57,7 +58,7 @@ st.caption(f"Predmet: {predmet_config.postavke(predmet)['naziv']} · prompt verz
 
 
 def sa_info():
-    return json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    return _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
 
 
 @st.cache_resource(show_spinner=False)

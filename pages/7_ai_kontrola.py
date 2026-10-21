@@ -61,6 +61,7 @@ from ai_prijedlozi import (
     primijeni_razdvajanje, prikazi_kontekst_prijedloga, prikazi_promjenu, uredi_razdvajanje,
 )
 
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 st.set_page_config(page_title="CAKI — AI kontrola zadataka", page_icon="🔎", layout="wide")
 
 TZ = ZoneInfo("Europe/Zagreb")
@@ -129,7 +130,7 @@ predmet_config.zahtijevaj_matematiku(st, "AI kontrola zadataka")
 
 @st.cache_resource
 def sa_info():
-    return json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    return _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
 
 
 @st.cache_resource

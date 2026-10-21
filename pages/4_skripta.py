@@ -31,6 +31,7 @@ from baza_zadataka_pipeline import (
 )
 from filtriraj_zadatke_za_skriptu import filtriraj_zadatke, opis_filtara
 
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 st.set_page_config(page_title="CAKI Skripta", page_icon="📘", layout="wide")
 
 
@@ -69,7 +70,7 @@ PREDMET = predmet_config.odaberi_predmet(st)
 
 @st.cache_resource
 def _init_sheet_za(predmet):
-    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa_info = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
     gc = get_gspread_client(sa_info)
     return gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
 
@@ -237,7 +238,7 @@ for z in _zadnji_popis:
                 + (f" · _{z['poruka']}_" if z.get("poruka") else ""))
     if z["status"] == "gotovo" and z.get("pdf_drive_id"):
         try:
-            _bytes = preuzmi_datoteku_iz_drivea(get_drive_service(json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])), z["pdf_drive_id"])
+            _bytes = preuzmi_datoteku_iz_drivea(get_drive_service(_sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")), z["pdf_drive_id"])
             st.download_button("⬇️ Preuzmi PDF", _bytes, file_name=f"skripta_{z['zahtjev_id']}.pdf",
                                mime="application/pdf", key=f"pdf_{z['zahtjev_id']}")
         except Exception as e:  # noqa: BLE001

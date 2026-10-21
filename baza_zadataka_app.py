@@ -51,6 +51,7 @@ from baza_zadataka_pipeline import (
 # uređivanje + filter. Import je zaštićen: ako ai_prijedlozi.py nedostaje, ostatak
 # aplikacije radi normalno, samo bez AI okvira (lekcija 15.9.2026. - neuspio import ne
 # smije srušiti cijelu aplikaciju).
+import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 try:
     from ai_prijedlozi import otvoreni_prijedlozi, prikazi_ai_prijedloge_za_zadatak
     _AI_OK = True
@@ -119,7 +120,7 @@ SLIKE_FOLDER_ID = predmet_config.slike_folder_id(PREDMET, st.secrets)
 
 @st.cache_resource
 def _init_google_clients_za(predmet):
-    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa_info = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
     gc = get_gspread_client(sa_info)
     drive_service = get_drive_service(sa_info)
     sheet = gc.open_by_key(predmet_config.sheet_id(predmet, st.secrets))
@@ -1171,7 +1172,7 @@ def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
                 # "Greška: [Errno 32] Broken pipe". upload_image_to_drive_with_retry
                 # sam izgradi svjez drive_service (i ponovi jednom ako zatreba),
                 # bez diranja globalnog keširanog objekta koji ostatak app-a koristi.
-                sa_info_za_upload = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+                sa_info_za_upload = _sj.ucitaj(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
                 for _n, nova_slika in enumerate(nove_slike, 1):
                     ekstenzija = os.path.splitext(nova_slika.name)[1].lower() or ".png"
                     if ukupno_slika == 1:

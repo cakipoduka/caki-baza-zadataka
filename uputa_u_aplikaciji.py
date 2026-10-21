@@ -4,8 +4,8 @@ KRATKE UPUTE UNUTAR BAZE ZADATAKA — Caki i profesori ne izlaze iz aplikacije d
 nešto radi.
 
 Cakijev zahtjev: upute ne smiju biti zasebna stranica ni drugi prozor. Zato je uputa **sklopivi
-blok (expander) na vrhu stranice** koju upravo gledaš. (Stranica 📖 Upute i dalje postoji kao
-cjeloviti priručnik — ovo je ono što treba pri ruci, u trenutku rada.)
+blok (expander) na vrhu stranice** koju upravo gledaš. Zasebna stranica 📖 Upute je **ugašena**
+(21.10.2026.) — ovi blokovi je u cijelosti zamjenjuju.
 
 Kako se koristi: na početku stranice `_uputa.prikazi(st, "test_builder")`.
 Modul ne uvozi ništa osim Streamlita — ne dira Sheet, Drive ni bazu.
@@ -93,6 +93,26 @@ UPUTE = {
             "Kvačica učitava tab `Zadaci` (20.000 redaka) — uključi je samo kad ti treba.",
         ],
         "pazi": ["Brojanje ne mijenja bazu — samo čita."],
+    },
+
+    "raspodjela": {
+        "naslov": "Kako radi 🧩 Raspodjela po cjelinama",
+        "koraci": [
+            "Alat uzme zadatke iz baze i **predloži** kojoj cjelini iz šifrarnika pripadaju — za slučaj "
+            "kad je baza uvezena u manje cjelina nego što ih šifrarnik ima (fizika: 21 od 55).",
+            "Odaberi što razvrstavati (sve / samo neke cjeline / samo bez cjeline) i model, pa **▶ Razvrsti**.",
+            "Pregledaj tablicu: što se mijenja, koliko je model siguran i zašto. Nesigurne možeš preskočiti.",
+            "**💾 Upiši** ide tek uz tvoju potvrdu. Upisuje se samo `cjelina`; stara vrijednost se pamti u "
+            "`cjelina_prije`, pa se promjena može vratiti.",
+            "Na kraju piše koje cjeline **ostaju prazne** — za njih treba novih zadataka, razvrstavanje to "
+            "ne može riješiti.",
+        ],
+        "pazi": [
+            "Model ne izmišlja cjeline: ako predloži ime kojeg nema u šifrarniku, prijedlog se **odbija**.",
+            "Nesigurno („niska”) znači da model nagađa — takve provjeri ručno ili preskoči.",
+            "Razvrstavanje troši tokene modela; 1.800 zadataka je ~70 poziva.",
+        ],
+        "dalje": "Poslije upisa: 📝 Testovi → 🎯 Spremnost baze → 🧩 Pokrivenost po cjelinama.",
     },
 }
 
