@@ -42,6 +42,22 @@ PROGRAMI = ["", "Upisi", "Matura", "Instrukcije"]
 STATUS_AKTIVAN = "Da"
 
 
+def sa_info_za_testove(st) -> dict:
+    """Servisni racun za sustav testiranja (Testovi_zakazani/Rezultati_testova).
+
+    Cakijeva odluka 21.10.2026. (v. TRACKER): ZASEBAN servisni racun samo za sustav
+    testiranja, da se njegova write-kvota (v. `Claude outputs/CAKI_BRIEF_kvota_sheets-
+    2026-10-18-0730.md`) ne dijeli s CRM/booking/evidencija prometom. Koristi
+    `GOOGLE_SERVICE_ACCOUNT_JSON_TESTOVI` ako postoji u Secrets, inace pada natrag na
+    dijeljeni `GOOGLE_SERVICE_ACCOUNT_JSON` -- nista ne puca prije nego Caki postavi
+    novi racun.
+    """
+    import json
+    kljuc = ("GOOGLE_SERVICE_ACCOUNT_JSON_TESTOVI" if "GOOGLE_SERVICE_ACCOUNT_JSON_TESTOVI" in st.secrets
+             else "GOOGLE_SERVICE_ACCOUNT_JSON")
+    return json.loads(st.secrets[kljuc])
+
+
 # ============================================================
 # ID i priprema zadataka
 # ============================================================

@@ -24,6 +24,7 @@ import streamlit as st
 
 import predmet_config
 import testovi_admin as ta
+import testovi_online as _online_testovi
 from baza_zadataka_pipeline import ZADACI_HEADERS, get_gspread_client, get_or_create_worksheet
 
 st.set_page_config(page_title="CAKI — Testovi", page_icon="📝", layout="wide")
@@ -61,7 +62,7 @@ if "CRM_SHEET_ID" not in st.secrets:
 
 
 def _sa_info():
-    return json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    return _online_testovi.sa_info_za_testove(st)
 
 
 @st.cache_resource(show_spinner=False)

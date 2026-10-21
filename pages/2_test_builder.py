@@ -1434,8 +1434,7 @@ try:
 
     @st.cache_resource
     def _crm_sheet_za_testove(_crm_id):
-        import json as _json
-        _sa = _json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+        _sa = _online_testovi.sa_info_za_testove(st)
         return get_gspread_client(_sa).open_by_key(_crm_id)
 
     try:

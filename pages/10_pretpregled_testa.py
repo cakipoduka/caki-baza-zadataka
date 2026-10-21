@@ -19,8 +19,6 @@ Ako se stvarno ocjenjivanje promijeni, promijeni i ovdje.
 SECRETS: GOOGLE_SERVICE_ACCOUNT_JSON, APP_PASSWORD, CRM_SHEET_ID (iste kao Test Builder
 za objavu online testa).
 """
-import json
-
 import streamlit as st
 
 import testovi_online as _online
@@ -48,7 +46,7 @@ if not provjeri_lozinku():
 
 @st.cache_resource
 def _crm_sheet(_crm_id):
-    sa = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    sa = _online.sa_info_za_testove(st)
     return get_gspread_client(sa).open_by_key(_crm_id)
 
 
