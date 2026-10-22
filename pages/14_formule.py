@@ -48,6 +48,7 @@ except Exception as e:                                  # noqa: BLE001
     st.stop()
 
 st.title("📐 Formule")
+st.caption("Ako formulu dodaš **nakon** objave testa, ponovno objavi test (u test ide zamrznuta kopija).")
 st.caption("Unesi formulu u LaTeXu (npr. `\\frac{a}{b}`, `x_{1,2}=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}`). "
            "Ispod vidiš kako će je učenik vidjeti.")
 
@@ -116,6 +117,8 @@ for f in prikaz:
             st.caption(" · ".join(x for x in [F._tekst(f.get("cjelina")),
                                               F._tekst(f.get("paket")),
                                               F._tekst(f.get("opis"))] if x) or "—")
+            if F._tekst(f.get("datoteka")):
+                st.caption(f"📄 Datoteka u `03_Formule`: **{F._tekst(f.get('datoteka'))}**")
             st.markdown(F.tekst_formule(f))
         with c_desno:
             _aktivna = F._tekst(f.get("aktivno")) in ("Da", "da", "")

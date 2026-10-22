@@ -56,12 +56,36 @@ def cjeline(formula) -> list[str]:
 # ============================================================
 
 def osiguraj_tab(sheet):
+    """Otvori tab `Formule` — i **dopuni zaglavlje** ako su dodani novi stupci.
+
+    22.10.2026. (Cakijev nalaz „dodao sam PDF, ali ništa se ne vidi"): tab je mogao nastati prije
+    stupca `datoteka`, pa su se vrijednosti pisale pod pogrešna imena. Sada se nedostajući stupci
+    dopisuju, pa zapis uvijek sjedne pod svoje ime.
+    """
     try:
-        return sheet.worksheet(FORMULE_TAB)
+        ws = sheet.worksheet(FORMULE_TAB)
     except Exception:                                   # noqa: BLE001 — tab još ne postoji
         ws = sheet.add_worksheet(title=FORMULE_TAB, rows=300, cols=len(FORMULE_HEADERS))
         ws.append_row(FORMULE_HEADERS, value_input_option="RAW")
         return ws
+
+    try:
+        zaglavlje = [_tekst(h) for h in ws.row_values(1)]
+        fali = [h for h in FORMULE_HEADERS if h not in zaglavlje]
+        if fali:
+            if len(zaglavlje) + len(fali) > getattr(ws, "col_count", 0):
+                try:
+                    ws.add_cols(len(zaglavlje) + len(fali) - getattr(ws, "col_count", 0))
+                except Exception:                       # noqa: BLE001 — neke kopije nemaju
+                    pass
+            for i, naziv in enumerate(fali, start=len(zaglavlje) + 1):
+                try:
+                    ws.update_cell(1, i, naziv)
+                except Exception:                       # noqa: BLE001
+                    break
+    except Exception:                                   # noqa: BLE001 — čitanje zaglavlja
+        pass
+    return ws
 
 
 def load_formule(sheet) -> list[dict]:
@@ -114,7 +138,10 @@ def dodaj_formulu(sheet, *, naslov: str, tekst_latex: str = "", cjelina: str = "
         "aktivno": "Da" if aktivno else "Ne",
         "kreirano": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
-    ws.append_row([redak[h] for h in FORMULE_HEADERS], value_input_option="RAW")
+    # Piše se po STVARNOM zaglavlju taba: ako je stupac dopisan na kraj, vrijednosti i dalje
+    # sjedaju pod svoje ime (22.10.2026., Cakijev nalaz s PDF-om koji „nestane”).
+    _zaglavlje = [_tekst(h) for h in ws.row_values(1)] or list(FORMULE_HEADERS)
+    ws.append_row([redak.get(h, "") for h in _zaglavlje], value_input_option="RAW")
     return redak
 
 
