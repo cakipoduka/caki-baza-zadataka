@@ -99,6 +99,25 @@ with st.expander("➕ Dodaj formulu", expanded=not formule):
                 st.cache_data.clear()
                 st.rerun()
 
+with st.expander("📥 Uvezi više formula odjednom (copy/paste)"):
+    st.caption("Jedan redak = jedna formula. Format:\n"
+               "`Naziv || cjelina1; cjelina2 || LaTeX || naziv_datoteke.pdf`\n"
+               "LaTeX ili datoteka — barem jedno. Reci koji počinju s `#` se preskaču.")
+    _paket_bulk = st.text_input("Paket za sve uvezene formule", value="Matura 2026 — službene",
+                                key="f_bulk_paket")
+    _blok = st.text_area("Formule (jedna po retku)", height=220, key="f_bulk_blok",
+                         placeholder="Kvadratna formula || Kvadratna jednadžba || "
+                                     "x_{1,2}=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}")
+    if st.button("📥 Uvezi sve", key="f_bulk_uvoz", type="primary"):
+        _dodano, _greske = F.dodaj_vise(sheet, _blok, paket=_paket_bulk)
+        if _dodano:
+            st.success(f"✅ Uvezeno {_dodano} formula u paket „{_paket_bulk}”.")
+        for _g in _greske[:10]:
+            st.warning(_g)
+        if _dodano:
+            st.cache_data.clear()
+            st.rerun()
+
 if not formule:
     st.info("Još nema formula. Dodaj prvu gore — nakon toga je možeš odabrati pri objavi testa.")
     st.stop()

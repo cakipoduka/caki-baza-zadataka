@@ -187,6 +187,52 @@ def obrisi_formulu(sheet, formula_id: str) -> bool:
 # Paketi i odabir za test
 # ============================================================
 
+def iz_teksta(blok: str) -> tuple[list[dict], list[str]]:
+    """Razdvoji višeredni unos formula u retke.
+
+    Format retka (obavezna su prva dva polja i barem jedno od zadnja dva):
+        Naziv || cjelina1; cjelina2 || LaTeX || naziv_datoteke.pdf
+
+    Vraća (popis_redaka, popis_grešaka). Prazni reci i reci koji počinju s `#` se preskaču.
+    """
+    redci, greske = [], []
+    for broj, linija in enumerate(str(blok or "").splitlines(), start=1):
+        linija = linija.strip()
+        if not linija or linija.startswith("#"):
+            continue
+        dijelovi = [x.strip() for x in linija.split("||")]
+        if len(dijelovi) < 2:
+            greske.append(f"redak {broj}: treba barem „Naziv || cjeline”")
+            continue
+        naslov = dijelovi[0]
+        cjeline = dijelovi[1]
+        latex = dijelovi[2] if len(dijelovi) > 2 else ""
+        datoteka = dijelovi[3] if len(dijelovi) > 3 else ""
+        if not naslov:
+            greske.append(f"redak {broj}: nema naziva")
+            continue
+        if not latex and not datoteka:
+            greske.append(f"redak {broj}: nema ni LaTeX ni datoteku")
+            continue
+        redci.append({"naslov": naslov, "cjelina": cjeline, "tekst_latex": latex,
+                      "datoteka": datoteka})
+    return redci, greske
+
+
+def dodaj_vise(sheet, blok: str, paket: str = "") -> tuple[int, list[str]]:
+    """Dodaj sve formule iz višerednog unosa. Vraća (koliko_dodano, greške)."""
+    redci, greske = iz_teksta(blok)
+    dodano = 0
+    for r in redci:
+        try:
+            dodaj_formulu(sheet, naslov=r["naslov"], cjelina=r["cjelina"],
+                          tekst_latex=r["tekst_latex"], datoteka=r["datoteka"], paket=paket)
+            dodano += 1
+        except ValueError as e:
+            greske.append(f"{r['naslov']}: {e}")
+    return dodano, greske
+
+
 def paketi(formule) -> list[str]:
     """Nazivi paketa koji imaju barem jednu formulu (prazan paket se ne nudi)."""
     return sorted({_tekst(f.get("paket")) for f in formule or [] if _tekst(f.get("paket"))})
@@ -273,5 +319,5 @@ __all__ = [
     "FORMULE_TAB", "FORMULE_HEADERS", "MAX_FORMULA_ZNAKOVA", "osiguraj_tab", "load_formule",
     "novi_id", "dodaj_formulu", "azuriraj_formulu", "obrisi_formulu", "paketi", "aktivne",
     "izbor_za_test", "u_json", "iz_retka", "tekst_formule", "tablica",
-    "cjeline", "_cjeline",
+    "cjeline", "_cjeline", "iz_teksta", "dodaj_vise",
 ]
