@@ -1256,6 +1256,73 @@ def _parsiraj_uzastopne_json_vrijednosti(raw_text: str, log=None):
     return zadaci
 
 
+KLJUCEVI_ZADATKA = ("tekst_zadatka_latex", "privremeni_broj", "uloga", "tip_zadatka",
+                    "konacan_odgovor", "ponudjeni_odgovori", "cjelina", "kategorija",
+                    "rjesenje", "id")
+
+
+def _izvuci_sve_json_objekte(raw_text: str) -> list:
+    """Vrati SVE potpuno zatvorene JSON objekte koje uspiješ pročitati u tekstu, neovisno o
+    tome što ih okružuje (uvodni tekst, liste stringova, pokvaren JSON, višak zagrada...).
+    Čita se preko json.JSONDecoder().raw_decode() od SVAKOG znaka '{': gdje se pročita
+    ispravan objekt, skoči se na njegov kraj (tako se unutrašnjost ne čita ponovno), a gdje
+    se ne pročita, pomakne se jedan znak dalje. Zato ovo radi i kad se odgovor NE MOŽE
+    pročitati kao cjelina - bolje spasiti nekoliko zadataka nego izgubiti cijeli ispit.
+
+    Zašto treća strategija (22.10.2026., ispit SKM_22726102220490): Claude je vratio uvodni
+    tekst, pa pomoćni JSON objekt, pa listu stringova ("[Linearna funkcija", ...), pa JOŠ
+    teksta, a zadaci su došli tek poslije toga. json.loads() je pao s "Extra data", rezanje
+    na zadnjem '}' nije pomoglo, a _parsiraj_uzastopne_json_vrijednosti stala je na prvom
+    tekstu između vrijednosti (vratila je 4 stringa i ništa više) - cijeli ispit je propao
+    iako su svi zadaci bili u odgovoru."""
+    decoder = json.JSONDecoder(strict=False)
+    objekti = []
+    idx, n = 0, len(raw_text)
+    while idx < n:
+        idx = raw_text.find("{", idx)
+        if idx == -1:
+            break
+        try:
+            obj, idx = decoder.raw_decode(raw_text, idx)
+        except json.JSONDecodeError:
+            idx += 1                 # ovaj '{' nije početak ispravnog objekta - traži sljedeći
+            continue
+        if isinstance(obj, dict):
+            objekti.append(obj)
+    return objekti
+
+
+def _zadaci_iz_objekata(objekti, log=None):
+    """Iz liste pročitanih JSON objekata zadrži one koji STVARNO liče na zadatak i izbaci
+    objekte koji se u odgovoru ponavljaju dva puta. Redoslijed je namjeran:
+      1. objekti s poljem `tekst_zadatka_latex` - svaki pravi zadatak ga ima (obavezno je u
+         shemi), pa je to najpouzdaniji znak;
+      2. ako takvih nema, objekti s BILO Kojim poljem zadatka iz KLJUCEVI_ZADATKA (model je
+         možda promijenio ime polja);
+      3. ako ni toga nema, svi objekti - bolje sačuvati nešto nego ništa.
+    Bez ovog filtra bi pomoćni objekti iz uvodnog teksta (npr. {"privremeni_broj": "0",
+    "napomena": "prvo provjeravam numeraciju"}) ušli u bazu kao zadaci bez teksta zadatka."""
+    jedinstveni, vidjeni = [], set()
+    for o in objekti:
+        if not isinstance(o, dict):
+            continue
+        kljuc = json.dumps(o, sort_keys=True, ensure_ascii=False, default=str)
+        if kljuc in vidjeni:
+            continue
+        vidjeni.add(kljuc)
+        jedinstveni.append(o)
+    zadaci = [o for o in jedinstveni if "tekst_zadatka_latex" in o]
+    if not zadaci:
+        zadaci = [o for o in jedinstveni if any(k in o for k in KLJUCEVI_ZADATKA)]
+    if not zadaci:
+        zadaci = jedinstveni
+    odbaceno = len(jedinstveni) - len(zadaci)
+    if odbaceno and log:
+        log(f"ℹ️ Preskočeno {odbaceno} JSON objekata koji ne liče na zadatak (nemaju polje "
+            f"tekst_zadatka_latex ni drugo polje zadatka) - spašeno {len(zadaci)} zadataka.")
+    return zadaci
+
+
 def _spasi_djelomican_json_popis(raw_text: str, log=None):
     """Pokušaj standardni json.loads(); ako Claudeov odgovor NIJE ispravan JSON
     (najčešće: odgovor je odrezan zbog max_tokens čak i nakon što je iscrpljen
@@ -1267,6 +1334,10 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
     Ako niti to ne upali (tipično kod greške "Extra data" - Claude je vratio jedan ili
     više ODVOJENIH JSON objekata umjesto jedne liste), probamo drugu strategiju:
     _parsiraj_uzastopne_json_vrijednosti - vidi njezin docstring.
+    Ako i to propadne (odgovor je mješavina uvodnog teksta, listi stringova i objekata,
+    pa niz "pukne" na prvom tekstu između vrijednosti - slučaj s ispita SKM_22726102220490,
+    22.10.2026.), ide treća, krajnja strategija: _izvuci_sve_json_objekte - izvuče SVE
+    potpuno zatvorene objekte iz cijelog odgovora, bez obzira na to što stoji između njih.
     Vraća (zadaci, je_li_potpuno: bool). Ako se ništa ne može spasiti, ponovno
     baca originalnu json.JSONDecodeError (isto ponašanje kao prije - poziv
     gore u lancu i dalje mora znati da je obrada za ovaj dio propala)."""
@@ -1297,23 +1368,41 @@ def _spasi_djelomican_json_popis(raw_text: str, log=None):
                 try:
                     zadaci = json.loads(kandidat + "]", strict=False)
                     zadaci = _ocisti_zadatke(zadaci, log=log)
+                except json.JSONDecodeError:
+                    zadaci = []
+                if zadaci:
                     if log:
                         log(f"✅ Spašeno {len(zadaci)} zadataka prije mjesta greške "
                             f"(ostatak ovog Claude odgovora je odbačen kao nepouzdan).")
                     return zadaci, False
-                except json.JSONDecodeError:
-                    pass
+                # kandidat je valjan JSON, ali u njemu nema nijednog zadatka (npr. lista
+                # stringova) - nije uspjeh, nego se nastavlja s kraćim kandidatom niže.
             kraj_objekta = raw_text.rfind("}", 0, kraj_objekta)
 
         # Prvi pokušaj (gore) ne pomaže kad raw_text nije "lista koja je odrezana", nego
         # jedan ili više ODVOJENIH JSON objekata (npr. "{...}\n{...}") - tipičan uzrok
         # greške "Extra data". Probaj drugu strategiju prije nego potpuno odustanemo.
-        zadaci_iz_niza = _ocisti_zadatke(_parsiraj_uzastopne_json_vrijednosti(raw_text, log=log), log=log)
+        # _zadaci_iz_objekata tu još izbaci pomoćne objekte (npr. {"napomena": ...}) koji bi
+        # u bazu ušli kao zadaci bez teksta - vidi njezin docstring.
+        zadaci_iz_niza = _ocisti_zadatke(
+            _zadaci_iz_objekata(_parsiraj_uzastopne_json_vrijednosti(raw_text, log=log), log=log),
+            log=log,
+        )
         if zadaci_iz_niza:
             if log:
                 log(f"✅ Spašeno {len(zadaci_iz_niza)} zadataka čitanjem kao niz odvojenih "
                     f"JSON vrijednosti (Claudeov odgovor nije bio omotan u jednu JSON listu).")
             return zadaci_iz_niza, False
+
+        # Treća (krajnja) strategija: izvuci SVE potpuno zatvorene objekte iz cijelog odgovora,
+        # bez obzira na to što stoji između njih. Ovo je jedino što pomaže kad je odgovor
+        # mješavina uvodnog teksta, listi stringova i objekata - vidi _izvuci_sve_json_objekte.
+        zadaci_iz_teksta = _zadaci_iz_objekata(_izvuci_sve_json_objekte(raw_text), log=log)
+        if zadaci_iz_teksta:
+            if log:
+                log(f"✅ Spašeno {len(zadaci_iz_teksta)} zadataka izvlačenjem svih potpunih JSON "
+                    f"objekata iz odgovora (Claudeov odgovor nije bila jedna ispravna JSON lista).")
+            return zadaci_iz_teksta, False
 
         if log:
             log("❌ Nije uspjelo spasiti nijedan zadatak iz ovog odgovora - obrada ovog dijela propada.")
@@ -1400,6 +1489,12 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
     # padne s "Expecting value: line 1 column 1 (char 0)" iako raw_text izgleda neprazan.
     raw_text = raw_text.strip("﻿‌‍")
 
+    # Zapamti odgovor PRIJE rezanja uvodnog teksta. Ako se iz odrezanog dijela ne uspije spasiti
+    # nijedan zadatak, niže se pokušava još jednom iz CIJELOG odgovora - rezanje uvoda zna
+    # promašiti početak (npr. uzme kratku listu iz uvodnog teksta) pa se tako izgube zadaci koji
+    # su u odgovoru stajali PRIJE tog mjesta (ispit SKM_22726102220490, 22.10.2026.).
+    izvorni_tekst = raw_text
+
     if raw_text and not raw_text.startswith(("[", "{")):
         # Claude je (unatoč uputi da odgovori ISKLJUČIVO JSON-om) ipak dodao neki uvodni tekst
         # prije same JSON liste (npr. "Evo JSON odgovora:\n[...]") - potraži POČETAK PRAVE JSON
@@ -1460,7 +1555,36 @@ def extract_zadaci_with_claude(ispit_md, rjesenja_md, sifrarnik_text, anthropic_
             f"(stop_reason={response.stop_reason}, broj_blokova={broj_blokova})."
         )
 
-    zadaci, potpuno = _spasi_djelomican_json_popis(raw_text, log=log)
+    try:
+        zadaci, potpuno = _spasi_djelomican_json_popis(raw_text, log=log)
+        greska = None
+    except json.JSONDecodeError as e:
+        zadaci, potpuno, greska = [], True, e
+
+    # Ako iz odrezanog dijela nema NIJEDNOG zadatka, a prije rezanja je bilo uvodnog teksta,
+    # rezanje je vjerojatno promašilo početak zadataka (npr. uzelo je kratku listu iz uvoda) i
+    # pravi zadaci su ostali IZREZANI. Zato se tada ide još jedan pokušaj iz CIJELOG odgovora -
+    # tamo ih _izvuci_sve_json_objekte nađe neovisno o ostatku teksta. Time se rješava i tihi
+    # slučaj "json.loads je uspio, ali to nije bila lista zadataka" (0 zadataka, a zadaci postoje).
+    if not zadaci and izvorni_tekst and izvorni_tekst != raw_text:
+        if log:
+            log("⚠️ Iz odrezanog dijela (bez uvodnog teksta) nema nijednog zadatka - pokušavam "
+                "još jednom iz CIJELOG Claudeovog odgovora, uključujući uvodni tekst...")
+        try:
+            zadaci, potpuno = _spasi_djelomican_json_popis(izvorni_tekst, log=log)
+            greska = None
+        except json.JSONDecodeError:
+            pass          # ni cijeli odgovor ne daje zadatke - ostaje gore zabilježena greška
+
+    if greska is not None:
+        raise greska
+
+    if not zadaci and log:
+        # Nula zadataka nije nužno greška (namjerno prazan dio ispita), ali češće znači da je
+        # odgovor bio neupotrebljiv - zato se početak odgovora ispiše u log za dijagnozu.
+        log(f"⚠️ Iz ovog Claudeovog odgovora nije izvučen NIJEDAN zadatak "
+            f"('{raw_text[:120].strip()}...'). Provjeri je li ispit stvarno prazan ili ponovi obradu.")
+
     if not potpuno and log:
         log("⚠️ POZOR: gornji zadaci su spašeni iz NEPOTPUNOG Claude odgovora - "
             "preporučamo nakon obrade provjeriti bazu (zadnji zadatak u ovom dijelu "
