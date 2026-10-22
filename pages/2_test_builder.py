@@ -36,6 +36,7 @@ import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 try:
     # Skupine zadataka (uvod + stavke a), b), c)) - 10.10.2026. Zaštićen import: ako modul
     # nedostaje, Test Builder radi kao i prije (svi zadaci se tretiraju kao samostalni).
+    import skupine_zadataka as _skupine  # 22.10.2026.: normalizacija pretrage
     from skupine_zadataka import (
         ULOGA_SKUPINA,
         grupiraj,
@@ -657,9 +658,11 @@ with col_pretraga:
             if f_biblioteka and str(z.get("biblioteka_izvora", "")).strip() not in f_biblioteka:
                 continue
             if f_tekst:
-                upit = f_tekst.lower()
-                if upit not in (z.get("tekst_zadatka_latex", "") or "").lower() \
-                        and upit not in (z.get("kljucne_rijeci", "") or "").lower():
+                # 22.10.2026. (Cakijev nalaz „ne mogu naći logaritme iz udžbenika”): prije se
+                # tražilo samo u tekstu i ključnim riječima — udžbenički zadaci imaju prazne
+                # ključne riječi, a u tekstu piše `\log` (ne „logaritam”). Sada traži i po
+                # cjelini, potpoglavlju, nazivu/tipu izvora, ID-u i konačnom odgovoru.
+                if not _skupine.upit_odgovara(_skupine.tekst_za_pretragu(z), f_tekst):
                     continue
             filtrirano.append({"tip": "samostalan", "glavni": z, "stavke": []})
 

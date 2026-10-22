@@ -269,6 +269,44 @@ def stavke_skupine(rows, skupina_id):
     return sorted(st, key=lambda x: _oznaka_sort(x.get("oznaka_stavke")))
 
 
+def normalizuj_upit(tekst) -> str:
+    """Mala slova bez dijakritika — da „logaritam” nađe i „Logaritamska”."""
+    t = _s(tekst).lower()
+    for a, b in (("č", "c"), ("ć", "c"), ("š", "s"), ("ž", "z"), ("đ", "d")):
+        t = t.replace(a, b)
+    return t
+
+
+def tekst_za_pretragu(redak) -> str:
+    r"""Sve po čemu se zadatak smije naći u pretrazi.
+
+    22.10.2026. (Cakijev nalaz „ne mogu naći logaritme iz udžbenika”): prije se tražilo samo
+    u tekstu i ključnim riječima — a udžbenički zadaci imaju prazne ključne riječi i u tekstu
+    piše `\log`, ne „logaritam”. Zato sada pretraga gleda i cjelinu, potpoglavlje, naziv izvora,
+    tip izvora, ID i konačan odgovor.
+    """
+    dijelovi = [
+        redak.get("tekst_zadatka_latex"), redak.get("tekst_zadatka_mathjax"),
+        redak.get("kljucne_rijeci"), redak.get("potpoglavlje"), redak.get("cjelina"),
+        redak.get("izvor_naziv"), redak.get("izvor_tip"), redak.get("id"),
+        redak.get("konacan_odgovor"), redak.get("uputa"),
+    ]
+    return normalizuj_upit(" ".join(_s(x) for x in dijelovi if _s(x)))
+
+
+def upit_odgovara(tekst: str, upit) -> bool:
+    """Tolerantna pretraga: svaka riječ upita mora se naći, a za duge riječi je dovoljno
+    prvih 6 znakova — tako „logaritmi” nađe „logaritamska”, a „jednadzbe” nađe „jednadžba”."""
+    hay = tekst if isinstance(tekst, str) else ""
+    for rijec in normalizuj_upit(upit).split():
+        if rijec in hay:
+            continue
+        if len(rijec) >= 6 and rijec[:6] in hay:
+            continue
+        return False
+    return True
+
+
 def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit="", f_biblioteka=()):
     """Filter Test Buildera na razini JEDINICE (samostalan ili skupina+stavke).
     Cjelina/potpoglavlje/težina: prolazi ako ih ima skupina ILI bilo koja stavka.
@@ -288,9 +326,8 @@ def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit="", 
     if f_biblioteka and not bilo_koji("biblioteka_izvora", f_biblioteka):
         return False
     if upit:
-        u = upit.lower()
-        if not any(u in _s(r.get("tekst_zadatka_latex")).lower() or u in _s(r.get("kljucne_rijeci")).lower()
-                   for r in redovi):
+        # 22.10.2026.: tolerantna pretraga (v. upit_odgovara) po SVIM poljima, ne samo tekstu.
+        if not any(upit_odgovara(tekst_za_pretragu(r), upit) for r in redovi):
             return False
     return True
 
