@@ -66,6 +66,19 @@ PREDMETI = {
         "kategorije_vrednovanja": [],
         "slug": "fizika",
     },
+    # 22.10.2026.: četvrta baza — matematika za fakultet. Slike idu u medijski shared drive
+    # (`10_CAKI_MEDIJI/01_Slike_zadataka/matematika-fakultet`).
+    # NAPOMENA: za ovu bazu treba i svoj Sheet (`SHEET_ID_MATEMATIKA_FAKULTET`).
+    "matematika_fakultet": {
+        "naziv": "Matematika (fakultet)",
+        "naslov_aplikacije": "CAKI Matematika — fakultet",
+        "zaglavlje_pdf": "MATEMATIKA — FAKULTET",
+        "sheet_kljuc": "SHEET_ID_MATEMATIKA_FAKULTET",
+        "slike_kljuc": "SLIKE_FOLDER_ID_FAKULTET",
+        "razine": ["-"],
+        "kategorije_vrednovanja": [],
+        "slug": "matematika_fakultet",
+    },
 }
 
 

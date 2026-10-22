@@ -31,6 +31,26 @@ def _tekst(v) -> str:
     return "" if s.lower() in ("nan", "none") else s
 
 
+def _cjeline(vrijednost) -> str:
+    """Cjelina može biti jedna ili VIŠE (lista) — čuva se kao „A; B; C"."""
+    if isinstance(vrijednost, (list, tuple, set)):
+        dijelovi = [_tekst(x) for x in vrijednost if _tekst(x)]
+    else:
+        dijelovi = [_tekst(x) for x in str(vrijednost or "").split(";") if _tekst(x)]
+    vidjeno, izlaz = set(), []
+    for d in dijelovi:
+        if d not in vidjeno:
+            vidjeno.add(d)
+            izlaz.append(d)
+    return "; ".join(izlaz)
+
+
+def cjeline(formula) -> list[str]:
+    """Popis cjelina iz retka formule (prazna lista ako nema)."""
+    return [_tekst(x) for x in _tekst((formula or {}).get("cjelina")).split(";")
+            if _tekst(x)]
+
+
 # ============================================================
 # Tab i CRUD
 # ============================================================
@@ -86,7 +106,7 @@ def dodaj_formulu(sheet, *, naslov: str, tekst_latex: str = "", cjelina: str = "
     redak = {
         "formula_id": novi_id(postojeci),
         "naslov": naslov,
-        "cjelina": _tekst(cjelina),
+        "cjelina": _cjeline(cjelina),
         "paket": _tekst(paket),
         "tekst_latex": tekst_latex,
         "datoteka": datoteka,
@@ -226,4 +246,5 @@ __all__ = [
     "FORMULE_TAB", "FORMULE_HEADERS", "MAX_FORMULA_ZNAKOVA", "osiguraj_tab", "load_formule",
     "novi_id", "dodaj_formulu", "azuriraj_formulu", "obrisi_formulu", "paketi", "aktivne",
     "izbor_za_test", "u_json", "iz_retka", "tekst_formule", "tablica",
+    "cjeline", "_cjeline",
 ]
