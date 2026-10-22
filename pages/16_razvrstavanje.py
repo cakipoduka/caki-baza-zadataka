@@ -99,12 +99,19 @@ def _pozovi(api_kljuc: str, model: str):
         tijelo = {"model": model,
                   "messages": [{"role": "system", "content": system},
                                {"role": "user", "content": user}],
-                  "temperature": 0.2, "max_tokens": 3000}
-        r = requests.post(DEEPSEEK_URL, json=tijelo, timeout=180,
+                  "temperature": 0.2, "max_tokens": R.MAX_TOKENA,
+                  # JSON mode: model ne može „zamotati” odgovor u tekst (glavni uzrok grešaka)
+                  "response_format": {"type": "json_object"}}
+        r = requests.post(DEEPSEEK_URL, json=tijelo, timeout=240,
                           headers={"Authorization": f"Bearer {api_kljuc}",
                                    "Content-Type": "application/json"})
+        if r.status_code == 400 and "response_format" in tijelo:
+            tijelo.pop("response_format")               # model ne podržava JSON mode
+            r = requests.post(DEEPSEEK_URL, json=tijelo, timeout=240,
+                              headers={"Authorization": f"Bearer {api_kljuc}",
+                                       "Content-Type": "application/json"})
         if r.status_code != 200:
-            raise RuntimeError(f"DeepSeek {r.status_code}")
+            raise RuntimeError(f"DeepSeek {r.status_code}: {r.text[:200]}")
         podaci = r.json()
         uporaba = podaci.get("usage") or {}
         return {"tekst": (podaci.get("choices") or [{}])[0].get("message", {}).get("content", ""),
@@ -117,16 +124,24 @@ c_btn, c_model = st.columns([1, 1])
 model = c_model.selectbox("Model", MODELI, index=0,
                           help="v4-pro je jači (preporučeno za razvrstavanje), flash je jeftiniji.")
 
-if c_btn.button("🤖 Predloži potpoglavlja i težine", type="primary", disabled=not odabrani):
+brzi = st.button("🧪 Testiraj na 3 zadatka", disabled=not odabrani,
+                 help="Prvo provjeri da model vraća valjan odgovor — troši vrlo malo.")
+if brzi:
+    odabrani = odabrani[:3]
+    st.info("Brzi test: šaljem 3 zadatka…")
+
+if brzi or c_btn.button("🤖 Predloži potpoglavlja i težine", type="primary", disabled=not odabrani):
     if "DEEPSEEK_API_KEY" not in st.secrets:
         st.error("U Secrets nedostaje `DEEPSEEK_API_KEY`.")
         st.stop()
-    traka = st.progress(0.0, text="Šaljem u serijama…")
+    traka = st.progress(0.0, text=f"Šaljem u serijama po {R.BATCH} …")
+    status = st.empty()
     try:
         rezultat = R.razvrsti(
             odabrani, mapping, _pozovi(str(st.secrets["DEEPSEEK_API_KEY"]), model),
             trazi_potpoglavlje=True,
-            napredak=lambda g, u: traka.progress(min(1.0, g / max(1, u)), text=f"{g}/{u}"))
+            napredak=lambda g, u: (traka.progress(min(1.0, g / max(1, u)), text=f"{g}/{u} zadataka"),
+                                   status.caption("⏳ čekam odgovor modela…")))
     except Exception as e:                              # noqa: BLE001
         st.error(f"Razvrstavanje nije uspjelo: {e}")
         st.stop()
@@ -147,6 +162,8 @@ if not predlozi:
 
 st.success(f"Prijedloga: **{len(predlozi)}** · "
            f"tokeni: {rezultat.get('tokeni_ulaz', 0)} ulaz / {rezultat.get('tokeni_izlaz', 0)} izlaz")
+for _u in (rezultat.get("upozorenja") or [])[:5]:
+    st.warning(_u)
 if rezultat.get("upozorenja"):
     with st.expander(f"⚠️ {len(rezultat['upozorenja'])} upozorenja"):
         for u in rezultat["upozorenja"][:50]:

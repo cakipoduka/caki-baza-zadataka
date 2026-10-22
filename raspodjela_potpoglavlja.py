@@ -20,7 +20,8 @@ from __future__ import annotations
 import json
 import re
 
-BATCH = 12
+BATCH = 6
+MAX_TOKENA = 4000
 TEZINE = ["lako", "srednje", "teško"]
 TEZINE_KLJUC = {"lako": "lako", "srednje": "srednje", "tesko": "teško", "teško": "teško"}
 SIGURNOSTI = ("visoka", "srednja", "niska")
@@ -103,6 +104,56 @@ def sastavi_user(zadaci) -> str:
 
 # --------------------------------------------------------------------------- odgovor modela
 
+KLJUCEVI_STAVKI = ("stavke", "items", "zadaci", "results", "data", "zadaci_stavke")
+
+
+def _stavke(podaci):
+    """Iz odgovora modela izvuci popis stavki — tolerantno na ime ključa (i na čistu listu)."""
+    if isinstance(podaci, list):
+        return [s for s in podaci if isinstance(s, dict)]
+    if isinstance(podaci, dict):
+        for kljuc in KLJUCEVI_STAVKI:
+            if isinstance(podaci.get(kljuc), list):
+                return [s for s in podaci[kljuc] if isinstance(s, dict)]
+        if "id" in podaci:
+            return [podaci]
+    return []
+
+
+def _svi_objekti(tekst: str):
+    """Svi pojedinačni {…} objekti iz teksta — za ODREZANI ili „zamotani" odgovor modela.
+
+    Prvo proba „plitke" objekte (bez ugniježđenih zagrada), jer su stavke takve; ako ih nema,
+    proba balansirane blokove. Tako se iz odrezanog JSON-a ipak spasi ono što je stiglo.
+    """
+    izlaz = []
+    for nalaz in re.finditer(r"\{[^{}]*\}", tekst or ""):
+        try:
+            objekt = json.loads(nalaz.group(0))
+        except ValueError:
+            continue
+        if isinstance(objekt, dict):
+            izlaz.append(objekt)
+    if izlaz:
+        return izlaz
+
+    dubina, pocetak = 0, None
+    for i, znak in enumerate(tekst or ""):
+        if znak == "{":
+            if dubina == 0:
+                pocetak = i
+            dubina += 1
+        elif znak == "}" and dubina:
+            dubina -= 1
+            if dubina == 0 and pocetak is not None:
+                try:
+                    izlaz.append(json.loads(tekst[pocetak:i + 1]))
+                except ValueError:
+                    pass
+                pocetak = None
+    return izlaz
+
+
 def izvadi_json(tekst):
     """Iz odgovora izvuci JSON objekt (model zna dodati ```json ograde ili tekst prije)."""
     t = _t(tekst)
@@ -148,14 +199,20 @@ def _nadi(ime, opcije) -> str:
 def parsiraj_odgovor(tekst, zadaci, mapping) -> tuple:
     """Provjeri odgovor modela prema zatvorenom popisu. Vraća (predlozi, upozorenja)."""
     podaci = izvadi_json(tekst)
-    if not isinstance(podaci, dict) or not isinstance(podaci.get("stavke"), list):
-        return [], ["odgovor nije JSON s poljem „stavke”"]
+    stavke = _stavke(podaci)
+    if not stavke and isinstance(podaci, dict) and isinstance(podaci.get("stavke"), list):
+        stavke = podaci["stavke"]
+    if not stavke:
+        # odrezan/zamotan odgovor: pokupi sve zasebne objekte koji imaju `id`
+        stavke = [o for o in _svi_objekti(_t(tekst)) if isinstance(o, dict) and _t(o.get("id"))]
+    if not stavke:
+        return [], [f"odgovor nije JSON sa stavkama (početak: {_t(tekst)[:160]!r})"]
 
     po_id = {_t(z.get("id")): z for z in zadaci or []}
     cjeline = list((mapping or {}).keys())
     predlozi, upozorenja = [], []
 
-    for stavka in podaci["stavke"]:
+    for stavka in stavke:
         if not isinstance(stavka, dict):
             continue
         zid = _t(stavka.get("id"))
@@ -210,20 +267,41 @@ def razvrsti(zadaci, mapping, pozovi, batch: int = BATCH, trazi_potpoglavlje: bo
 
     predlozi, upozorenja, ulaz, izlaz = [], [], 0, 0
     ukupno = len(zadaci or [])
-    for i in range(0, ukupno, batch):
-        dio = zadaci[i:i + batch]
+
+    def obradi(dio, oznaka: str):
+        """Pošalji paket; ako odgovor nije valjan, cijepaj ga na pola (do jednog zadatka)."""
+        nonlocal ulaz, izlaz, upozorenja
         try:
             odg = pozovi(system, sastavi_user(dio)) or {}
-            ulaz += int(odg.get("tokeni_ulaz") or 0)
-            izlaz += int(odg.get("tokeni_izlaz") or 0)
-            p, u = parsiraj_odgovor(odg.get("tekst", ""), dio, mapping)
-            predlozi += p
-            upozorenja += [f"paket {i // batch + 1}: {x}" for x in u]
-        except Exception as e:                          # noqa: BLE001 — jedan paket ne ruši sve
-            upozorenja.append(f"paket {i // batch + 1}: {e}")
+        except Exception as e:                          # noqa: BLE001 — mreža/API
+            if len(dio) > 1:
+                pol = len(dio) // 2
+                return obradi(dio[:pol], oznaka + "a") + obradi(dio[pol:], oznaka + "b")
+            upozorenja.append(f"{oznaka}: {e}")
+            return []
+        ulaz += int(odg.get("tokeni_ulaz") or 0)
+        izlaz += int(odg.get("tokeni_izlaz") or 0)
+        p, u = parsiraj_odgovor(odg.get("tekst", ""), dio, mapping)
+        if not p and len(dio) > 1:
+            # odrezan ili nevaljan JSON — probaj manje pakete
+            pol = len(dio) // 2
+            return obradi(dio[:pol], oznaka + "a") + obradi(dio[pol:], oznaka + "b")
+        upozorenja += [f"{oznaka}: {x}" for x in u]
+        return p
+
+    for i in range(0, ukupno, batch):
+        dio = zadaci[i:i + batch]
+        predlozi += obradi(dio, f"paket {i // batch + 1}")
         if napredak:
             napredak(min(i + batch, ukupno), ukupno)
-    return {"predlozi": predlozi, "upozorenja": upozorenja,
+    # bez duplikata (isti ID može doći iz dva cijepana paketa) — zadrži prvi prijedlog
+    vidjeno, jedinstveni = set(), []
+    for p in predlozi:
+        if _t(p.get("id")) in vidjeno:
+            continue
+        vidjeno.add(_t(p.get("id")))
+        jedinstveni.append(p)
+    return {"predlozi": jedinstveni, "upozorenja": upozorenja,
             "tokeni_ulaz": ulaz, "tokeni_izlaz": izlaz}
 
 
