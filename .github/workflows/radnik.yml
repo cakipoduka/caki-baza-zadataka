@@ -1,0 +1,83 @@
+# CAKI — radnik (dugotrajni poslovi nad bazom zadataka), 22.10.2026.
+# Zašto GitHub Actions, a ne Streamlit: posao u Streamlitu stane kad se tab zatvori ili app
+# hibernira. Ovaj workflow radi neovisno; napredak ide u Sheet (tab Radnik_stanje), pa se
+# ponovnim pokretanjem s istom serijom NASTAVLJA gdje je stao.
+# Logovi ovog repoa su JAVNI - radnik zato ispisuje samo brojeve, nikad tekst zadatka.
+name: Radnik (baza zadataka)
+
+on:
+  workflow_dispatch:
+    inputs:
+      posao:
+        description: "Posao: cijepanje (kasnije: kratki_odgovor, prijevod, audit)"
+        required: true
+        default: "cijepanje"
+        type: string
+      predmet:
+        description: "Predmet: matematika | matematika_os | fizika | matematika_fakultet"
+        required: true
+        default: "matematika"
+        type: string
+      limit:
+        description: "Najviše zadataka u ovom pokretanju (0 = svi)"
+        required: true
+        default: "50"
+        type: string
+      serija:
+        description: "ID serije za NASTAVAK (prazno = nova serija)"
+        required: false
+        default: ""
+        type: string
+      isprobaj:
+        description: "Isprobaj (ništa se ne upisuje)"
+        required: true
+        default: "da"
+        type: choice
+        options: ["da", "ne"]
+      vrati:
+        description: "ID serije za UNDO (prazno = normalan rad)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: radnik-baza
+  cancel-in-progress: false
+
+jobs:
+  radnik:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python paketi
+        run: pip install gspread google-auth google-api-python-client requests sympy
+
+      - name: Radnik
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          SHEET_ID_FIZIKA: ${{ secrets.SHEET_ID_FIZIKA }}
+          SHEET_ID_MATEMATIKA_OS: ${{ secrets.SHEET_ID_MATEMATIKA_OS }}
+          SHEET_ID_MATEMATIKA_FAKULTET: ${{ secrets.SHEET_ID_MATEMATIKA_FAKULTET }}
+          POSAO: ${{ inputs.posao }}
+          PREDMET: ${{ inputs.predmet }}
+          LIMIT: ${{ inputs.limit }}
+          SERIJA: ${{ inputs.serija }}
+          ISPROBAJ: ${{ inputs.isprobaj }}
+          VRATI: ${{ inputs.vrati }}
+        run: |
+          set -e
+          ARG=""
+          if [ -n "$SERIJA" ]; then ARG="--serija $SERIJA"; fi
+          if [ "$ISPROBAJ" = "da" ]; then ARG="$ARG --isprobaj"; fi
+          if [ -n "$VRATI" ]; then
+            python radnik.py --vrati "$VRATI"
+          else
+            python radnik.py --posao "$POSAO" --predmet "$PREDMET" --limit "$LIMIT" $ARG
+          fi

@@ -81,7 +81,50 @@ def _kao_broj(izraz: str):
         return None
 
 
-def kratki_tocan(kljuc, odgovor) -> bool:
+def _vrijednost_izraza(tekst):
+    """Brojevna vrijednost izraza iz odgovora — za EKVIVALENTNE OBLIKE (22.10.2026.).
+
+    Ista kopija kao u `caki-booking-termina/testovi_online.py` (portal) — vidi zaglavlje modula:
+    logika ocjenjivanja MORA biti ista na oba mjesta, inače pretpregled daje drugu ocjenu.
+    Učenik smije napisati drugi oblik istog rješenja: `2^{12}` = `4096`, `\\sqrt{8}` = `2\\sqrt{2}`.
+    """
+    t = _tekst(tekst)
+    if not t:
+        return None
+    t = t.replace("$", "").replace("\\left", "").replace("\\right", "").replace("\\displaystyle", "")
+    t = re.sub(r"\\[,;!:]", "", t)
+    t = t.replace("\\cdot", "*").replace("\\times", "*").replace("\\div", "/")
+    t = t.replace("\u2212", "-").replace("\u00b7", "*")
+    for _ in range(3):
+        try:
+            novi = re.sub(r"\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}", r"((\1)/(\2))", t)
+        except re.error:
+            return None
+        if novi == t:
+            break
+        t = novi
+    t = re.sub(r"\\sqrt\s*\{([^{}]*)\}", r"((\1)**0.5)", t)
+    t = re.sub(r"\^\{([^{}]*)\}", r"**(\1)", t)
+    t = re.sub(r"\^(\d+)", r"**\1", t)
+    t = t.replace("{,}", ".").replace(",", ".").replace("%", "")
+    t = re.sub(r"(?<=[\d)])\s*\(", "*(", t)          # implicitno množenje: 2(3) -> 2*(3)
+    t = re.sub(r"\)\s*\(", ")*(", t)
+    t = t.replace(" ", "")
+    if not re.fullmatch(r"[0-9+\-*/().]+", t or ""):
+        return None
+    try:
+        return float(eval(t, {"__builtins__": {}}, {}))   # noqa: S307 — samo brojke i operatori
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _alt_kljucevi(kljuc) -> list:
+    """`3|4|5` -> ["3","4","5"] — VIŠE PRIHVAĆENIH RJEŠENJA; inače [kljuc]."""
+    dijelovi = [d.strip() for d in _tekst(kljuc).split("|") if d.strip()]
+    return dijelovi if len(dijelovi) > 1 else [_tekst(kljuc)]
+
+
+def _kratki_tocan_jedan(kljuc, odgovor) -> bool:
     """Usporedba kratkog odgovora: jednak zapis, jednak broj ili jednak razlomak."""
     a, b = normalizuj(kljuc), normalizuj(odgovor)
     if not a or not b:
@@ -96,6 +139,24 @@ def kratki_tocan(kljuc, odgovor) -> bool:
     x, y = _kao_broj(va), _kao_broj(vb)
     if x is not None and y is not None:
         return abs(x - y) <= 1e-9 * max(1.0, abs(x), abs(y))
+    return False
+
+
+def kratki_tocan(kljuc, odgovor) -> bool:
+    """Kratki odgovor: isto kao prije + (22.10.2026.) VIŠE PRIHVAĆENIH RJEŠENJA (`a|b|c`) i
+    ekvivalentni brojevni oblici (`2^{12}` = `4096`, `\\sqrt{8}` = `2\\sqrt{2}`)."""
+    if not _tekst(odgovor):
+        return False
+    alternative = _alt_kljucevi(kljuc)
+    if any(_kratki_tocan_jedan(alt, odgovor) for alt in alternative):
+        return True
+    y = _vrijednost_izraza(odgovor)
+    if y is None:
+        return False
+    for alt in alternative:
+        x = _vrijednost_izraza(alt)
+        if x is not None and abs(x - y) <= 1e-9 * max(1.0, abs(x), abs(y)):
+            return True
     return False
 
 
