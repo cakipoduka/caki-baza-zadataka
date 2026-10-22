@@ -34,6 +34,7 @@ TEST_HEADERS = [
     "zadaci_json", "broj_zadataka", "bodovi_ukupno", "trajanje_min",
     "otvara_od", "zatvara_do", "aktivan", "autor", "kreirano", "napomena",
     "serija",       # 21.10.2026.: oznaka zajedničke objave za više učenika (grupa/kanta)
+    "pomoc",        # 22.10.2026.: "Da" = učenik smije pitati 💡 pomoć tijekom rješavanja
 ]
 
 # Program na koji se test odnosi (prazno = svi učenici). Ista lista kao program_tip u Prijavama.
@@ -288,7 +289,7 @@ def objavi_test(sheet, *, zadaci: list[dict], naziv: str, predmet: str = "",
                 ucenik_id: str = "", ime_djeteta: str = "", program: str = "",
                 trajanje_min=45, otvara_od: str = "", zatvara_do: str = "",
                 aktivan: bool = True, autor: str = "", napomena: str = "",
-                serija: str = "") -> dict:
+                serija: str = "", pomoc: str = "") -> dict:
     """Upisuje JEDAN redak u `Testovi_zakazani` (jedan API poziv) i vraća upisani redak."""
     ws = osiguraj_tab(sheet)
     test_id = novi_test_id(_postojeci_idovi(ws))
@@ -313,15 +314,19 @@ def objavi_test(sheet, *, zadaci: list[dict], naziv: str, predmet: str = "",
         "kreirano": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "napomena": _tekst(napomena),
         "serija": _tekst(serija),
+        "pomoc": "Da" if _tekst(pomoc).lower() in ("da", "1", "true") else "Ne",
     }
-    ws.append_row([redak[h] for h in TEST_HEADERS], value_input_option="RAW")
+    # Piše se po STVARNOM zaglavlju taba (ne po TEST_HEADERS): ako je neki stupac dodan
+    # ili ručno obrisan, vrijednosti i dalje sjedaju u pravu kolonu.
+    stvarno = [_tekst(h) for h in ws.row_values(1)] or list(TEST_HEADERS)
+    ws.append_row([redak.get(h, "") for h in stvarno], value_input_option="RAW")
     return redak
 
 
 def objavi_za_ucenike(sheet, *, zadaci: list[dict], ucenici, naziv: str, predmet: str = "",
                       program: str = "", trajanje_min=45, otvara_od: str = "",
                       zatvara_do: str = "", aktivan: bool = True, autor: str = "",
-                      napomena: str = "", serija: str = "") -> list[dict]:
+                      napomena: str = "", serija: str = "", pomoc: str = "") -> list[dict]:
     """Isti test za VIŠE učenika: po jedan redak za svakoga, u JEDNOM upisu (`append_rows`).
 
     Zašto po redak: portal (`caki-booking-termina/testovi_online.py`) bira test po
@@ -374,11 +379,13 @@ def objavi_za_ucenike(sheet, *, zadaci: list[dict], ucenici, naziv: str, predmet
             "kreirano": kreirano,
             "napomena": _tekst(napomena),
             "serija": _tekst(serija),
+            "pomoc": "Da" if _tekst(pomoc).lower() in ("da", "1", "true") else "Ne",
         })
 
     if not redci:
         raise ValueError("Nijedan učenik nema šifru — nema što objaviti.")
-    ws.append_rows([[r[h] for h in TEST_HEADERS] for r in redci], value_input_option="RAW")
+    stvarno = [_tekst(h) for h in ws.row_values(1)] or list(TEST_HEADERS)
+    ws.append_rows([[r.get(h, "") for h in stvarno] for r in redci], value_input_option="RAW")
     return redci
 
 
@@ -456,6 +463,13 @@ def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki") -> No
         otvara = c4.date_input("Otvoren od", value=_danas(), format="DD.MM.YYYY")
         zatvara = c5.date_input("Otvoren do", value=_danas() + timedelta(days=7), format="DD.MM.YYYY")
         napomena = st.text_area("Napomena za sebe (ne prikazuje se učeniku)", height=70)
+        # 22.10.2026.: 💡 pomoć pri učenju — učenik smije pitati bota (maskiran kao profesor)
+        # za sljedeći korak/pravilo, NIKAD za rješenje. Zadano ISKLJUČENO.
+        pomoc = st.checkbox(
+            "💡 Dopusti pomoć pri učenju (učenik može pitati za korak/pravilo)",
+            value=False,
+            help="Bot se predstavlja kao profesor i ne otkriva rješenje. Najviše 5 pitanja "
+                 "po učeniku. Za provjere i ocjenjivane testove ostavi isključeno.")
         objavi = st.form_submit_button("📝 Objavi test", type="primary",
                                        disabled=bool(problemi) or not zadaci)
 
@@ -470,7 +484,7 @@ def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki") -> No
                     sheet, zadaci=zadaci, naziv=naziv, predmet=predmet,
                     ucenik_id=ucenik_id, program=program, trajanje_min=trajanje,
                     otvara_od=str(otvara), zatvara_do=str(zatvara), autor=autor,
-                    napomena=napomena,
+                    napomena=napomena, pomoc="Da" if pomoc else "Ne",
                 )
             except Exception as e:  # noqa: BLE001 — Caki mora vidjeti što je Google rekao
                 st.error(f"Objava nije uspjela: {e}")

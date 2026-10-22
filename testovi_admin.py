@@ -1493,6 +1493,16 @@ def _kolone_taba(ws) -> dict[str, int]:
     return {h: i for i, h in enumerate(zaglavlje) if h}
 
 
+def ima_stupac(sheet, stupac: str, tab: str = TEST_TAB) -> bool:
+    """Postoji li stupac u zaglavlju taba — za značajke koje se dodaju s vremenom
+    (npr. `pomoc`, `serija`): stare kopije taba nemaju ih dok se ne objavi novi test."""
+    try:
+        ws = sheet.worksheet(tab)
+        return _tekst(stupac) in [_tekst(h) for h in ws.row_values(1)]
+    except Exception:                                   # noqa: BLE001 — tab ne postoji
+        return False
+
+
 def _azuriraj_vise_redaka(sheet, redci, polja: dict) -> int:
     """Iste izmjene na više redaka u JEDNOM `batch_update` pozivu. Vraća broj redaka."""
     if not polja:
@@ -1784,6 +1794,15 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                                                                    date.today()),
                                     format="DD.MM.YYYY")
             aktivan = c5.checkbox("Aktivan (učenik ga vidi)", value=_aktivan(test))
+            ima_pomoc = ima_stupac(sheet, "pomoc")
+            pomoc_ukljucena = st.checkbox(
+                "💡 Pomoć pri učenju dopuštena (bot kao profesor; nikad rješenje)",
+                value=_tekst(test.get("pomoc")) == "Da", disabled=not ima_pomoc,
+                help="Najviše 5 pitanja po učeniku. Za provjere i ocjenjivane testove ostavi "
+                     "isključeno.")
+            if not ima_pomoc:
+                st.caption("Stupac `pomoc` još ne postoji u tabu — nastaje pri prvoj novoj "
+                           "objavi iz Test Buildera.")
             st.caption("Izmjena ovdje mijenja test kakav ga učenik vidi. Već predani rezultati "
                        "ostaju kakvi su bili — oni su dokaz što je učenik riješio.")
             spremi = st.form_submit_button("💾 Spremi izmjene", type="primary")
@@ -1801,6 +1820,8 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                     "zatvara_do": _datum(zatvara),
                     "aktivan": STATUS_AKTIVAN if aktivan else "Ne",
                 }
+                if ima_pomoc:
+                    polja_izmjene["pomoc"] = "Da" if pomoc_ukljucena else "Ne"
                 try:
                     if serija_popis:
                         n_iz = azuriraj_seriju(sheet, testovi, serija_popis, polja_izmjene)
