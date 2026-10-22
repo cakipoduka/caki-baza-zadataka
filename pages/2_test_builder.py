@@ -1547,7 +1547,8 @@ try:
         )
     else:
         try:
-            _online_testovi.prikazi_objavu(st, _online_sheet, st.session_state.odabrani, PREDMET)
+            _online_testovi.prikazi_objavu(st, _online_sheet, st.session_state.odabrani, PREDMET,
+                                                 formule_sheet=init_sheet().spreadsheet)
         except Exception as _e_objava:  # noqa: BLE001 — PDF dio stranice mora raditi i ako ovo zapne
             st.warning(f"Objava online testa trenutno nije dostupna: {_e_objava}")
 except Exception:  # noqa: BLE001 — nova mogućnost ne smije srušiti Test Builder

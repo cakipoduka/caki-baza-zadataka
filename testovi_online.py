@@ -35,6 +35,8 @@ TEST_HEADERS = [
     "otvara_od", "zatvara_do", "aktivan", "autor", "kreirano", "napomena",
     "serija",       # 21.10.2026.: oznaka zajedničke objave za više učenika (grupa/kanta)
     "pomoc",        # 22.10.2026.: "Da" = učenik smije pitati 💡 pomoć tijekom rješavanja
+    "formule_json",  # 22.10.2026.: 📐 zamrznute formule koje učenik smije vidjeti uz test
+    "rad",           # 22.10.2026.: "Da" = učenik šalje slike/sken svog rada nakon predaje
 ]
 
 # Program na koji se test odnosi (prazno = svi učenici). Ista lista kao program_tip u Prijavama.
@@ -289,7 +291,7 @@ def objavi_test(sheet, *, zadaci: list[dict], naziv: str, predmet: str = "",
                 ucenik_id: str = "", ime_djeteta: str = "", program: str = "",
                 trajanje_min=45, otvara_od: str = "", zatvara_do: str = "",
                 aktivan: bool = True, autor: str = "", napomena: str = "",
-                serija: str = "", pomoc: str = "") -> dict:
+                serija: str = "", pomoc: str = "", formule: str = "", rad: str = "") -> dict:
     """Upisuje JEDAN redak u `Testovi_zakazani` (jedan API poziv) i vraća upisani redak."""
     ws = osiguraj_tab(sheet)
     test_id = novi_test_id(_postojeci_idovi(ws))
@@ -315,6 +317,8 @@ def objavi_test(sheet, *, zadaci: list[dict], naziv: str, predmet: str = "",
         "napomena": _tekst(napomena),
         "serija": _tekst(serija),
         "pomoc": "Da" if _tekst(pomoc).lower() in ("da", "1", "true") else "Ne",
+        "formule_json": _tekst(formule),
+        "rad": "Da" if _tekst(rad).lower() in ("da", "1", "true") else "Ne",
     }
     # Piše se po STVARNOM zaglavlju taba (ne po TEST_HEADERS): ako je neki stupac dodan
     # ili ručno obrisan, vrijednosti i dalje sjedaju u pravu kolonu.
@@ -326,7 +330,8 @@ def objavi_test(sheet, *, zadaci: list[dict], naziv: str, predmet: str = "",
 def objavi_za_ucenike(sheet, *, zadaci: list[dict], ucenici, naziv: str, predmet: str = "",
                       program: str = "", trajanje_min=45, otvara_od: str = "",
                       zatvara_do: str = "", aktivan: bool = True, autor: str = "",
-                      napomena: str = "", serija: str = "", pomoc: str = "") -> list[dict]:
+                      napomena: str = "", serija: str = "", pomoc: str = "",
+                      formule: str = "", rad: str = "") -> list[dict]:
     """Isti test za VIŠE učenika: po jedan redak za svakoga, u JEDNOM upisu (`append_rows`).
 
     Zašto po redak: portal (`caki-booking-termina/testovi_online.py`) bira test po
@@ -380,6 +385,8 @@ def objavi_za_ucenike(sheet, *, zadaci: list[dict], ucenici, naziv: str, predmet
             "napomena": _tekst(napomena),
             "serija": _tekst(serija),
             "pomoc": "Da" if _tekst(pomoc).lower() in ("da", "1", "true") else "Ne",
+            "formule_json": _tekst(formule),
+            "rad": "Da" if _tekst(rad).lower() in ("da", "1", "true") else "Ne",
         })
 
     if not redci:
@@ -420,7 +427,8 @@ def _danas() -> date:
     return datetime.now().date()
 
 
-def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki") -> None:
+def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki",
+                     formule_sheet=None) -> None:
     """Odlomak na dnu Test Buildera: „Objavi kao online test”. `st` se predaje da modul
     ostane uvoziv u testovima bez Streamlita."""
     import pandas as pd
@@ -470,6 +478,39 @@ def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki") -> No
             value=False,
             help="Bot se predstavlja kao profesor i ne otkriva rješenje. Najviše 5 pitanja "
                  "po učeniku. Za provjere i ocjenjivane testove ostavi isključeno.")
+
+        # 22.10.2026.: 📷 rad na papiru — učenik šalje fotografije/sken nakon predaje.
+        rad = st.checkbox(
+            "📷 Učenik šalje svoj rad (fotografije ili sken nakon predaje)",
+            value=False,
+            help="Uključi za ispite koji se rješavaju na papiru (npr. simulacija mature). "
+                 "Učenik dobije uputu kako uredno skenirati; radovi se brišu nakon 7 dana.")
+        # 22.10.2026.: 📐 formule uz test — paket (npr. „Matura — službene") ILI pojedinačne.
+        # U test se upisuje ZAMRZNUTA kopija teksta, pa učenik vidi isto što i Caki sad.
+        _formule_json = ""
+        _sve_formule = []
+        if formule_sheet is not None:
+            try:
+                import formule as _formule_mod          # noqa: PLC0415 — modul je u bazi
+                _sve_formule = _formule_mod.aktivne(_formule_mod.load_formule(formule_sheet))
+            except Exception:                           # noqa: BLE001 — formule ne blokiraju objavu
+                _sve_formule = []
+        if _sve_formule:
+            _nazivi = {_tekst(f.get("formula_id")): _tekst(f.get("naslov")) for f in _sve_formule}
+            _sve_f = st.checkbox("📐 Sve formule (sve aktivne)", value=False,
+                                 help="Učenik vidi sve formule iz baze — najlakše za maturu.")
+            _pak_od = st.multiselect("📐 Paketi formula", _formule_mod.paketi(_sve_formule),
+                                     help="Npr. „Matura 2026 — službene”.")
+            _id_od = st.multiselect("📐 Pojedinačne formule", list(_nazivi),
+                                    format_func=lambda i, n=_nazivi: n.get(i) or i,
+                                    help="Ako želiš dati samo nekoliko formula.")
+            _formule_json = _formule_mod.u_json(_formule_mod.izbor_za_test(
+                _sve_formule, _pak_od, _id_od, sve=_sve_f))
+            if _formule_json:
+                st.caption(f"📐 Učenik će vidjeti **{len(_formule_mod.iz_retka({'formule_json': _formule_json}))}** formula.")
+        else:
+            st.caption("📐 Nema formula u bazi — dodaj ih na stranici **📐 Formule**.")
+
         objavi = st.form_submit_button("📝 Objavi test", type="primary",
                                        disabled=bool(problemi) or not zadaci)
 
@@ -485,6 +526,8 @@ def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki") -> No
                     ucenik_id=ucenik_id, program=program, trajanje_min=trajanje,
                     otvara_od=str(otvara), zatvara_do=str(zatvara), autor=autor,
                     napomena=napomena, pomoc="Da" if pomoc else "Ne",
+                    formule=_formule_json,
+                    rad="Da" if rad else "Ne",
                 )
             except Exception as e:  # noqa: BLE001 — Caki mora vidjeti što je Google rekao
                 st.error(f"Objava nije uspjela: {e}")
