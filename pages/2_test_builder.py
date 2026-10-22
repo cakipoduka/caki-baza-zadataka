@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 
 import gspread
 import streamlit as st
@@ -175,7 +176,7 @@ def init_drive():
     return get_drive_service(sa_info)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600, max_entries=600)
 def _dohvati_sliku_bytes_za(naziv_datoteke, predmet):
     """Dohvaća bajtove slike iz istog 02_SLIKE Drive foldera koji koristi i
     app.py (stranica 'Dodaj/zamijeni sliku'). Vraća None ako nije pronađena
@@ -219,6 +220,35 @@ def slika_valjana_za_prikaz(slika_bytes):
 def prikazi_sliku_html(slika_bytes, width=130):
     """Umjesto st.image(): ugradi sliku u <img> (dekodira je preglednik, ne server)."""
     st.markdown(slika_html(slika_bytes, width=width), unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=3600, max_entries=600, show_spinner=False)
+def _slika_html_za(naziv_datoteke, predmet, width) -> str:
+    """HTML slike izgrađen JEDNOM — base64 se ne računa pri svakom rerunu.
+
+    22.10.2026. (Cakijev nalaz): kod 100+ zadataka sa slikama svaki je rerun ponovno
+    dohvaćao bajtove i ponovno gradio base64, pa se činilo da se slike „stalno
+    učitavaju iznova”. Sada se i bajtovi (1 h) i gotov HTML drže u kešu.
+    """
+    bajtovi = _dohvati_sliku_bytes_za(naziv_datoteke, predmet)
+    if not bajtovi or not slika_valjana_za_prikaz(bajtovi):
+        return ""
+    return slika_html(bajtovi, width=width)
+
+
+def prikazi_sliku_zadatka(naziv_datoteke, width=130) -> bool:
+    """Prikaži sliku zadatka iz keša. Vraća True ako je nacrtana.
+
+    Poštuje prekidač „🖼️ Prikaži slike zadataka u popisu” — kad je isključen, lista je
+    brža jer se gotov HTML uopće ne crta.
+    """
+    if not naziv_datoteke:
+        return False
+    html = _slika_html_za(naziv_datoteke, PREDMET, width)
+    if not html or not st.session_state.get("tb_prikazi_slike", True):
+        return False
+    st.markdown(html, unsafe_allow_html=True)
+    return True
 
 
 @st.cache_data(ttl=300)
@@ -596,6 +626,13 @@ with col_pretraga:
     )
     f_tekst = st.text_input("Pretraži tekst / ključne riječi")
 
+    # 22.10.2026. (Cakijev nalaz): kod 100+ zadataka sa slikama lista se osjeća sporo jer se
+    # pri svakom rerunu ponovno crtaju sve slike. Slike su sada keširane (v. _slika_html_za),
+    # a ovdje ih po potrebi isključiš dok samo pregledavaš listu.
+    st.toggle("🖼️ Prikaži slike zadataka u popisu", value=True, key="tb_prikazi_slike",
+              help="Isključi ako samo listaš stotine zadataka — prikaz je brži. Slike se ne "
+                   "brišu; u testu i PDF-u su i dalje tu.")
+
     # Jedinica = samostalan zadatak ILI skupina (uvod) sa svojim stavkama (10.10.2026.).
     # Stavke se NE prikazuju kao zasebni redci - vide se unutar kartice svoje skupine.
     if _SKUPINE_OK:
@@ -705,7 +742,9 @@ with col_pretraga:
                     for _naziv_slike in razdvoji_slike(row.get("slika_putanja", "")):
                         _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
                         if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                            prikazi_sliku_html(_slika_bytes, width=130)
+                            _html_slike = _slika_html_za(_naziv_slike, PREDMET, 130)
+                            if _html_slike and st.session_state.get("tb_prikazi_slike", True):
+                                st.markdown(_html_slike, unsafe_allow_html=True)
                 if not _slobodne:
                     st.button("✅ Već dodano", key=f"add_{row.get('id')}", disabled=True)
                 else:
@@ -746,7 +785,9 @@ with col_pretraga:
                     with _kol_slike[_i_sl % len(_kol_slike)]:
                         _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
                         if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                            prikazi_sliku_html(_slika_bytes, width=130)
+                            _html_slike = _slika_html_za(_naziv_slike, PREDMET, 130)
+                            if _html_slike and st.session_state.get("tb_prikazi_slike", True):
+                                st.markdown(_html_slike, unsafe_allow_html=True)
                         elif _slika_bytes:
                             st.warning(
                                 f"⚠️ Slika '{_naziv_slike}' izgleda oštećena/neispravna "
@@ -904,7 +945,9 @@ with col_odabrano:
                 for _naziv_slike in razdvoji_slike(z.get("slika_putanja")):
                     _slika_bytes = dohvati_sliku_bytes(_naziv_slike)
                     if _slika_bytes and slika_valjana_za_prikaz(_slika_bytes):
-                        prikazi_sliku_html(_slika_bytes, width=220)
+                        _html_slike = _slika_html_za(_naziv_slike, PREDMET, 220)
+                        if _html_slike and st.session_state.get("tb_prikazi_slike", True):
+                            st.markdown(_html_slike, unsafe_allow_html=True)
                     elif _slika_bytes:
                         st.warning(
                             f"⚠️ Slika '{_naziv_slike}' izgleda oštećena/neispravna "
@@ -1102,32 +1145,59 @@ if st.session_state.odabrani:
 # ---------------------------------------------------------------
 # Autospremanje nacrta (§25.11, 14.9.2026.) — štiti od gubitka rada ako se
 # Streamlit sesija resetira (istek, hard refresh) dok profesor slaže test.
-# Sprema SAMO kad se sadržaj stvarno promijenio od zadnjeg spremanja (usporedba
-# hasha), ne na svaki rerun (npr. otvaranje/zatvaranje expandera) - da se ne
-# troši Sheets write-kvota nepotrebno (v. §12 CAKI_MASTER_BAZA, dokumentiran
-# presedan 429 grešaka kod prevelikog broja pisanja u minuti). Greška u pisanju
-# se tiho guta - autospremanje NIKAD ne smije prekinuti profesorov rad.
+#
+# 22.10.2026. (Cakijev nalaz „s 17 zadataka sve je sporo”): prije se cijeli nacrt
+# pisao u Sheet pri SVAKOJ promjeni (bodovi, Bloom, redoslijed…), pa je svaki klik
+# čekao Google 0,5–1,5 s. Sada se piše najviše jednom u `DRAFT_MIN_SEKUNDI` sekundi,
+# međukoraci ostaju u sesiji, a gumb 💾 piše odmah. Greška se i dalje tiho guta —
+# autospremanje NIKAD ne smije prekinuti profesorov rad.
 # ---------------------------------------------------------------
+
+DRAFT_MIN_SEKUNDI = 20
+
+
+def _spremi_nacrt(stanje) -> bool:
+    """Jedan upis nacrta u Sheet. Vraća True ako je upisan."""
+    try:
+        ws = init_draft_ws()
+        redak = [
+            "trenutni", datetime.datetime.now().strftime("%d.%m.%Y. %H:%M"),
+            stanje["naslov_dokumenta"], stanje["tip_dokumenta"],
+            str(stanje["prikazi_rjesenja"]), str(stanje["broj_zadataka"]),
+            stanje["sadrzaj_json"],
+        ]
+        if len(ws.get_all_values()) < 2:
+            ws.append_row(redak)
+        else:
+            ws.update(range_name="A2:G2", values=[redak])
+        return True
+    except Exception:                                   # noqa: BLE001 — nikad ne prekidaj rad
+        return False
+
 
 if st.session_state.odabrani:
     _draft_stanje = _stanje_za_spremanje(naslov, tip_dok, prikazi_rjesenja)
     _draft_potpis = hashlib.sha256(_draft_stanje["sadrzaj_json"].encode("utf-8")).hexdigest()
-    if st.session_state.get("_draft_zadnji_potpis") != _draft_potpis:
-        try:
-            _ws_draft = init_draft_ws()
-            _draft_redak = [
-                "trenutni", datetime.datetime.now().strftime("%d.%m.%Y. %H:%M"),
-                _draft_stanje["naslov_dokumenta"], _draft_stanje["tip_dokumenta"],
-                str(_draft_stanje["prikazi_rjesenja"]), str(_draft_stanje["broj_zadataka"]),
-                _draft_stanje["sadrzaj_json"],
-            ]
-            if len(_ws_draft.get_all_values()) < 2:
-                _ws_draft.append_row(_draft_redak)
-            else:
-                _ws_draft.update(range_name="A2:G2", values=[_draft_redak])
-            st.session_state["_draft_zadnji_potpis"] = _draft_potpis
-        except Exception:
-            pass
+    _zadnji_potpis = st.session_state.get("_draft_zadnji_potpis")
+    _zadnje_vrijeme = float(st.session_state.get("_draft_zadnje_vrijeme") or 0)
+    _promjena = _draft_potpis != _zadnji_potpis
+    _cekaj_jos = DRAFT_MIN_SEKUNDI - (time.time() - _zadnje_vrijeme)
+
+    _k1, _k2 = st.columns([1, 3])
+    _rucno = _k1.button("💾 Spremi nacrt", key="draft_spremi_sada", disabled=not _promjena,
+                        help="Inače se nacrt sprema sam, najviše svakih "
+                             f"{DRAFT_MIN_SEKUNDI} s — da se ne čeka Google pri svakom kliku.")
+    _auto = _promjena and (not _zadnji_potpis or _cekaj_jos <= 0)
+
+    if (_rucno or _auto) and _spremi_nacrt(_draft_stanje):
+        st.session_state["_draft_zadnji_potpis"] = _draft_potpis
+        st.session_state["_draft_zadnje_vrijeme"] = time.time()
+        _k2.caption(f"💾 Nacrt spremljen u {datetime.datetime.now():%H:%M:%S}.")
+    elif _promjena:
+        _k2.caption(f"⏳ Ima nespremljenih izmjena — spremit će se sam za ~{max(0, int(_cekaj_jos))} s "
+                    "ili klikni 💾 Spremi nacrt.")
+    else:
+        _k2.caption("✅ Nacrt je spremljen.")
 
 dodaj_mamac = st.checkbox(
     "➕ Dodaj mamac opciju svim zadacima višestrukog izbora "

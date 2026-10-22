@@ -31,7 +31,7 @@ import importlib.util as _importlib_util
 import json
 import os as _os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from gspread.utils import rowcol_to_a1
 
@@ -1493,6 +1493,28 @@ def _kolone_taba(ws) -> dict[str, int]:
     return {h: i for i, h in enumerate(zaglavlje) if h}
 
 
+def zatvori_test(sheet, test, cijela_serija: bool = False, testovi=None) -> list[str]:
+    """22.10.2026. (Cakijev zahtjev): zatvori test **PRIJE roka** — rješenja se otvaraju odmah.
+
+    Portal otvara rješenja kad je `danas > zatvara_do` (`rjesenja_dostupna`). Zato se rok
+    postavlja na **jučer**: učenik više ne može pisati, a svi koji su predali odmah vide
+    rješenja i točne odgovore. Vraća popis ID-eva zatvorenih testova.
+    """
+    jučer = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+    redci = ([test] if not cijela_serija
+             else testovi_serije(list(testovi or []), serija_iz_retka(test)))
+    if not redci:
+        redci = [test]
+    idovi = []
+    for redak in redci:
+        tid = _tekst((redak or {}).get("test_id"))
+        if not tid:
+            continue
+        azuriraj_test(sheet, tid, {"zatvara_do": jučer})
+        idovi.append(tid)
+    return idovi
+
+
 def ima_stupac(sheet, stupac: str, tab: str = TEST_TAB) -> bool:
     """Postoji li stupac u zaglavlju taba — za značajke koje se dodaju s vremenom
     (npr. `pomoc`, `serija`): stare kopije taba nemaju ih dok se ne objavi novi test."""
@@ -1845,6 +1867,25 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
             else:
                 _osvjezi(st, "success",
                          f"Test `{odabrani_id}` je {'deaktiviran' if _aktivan(test) else 'aktiviran'}.")
+
+        # 22.10.2026. (Cakijev zahtjev): ne čekati istek roka — kad su svi riješili, rješenja
+        # se otvaraju odmah (portal ih otvara kad je rok prošao, pa se rok postavlja na jučer).
+        with st.popover("⏹️ Zatvori test odmah"):
+            st.caption("Rok se postavlja na **jučer**: učenici više ne mogu pisati, a svi koji "
+                       "su predali **odmah vide rješenja** i točne odgovore.")
+            _za_seriju = bool(serija_popis)
+            if serija_popis:
+                _za_seriju = st.checkbox("za cijelu seriju", value=True,
+                                         key=f"ta_zat_sve_{odabrani_id}")
+            if st.button("⏹️ Zatvori odmah", key=f"ta_zatvori_{odabrani_id}", type="primary"):
+                try:
+                    _zatvoreno = zatvori_test(sheet, test, cijela_serija=_za_seriju, testovi=testovi)
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    _osvjezi(st, "success",
+                             f"⏹️ Zatvoreno: **{len(_zatvoreno)}** test(ova). Učenici koji su "
+                             "predali sada vide rješenja.")
 
         if b2.button("📄 Kloniraj", key=f"ta_klon_{odabrani_id}",
                      help="Novi test s ISTIM zadacima — npr. ista vježba za drugu grupu."):
@@ -2308,7 +2349,7 @@ __all__ = [
     "filtruj_rezultate", "filtruj_po_predmetu", "cilj_opis",
     "serija_iz_retka", "testovi_serije", "jedinstvena_serija", "oznaka_serije",
     "sazetak", "uspjeh_po_zadatku", "ucenici_bez_predaje", "ucenici_koji_nisu_predali",
-    "load_pocetke", "zapoceli_bez_predaje", "tablica_zapocelih",
+    "load_pocetke", "zapoceli_bez_predaje", "tablica_zapocelih", "zatvori_test",
     "uspjeh_po_cjelinama", "spremnost_baze",
     "ucenici_s_rezultatima", "povijest_ucenika", "sazetak_ucenika", "slabe_cjeline_ucenika",
     "promaseni_zadaci", "tekst_sazetka_za_roditelja",
