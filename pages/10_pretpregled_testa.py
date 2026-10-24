@@ -52,6 +52,7 @@ def _crm_sheet(_crm_id):
 
 
 st.title("\U0001f441️ Pretpregled testa")
+st.info("**Ovo je brzi pregled sadržaja** (radi i bez Googlea). Za pregled koji je **identičan onome što vidi učenik** — s matematičkim unosom, slikama, formulama i 💡 pomoći — otvori link **👁️ Otvori pretpregled** u 🧪 Test Builderu (stranica `/Pretpregled` na portalu). ")
 _uputa.prikazi(st, "pretpregled")
 st.caption("Rjesavas test kao sto bi ga vidio ucenik -- nista se ne sprema ni u jedan Sheet. "
            "Samo za tvoju provjeru prije/nakon objave.")

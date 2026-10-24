@@ -555,6 +555,13 @@ def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki",
 
     # 22.10.2026. (Cakijev zahtjev): prije je prazno polje značilo „svima" — test je odmah
     # vidio cijeli program. Sada se KOME objavljuje bira izrijekom, a zadano je NACRT.
+    # 24.10.2026. (Cakijev zahtjev): 👁️ pretpregled IDENTIČAN učeničkom — isti kod, isti
+    # matematički unos (MathLive), iste slike, formule i 💡 pomoć. Ništa se ne sprema.
+    _osnovni_url = str(st.secrets.get("PORTAL_URL", "https://moj-caki.streamlit.app")).rstrip("/")
+    st.link_button("👁️ Otvori pretpregled — kako ovo vidi učenik", f"{_osnovni_url}/Pretpregled",
+                   help="Otvara se u novom tabu na portalu učenika i traži lozinku. "
+                        "Ništa se ne sprema: ni početak, ni odgovori, ni pomoć.")
+
     st.markdown("**Kome objavljujem**")
     publika = st.radio("Kome objavljujem", list(PUBLIKE), format_func=lambda k: PUBLIKE[k],
                        index=0, key="obj_publika", label_visibility="collapsed")

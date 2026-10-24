@@ -113,11 +113,16 @@ KRAJ_OZNAKA_PO_TIPU = {
 # ---------------------------------------------------------------
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _grupe_za_publiku(sheet_):
-    """Grupe/kante iz kojih Caki bira kome ide test (22.10.2026.). Greška ne blokira objavu."""
+def _grupe_za_publiku(_sheet_id: str, _sheet_):
+    """Grupe/kante iz kojih Caki bira kome ide test (22.10.2026.). Greška ne blokira objavu.
+
+    Argumenti su namjerno ovako: **gspread objekt se ne može hashirati**, pa Streamlit traži da
+    argument ne sudjeluje u ključu predmemorije (ime počinje donjom crtom). Ključ je zato
+    `_sheet_id` (string) — inače bi se grupe jednog predmeta poslužile drugom predmetu.
+    """
     try:
         import testovi_admin as _ta_admin
-        return _ta_admin.grupe_za_publiku(sheet_)
+        return _ta_admin.grupe_za_publiku(_sheet_)
     except Exception:                                   # noqa: BLE001
         return []
 
@@ -1563,7 +1568,7 @@ try:
         try:
             _online_testovi.prikazi_objavu(st, _online_sheet, st.session_state.odabrani, PREDMET,
                                            formule_sheet=init_sheet().spreadsheet,
-                                           grupe=_grupe_za_publiku(_online_sheet))
+                                           grupe=_grupe_za_publiku(str(getattr(_online_sheet, "id", "") or ""), _online_sheet))
         except Exception as _e_objava:  # noqa: BLE001 — PDF dio stranice mora raditi i ako ovo zapne
             st.warning(f"Objava online testa trenutno nije dostupna: {_e_objava}")
 except Exception:  # noqa: BLE001 — nova mogućnost ne smije srušiti Test Builder
