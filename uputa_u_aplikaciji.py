@@ -25,6 +25,9 @@ UPUTE = {
             "taj zadatak preskače.",
             "Unesi naslov, tip dokumenta i (za online test) trajanje i rok, pa **generiraj PDF** ili "
             "**📝 Objavi kao online test**.",
+            "Na dnu odabereš **kome ide**: 🔒 **Nacrt** (zadano — ne vidi ga nitko), 👥 **Grupa / kanta**, "
+            "🧑 **Pojedini učenici** ili 🌍 **Svi učenici programa**. Ništa se ne objavljuje samo zato što si "
+            "kliknuo Objavi — kome ide, biraš izrijekom.",
             "**📁 Predlošci** čuvaju cijeli odabir — za seriju sličnih testova.",
         ],
         "pazi": [
@@ -42,6 +45,8 @@ UPUTE = {
             "**📋 Testovi** — popis objavljenih; otvori test za pregled s točnim odgovorima, "
             "**⏸️ Deaktiviraj** (učenik ga više ne vidi, rezultati ostaju), **📄 Kloniraj** ili 🗑️ obriši.",
             "**📊 Rezultati** — tko je predao, uspjeh po zadatku, po cjelinama, matrica učenik × zadatak, "
+            "Na vrhu je **🎯 Rezultati jednog testa** — svi koji su ga pisali, poredani po postotku, s prosjekom "
+            "po grupama/kantama i popisom onih koji **nisu predali** (to se prije nije vidjelo).",
             "matrica razreda, usporedba dvaju testova.",
             "**👤 Po učeniku** — povijest, slabe cjeline, promašeni zadaci, **🧠 profil po Bloom "
             "razinama**, gotov sažetak za roditelja (kopiraj u WhatsApp/mail).",

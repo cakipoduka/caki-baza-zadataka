@@ -52,6 +52,7 @@ _online = _importlib_util.module_from_spec(_spec_online)
 _spec_online.loader.exec_module(_online)
 del _spec_online
 
+PUBLIKE_UI = {"grupa": "👥 Grupa / kanta", "ucenici": "🧑 Pojedini učenici"}
 TEST_TAB = _online.TEST_TAB                 # "Testovi_zakazani"
 REZ_TAB = "Rezultati_testova"
 
@@ -497,6 +498,153 @@ def tablica_zapocelih(zapoceli):
 
 def _cjelina_zadatka(z) -> str:
     return _tekst((z or {}).get("cjelina")) or "— bez cjeline —"
+
+
+# ============================================================
+# 🎯 Rezultati JEDNOG testa — po učenicima i po grupama (22.10.2026.)
+# ============================================================
+
+def grupe_za_publiku(sheet) -> list[dict]:
+    """Sve grupe iz kojih se bira **kome ide test**: kante Mature + aktivne grupe Upisa.
+
+    Vraća [{"kod", "naziv", "ucenici": [{"ucenik_id", "ime_djeteta"}]}]. Greška u jednom izvoru
+    ne ruši drugi — grupa koja se ne pročita se preskoči (Caki mora moći objaviti test i ako
+    raspored Mature još nije upisan).
+    """
+    izlaz: list[dict] = []
+    try:
+        izlaz += [g for g in kante_mature(load_raspored_mature(sheet)) if (g or {}).get("ucenici")]
+    except Exception:                             # noqa: BLE001 — raspored nije obavezan
+        pass
+    try:
+        izlaz += [g for g in ucenici_upisa(load_grupe(sheet), load_rezervacije(sheet))
+                  if (g or {}).get("ucenici") and (g or {}).get("aktivna")]
+    except Exception:                             # noqa: BLE001 — Upisi nisu obavezni
+        pass
+    return izlaz
+
+
+def kolone_svih_testova(testovi) -> list[str]:
+    """Svi nazivi stupaca (test ili serija), najnoviji prvi — i oni bez ijedne predaje."""
+    seen, izlaz = {}, []
+    for i, t in enumerate(testovi or []):
+        k = kolona_testa(t)
+        if not k or k == "—" or k in seen:
+            continue
+        seen[k] = (_tekst(t.get("kreirano")) or _tekst(t.get("otvara_od")), i)
+        izlaz.append(k)
+    return sorted(izlaz, key=lambda k: seen[k], reverse=True)
+
+
+def pregled_testa(testovi, rezultati, kolona: str, kante=None) -> dict:
+    """Svi učenici koji su pisali JEDAN test (ili grupu redaka iste serije) — po učeniku i grupi.
+
+    Vraća redak po učeniku (bodovi, %, je li predao), sažetak (prosjek, medijan, najbolji,
+    najslabiji) i prosjek po grupi/kanti. `nije_pisalo` su učenici kojima je test dodijeljen, a
+    nisu predali — to je ono što se prije nije vidjelo.
+    """
+    ciljni = [t for t in testovi or [] if kolona_testa(t) == _tekst(kolona)]
+    if not ciljni:
+        return {"kolona": _tekst(kolona), "redci": [], "nije_pisalo": [], "po_grupi": [],
+                "pisalo": 0, "dodijeljeno": 0, "prosjek": 0, "medijan": 0,
+                "najbolji": None, "najslabiji": None}
+
+    ucenik_po_testu = {_tekst(t.get("test_id")): _tekst(t.get("ucenik_id")).upper()
+                       for t in ciljni if _tekst(t.get("test_id"))}
+    dodijeljeni, imena = {}, {}
+    for t in ciljni:
+        uid = _tekst(t.get("ucenik_id")).upper()
+        if uid:
+            dodijeljeni.setdefault(uid, 0)
+            imena.setdefault(uid, _tekst(t.get("ime_djeteta")))
+
+    grupa_ucenika = {}
+    for g in kante or []:
+        for u in (g or {}).get("ucenici") or []:
+            uid = _tekst(u.get("ucenik_id")).upper()
+            if uid:
+                grupa_ucenika.setdefault(uid, _tekst((g or {}).get("naziv")))
+
+    po_uceniku: dict[str, dict] = {}
+    for r in rezultati or []:
+        tid = _tekst(r.get("test_id"))
+        if tid not in ucenik_po_testu:
+            continue
+        uid = _tekst(r.get("ucenik_id")).upper() or ucenik_po_testu[tid]
+        if not uid:
+            continue
+        imena.setdefault(uid, _tekst(r.get("ime_djeteta")))
+        po_uceniku[uid] = r                  # više predaja: broji se ZADNJA (redoslijed u tabu)
+
+    redci = []
+    for uid in set(po_uceniku) | set(dodijeljeni):
+        r = po_uceniku.get(uid)
+        bodovi = float(r.get("bodovi") or 0) if r else 0.0
+        maks = float(r.get("bodovi_max") or 0) if r else 0.0
+        redci.append({
+            "ucenik_id": uid,
+            "ime": imena.get(uid) or uid,
+            "grupa": grupa_ucenika.get(uid, ""),
+            "predao": bool(r),
+            "bodovi": bodovi,
+            "bodovi_max": maks,
+            "postotak": _postotak(bodovi, maks) if r else None,
+        })
+    redci.sort(key=lambda x: (-(x["postotak"] if x["postotak"] is not None else -1), x["ime"]))
+
+    pisali = [x["postotak"] for x in redci if x["postotak"] is not None]
+    prosjek = int(round(sum(pisali) / len(pisali))) if pisali else 0
+    if pisali:
+        _s = sorted(pisali)
+        _n = len(_s)
+        medijan = int(round((_s[_n // 2] + _s[(_n - 1) // 2]) / 2))   # parni broj: prosjek dviju srednjih
+    else:
+        medijan = 0
+
+    po_grupi = {}
+    for x in redci:
+        if x["postotak"] is None:
+            continue
+        g = x["grupa"] or "— bez grupe —"
+        d = po_grupi.setdefault(g, {"grupa": g, "broj": 0, "zbroj": 0})
+        d["broj"] += 1
+        d["zbroj"] += x["postotak"]
+    grupe = [{"grupa": d["grupa"], "broj": d["broj"],
+              "prosjek": int(round(d["zbroj"] / d["broj"]))} for d in po_grupi.values()]
+    grupe.sort(key=lambda x: (-x["prosjek"], x["grupa"]))
+
+    return {
+        "kolona": _tekst(kolona),
+        "redci": redci,
+        "pisalo": len(pisali),
+        "dodijeljeno": len(dodijeljeni),
+        "nije_pisalo": [x["ime"] for x in redci if not x["predao"]],
+        "prosjek": prosjek,
+        "medijan": medijan,
+        "najbolji": max(pisali) if pisali else None,
+        "najslabiji": min(pisali) if pisali else None,
+        "po_grupi": grupe,
+    }
+
+
+def tablica_pregleda_testa(rez) -> "object":
+    """Tablica za prikaz: mjesto, učenik, grupa, bodovi, %, status."""
+    import pandas as pd
+
+    redci = []
+    mjesto = 0
+    for x in (rez or {}).get("redci", []):
+        if x["postotak"] is not None:
+            mjesto += 1
+        redci.append({
+            "Mj.": mjesto if x["postotak"] is not None else "",
+            "Učenik": x["ime"],
+            "Grupa / kanta": x["grupa"],
+            "Bodovi": f"{x['bodovi']:g} / {x['bodovi_max']:g}" if x["predao"] else "—",
+            "%": x["postotak"] if x["postotak"] is not None else "",
+            "Status": "✅ predao" if x["predao"] else "⏳ nije predao",
+        })
+    return pd.DataFrame(redci)
 
 
 def uspjeh_po_cjelinama(test, rezultati) -> list[dict]:
@@ -1782,6 +1930,62 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
 
     # ------------------------------------------------ 📋 popis + uređivanje
     with tab_popis:
+        # 22.10.2026.: 🧾 NACRTI — test spremljen ali NEobjavljen (`aktivan=Ne`, `serija=NACRT`).
+        nacrti = [x for x in testovi or [] if _tekst(x.get("aktivan")).lower() in ("ne", "0", "false")]
+        if nacrti:
+            with st.expander(f"🧾 Nacrti — spremljeni, još neobjavljeni ({len(nacrti)})", expanded=False):
+                st.caption("Nacrt vidiš samo ti. Odaberi kome ide i objavi — učenici ga do tada ne vide.")
+                opcije_n = {_tekst(x.get("test_id")): x for x in nacrti if _tekst(x.get("test_id"))}
+                odabrani_n = st.selectbox(
+                    "Nacrt", list(opcije_n),
+                    format_func=lambda k: f"{_tekst(opcije_n[k].get('naziv')) or k} · "
+                                          f"{_tekst(opcije_n[k].get('broj_zadataka'))} zad.",
+                    key="ta_nacrt_odabir")
+                nacrt = opcije_n.get(odabrani_n) or {}
+                publika_n = st.radio("Kome objaviti", ["grupa", "ucenici"],
+                                     format_func=lambda k: PUBLIKE_UI[k], horizontal=True,
+                                     key="ta_nacrt_publika")
+                cilj_g = []
+                if publika_n == "grupa":
+                    sve_g = {g["kod"]: g for g in (list(kante or []) + list(grupe or []))
+                             if (g or {}).get("ucenici")}
+                    if not sve_g:
+                        st.caption("Nema grupa ni kanti s učenicima.")
+                    odab_g = st.multiselect(
+                        "Grupa / kanta", list(sve_g),
+                        format_func=lambda k: f"{sve_g[k].get('naziv', k)} ({len(sve_g[k]['ucenici'])} uč.)",
+                        key="ta_nacrt_grupe")
+                    cilj_g = [sve_g[k] for k in odab_g]
+                rucno_n = st.text_input("Ili šifre učenika (zarez)", key="ta_nacrt_sifre",
+                                        placeholder="AA1111, BB2222")
+                ucenici_n = []
+                for g in cilj_g:
+                    ucenici_n += list(g.get("ucenici") or [])
+                ucenici_n += [{"ucenik_id": x.strip().upper(), "ime_djeteta": ""}
+                              for x in _tekst(rucno_n).split(",") if x.strip()]
+                st.caption(f"Test ide za **{len({(u.get('ucenik_id') or '').upper() for u in ucenici_n})}** učenika.")
+                if st.button("📝 Objavi odabranima", key="ta_nacrt_objavi", type="primary",
+                             disabled=not ucenici_n):
+                    try:
+                        redci_n = _online.objavi_za_ucenike(
+                            sheet, zadaci=zadaci_iz_testa(nacrt), ucenici=ucenici_n,
+                            naziv=_tekst(nacrt.get("naziv")), predmet=_tekst(nacrt.get("predmet")),
+                            program=_tekst(nacrt.get("program")),
+                            trajanje_min=int(float(_tekst(nacrt.get("trajanje_min")) or 45)),
+                            otvara_od=_tekst(nacrt.get("otvara_od")),
+                            zatvara_do=_tekst(nacrt.get("zatvara_do")),
+                            serija=_tekst(nacrt.get("naziv")), autor=autor,
+                            napomena="Objavljeno iz nacrta " + _tekst(nacrt.get("test_id")),
+                            pomoc=_tekst(nacrt.get("pomoc")),
+                            formule=_tekst(nacrt.get("formule_json")),
+                            rad=_tekst(nacrt.get("rad")))
+                    except Exception as e:        # noqa: BLE001 — Caki mora vidjeti grešku
+                        st.error(f"Objava nije uspjela: {e}")
+                    else:
+                        st.success(f"✅ Objavljeno za **{len(redci_n)}** učenika. Nacrt ostaje "
+                                   "spremljen, pa ga možeš poslati i drugoj grupi.")
+                        st.rerun()
+
         st.dataframe(tablica_testova(testovi, rezultati), hide_index=True, width="stretch")
 
         opcije = {_tekst(t.get("test_id")): f"{_tekst(t.get('naziv'))} · {_tekst(t.get('test_id'))}"
@@ -1958,6 +2162,39 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
 
     # ------------------------------------------------ 📊 rezultati
     with tab_rezultati:
+        # 22.10.2026. (Cakijev zahtjev): pregled JEDNOG testa — svi koji su ga pisali, po učeniku
+        # i po grupi/kanti, uključivo one koji NISU predali.
+        with st.expander("🎯 Rezultati jednog testa — po učenicima i po grupama", expanded=True):
+            opcije_k = kolone_svih_testova(testovi)
+            if not opcije_k:
+                st.caption("Još nema objavljenih testova.")
+            else:
+                odabrana_k = st.selectbox("Test", opcije_k, key="ta_pregled_kolona",
+                                          help="Grupna objava (ista serija) gleda se kao jedan test.")
+                rez_t = pregled_testa(testovi, rezultati, odabrana_k, list(kante or []) + list(grupe or []))
+                if not rez_t["redci"]:
+                    st.caption("Za taj test još nema ni dodjele ni predaja.")
+                else:
+                    q1, q2, q3, q4 = st.columns(4)
+                    q1.metric("Predalo", f"{rez_t['pisalo']} / {rez_t['dodijeljeno'] or '—'}")
+                    q2.metric("Prosjek", f"{rez_t['prosjek']} %")
+                    q3.metric("Medijan", f"{rez_t['medijan']} %")
+                    q4.metric("Raspon", f"{rez_t['najslabiji'] or 0}–{rez_t['najbolji'] or 0} %")
+                    st.dataframe(tablica_pregleda_testa(rez_t), hide_index=True, width="stretch")
+                    if rez_t["nije_pisalo"]:
+                        st.warning("**Nije predalo ({n}):** {imena}".format(
+                            n=len(rez_t["nije_pisalo"]), imena=", ".join(rez_t["nije_pisalo"][:15])
+                            + (" …" if len(rez_t["nije_pisalo"]) > 15 else "")))
+                    if rez_t["po_grupi"]:
+                        st.caption("**Prosjek po grupama / kantama**")
+                        st.dataframe({"Grupa / kanta": [g["grupa"] for g in rez_t["po_grupi"]],
+                                      "Učenika": [g["broj"] for g in rez_t["po_grupi"]],
+                                      "Prosjek %": [g["prosjek"] for g in rez_t["po_grupi"]]},
+                                     hide_index=True, width="stretch")
+                    st.download_button(
+                        "⬇️ CSV — rezultati ovog testa",
+                        data=tablica_pregleda_testa(rez_t).to_csv(index=False).encode("utf-8-sig"),
+                        file_name="rezultati_testa.csv", mime="text/csv", key="ta_csv_pregled")
         with st.expander("🧮 Matrica razreda — svi učenici × posljednji testovi"):
             st.caption("Postotak po testu; grupna objava (serija) je jedan stupac. Prazno = "
                        "nije predao. Ako je učenik rješavao više puta, broji se zadnja predaja.")

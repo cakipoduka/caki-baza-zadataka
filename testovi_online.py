@@ -427,10 +427,102 @@ def _danas() -> date:
     return datetime.now().date()
 
 
+# ------------------------------------------------------------------------------------ publika
+# 22.10.2026. — Cakijev zahtjev: test se NE smije odmah vidjeti svima. Pri objavi se bira kome
+# ide, a zadano je NACRT (spremljen, ali ga ne vidi nitko) — da se slučajno ne pošalje cijelom
+# programu kad je trebao samo jednoj kanti Mature.
+NACRT = "NACRT"          # oznaka `serija` za neobjavljeni test (`aktivan="Ne"`)
+
+PUBLIKE = {
+    "nacrt": "🔒 Nacrt — spremi, ne vidi ga nitko",
+    "grupa": "👥 Grupa / kanta (Matura ili Upisi)",
+    "ucenici": "🧑 Pojedini učenici",
+    "svi": "🌍 Svi učenici programa",
+}
+
+
+def ucenici_publike(cilj_grupe=(), cilj_ucenici=()) -> list[dict]:
+    """Spoji odabrane grupe i pojedince u JEDAN popis učenika bez dvostrukih (`ucenik_id`).
+
+    Grupa je dict s `ucenici` = [{"ucenik_id", "ime_djeteta"}]; pojedinac isto. Redoslijed je
+    stabilan (prvo grupe, pa pojedinci), da test bude isti u svakom pokretanju.
+    """
+    izlaz: list[dict] = []
+    videno: set[str] = set()
+    for g in cilj_grupe or ():
+        for u in (g or {}).get("ucenici") or ():
+            uid = _tekst(u.get("ucenik_id")).upper()
+            if not uid or uid in videno:
+                continue
+            videno.add(uid)
+            izlaz.append({"ucenik_id": uid, "ime_djeteta": _tekst(u.get("ime_djeteta"))})
+    for u in cilj_ucenici or ():
+        uid = _tekst((u or {}).get("ucenik_id")).upper() if isinstance(u, dict) else _tekst(u).upper()
+        if not uid or uid in videno:
+            continue
+        videno.add(uid)
+        izlaz.append({"ucenik_id": uid,
+                      "ime_djeteta": _tekst((u or {}).get("ime_djeteta")) if isinstance(u, dict) else ""})
+    return izlaz
+
+
+def opis_publike(publika: str, cilj_grupe=(), ucenici=()) -> str:
+    """Kratak zapis u `napomena` — poslije se vidi kome je test stvarno objavljen."""
+    if publika == "nacrt":
+        return "NACRT — nije objavljeno"
+    if publika == "grupa":
+        return "Publika: " + ", ".join(_tekst((g or {}).get("naziv")) for g in cilj_grupe or ()) \
+               + f" ({len(ucenici)} uč.)"
+    if publika == "ucenici":
+        return f"Publika: {len(ucenici)} odabranih učenika"
+    return "Publika: svi učenici programa"
+
+
+def objavi_prema_publici(sheet, *, zadaci, naziv: str, predmet: str = "", publika: str = "nacrt",
+                         cilj_grupe=(), cilj_ucenici=(), program: str = "",
+                         trajanje_min=45, otvara_od: str = "", zatvara_do: str = "",
+                         autor: str = "", napomena: str = "", pomoc: str = "",
+                         formule: str = "", rad: str = "") -> dict:
+    """Objavi test prema odabranoj publici. Vraća {"redci": [...], "opis": str, "publika": str}.
+
+    `nacrt` upisuje JEDAN redak s `aktivan="Ne"` i `serija="NACRT"` — ne vidi ga nitko, a ostaje
+    u Sheetu da se poslije objavi bez ponovnog slaganja testa.
+    """
+    publika = publika if publika in PUBLIKE else "nacrt"
+    zajednicko = dict(zadaci=zadaci, naziv=naziv, predmet=predmet, trajanje_min=trajanje_min,
+                      otvara_od=otvara_od, zatvara_do=zatvara_do, autor=autor,
+                      pomoc=pomoc, formule=formule, rad=rad)
+
+    if publika == "nacrt":
+        redak = objavi_test(sheet, aktivan=False, serija=NACRT,
+                            napomena=(_tekst(napomena) + "\n" if _tekst(napomena) else "")
+                                      + opis_publike("nacrt"), **zajednicko)
+        return {"redci": [redak], "publika": publika, "opis": opis_publike("nacrt")}
+
+    if publika == "svi":
+        redak = objavi_test(sheet, program=program,
+                            napomena=(_tekst(napomena) + "\n" if _tekst(napomena) else "")
+                                      + opis_publike("svi"), **zajednicko)
+        return {"redci": [redak], "publika": publika, "opis": opis_publike("svi")}
+
+    ucenici = ucenici_publike(cilj_grupe, cilj_ucenici)
+    if not ucenici:
+        raise ValueError("Nije odabran nijedan učenik — test ne bi imao kome ići.")
+    opis = opis_publike(publika, cilj_grupe, ucenici)
+    redci = objavi_za_ucenike(sheet, ucenici=ucenici, serija=naziv,
+                              napomena=(_tekst(napomena) + "\n" if _tekst(napomena) else "") + opis,
+                              **zajednicko)
+    return {"redci": redci, "publika": publika, "opis": opis}
+
+
 def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki",
-                     formule_sheet=None) -> None:
+                     formule_sheet=None, grupe=None) -> None:
     """Odlomak na dnu Test Buildera: „Objavi kao online test”. `st` se predaje da modul
-    ostane uvoziv u testovima bez Streamlita."""
+    ostane uvoziv u testovima bez Streamlita.
+
+    `grupe` = [{"kod", "naziv", "ucenici": [{"ucenik_id", "ime_djeteta"}]}] — kante Mature i
+    grupe Upisa iz kojih Caki bira kome ide test (22.10.2026.). Bez njih ostaje samo nacrt i svi.
+    """
     import pandas as pd
 
     st.divider()
@@ -461,11 +553,53 @@ def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki",
 
     zadani_naziv = _tekst(st.session_state.get("naslov_dok")) or f"Test — {naziv_predmeta(predmet)}"
 
+    # 22.10.2026. (Cakijev zahtjev): prije je prazno polje značilo „svima" — test je odmah
+    # vidio cijeli program. Sada se KOME objavljuje bira izrijekom, a zadano je NACRT.
+    st.markdown("**Kome objavljujem**")
+    publika = st.radio("Kome objavljujem", list(PUBLIKE), format_func=lambda k: PUBLIKE[k],
+                       index=0, key="obj_publika", label_visibility="collapsed")
+    cilj_grupe, cilj_ucenici, program = [], [], ""
+
+    if publika == "grupa":
+        opcije_g = {g["kod"]: g for g in (grupe or []) if (g or {}).get("ucenici")}
+        if not opcije_g:
+            st.warning("Nema grupa ni kanti s učenicima — provjeri raspored Mature ili grupe Upisa.")
+        else:
+            odabrane = st.multiselect(
+                "Grupa / kanta", list(opcije_g),
+                format_func=lambda k: f"{opcije_g[k].get('naziv', k)} ({len(opcije_g[k]['ucenici'])} uč.)",
+                key="obj_grupe")
+            cilj_grupe = [opcije_g[k] for k in odabrane]
+            if cilj_grupe:
+                st.caption(f"Test će dobiti **{len(ucenici_publike(cilj_grupe))}** učenika.")
+    elif publika == "ucenici":
+        svi_u = {}
+        for g in grupe or []:
+            for u in (g or {}).get("ucenici") or ():
+                uid = _tekst(u.get("ucenik_id")).upper()
+                if uid:
+                    svi_u.setdefault(uid, _tekst(u.get("ime_djeteta")))
+        if svi_u:
+            odabrani_u = st.multiselect("Učenici", sorted(svi_u),
+                                        format_func=lambda k: f"{svi_u[k] or '—'} ({k})",
+                                        key="obj_ucenici")
+            cilj_ucenici = [{"ucenik_id": k, "ime_djeteta": svi_u.get(k, "")} for k in odabrani_u]
+        rucno = st.text_input("Ili šifre ručno (odvoji zarezom)", key="obj_sifre",
+                              placeholder="AA1111, BB2222")
+        for sifra in [x.strip().upper() for x in _tekst(rucno).split(",") if x.strip()]:
+            cilj_ucenici.append({"ucenik_id": sifra, "ime_djeteta": ""})
+        if cilj_ucenici:
+            st.caption(f"Test će dobiti **{len(ucenici_publike(cilj_ucenici=cilj_ucenici))}** učenika.")
+    elif publika == "svi":
+        program = st.selectbox("Program", PROGRAMI, key="obj_program")
+        st.warning("Ovo objavljuje **svim učenicima odabranog programa** — koristi kad test "
+                   "stvarno ide svima.", icon="⚠️")
+    else:
+        st.caption("🔒 Nacrt se sprema u Sheet, ali ga **ne vidi nijedan učenik**. Poslije ga "
+                   "objavljuješ u 📝 Testovi → 🧾 Nacrti.")
+
     with st.form("forma_objave_testa"):
         naziv = st.text_input("Naziv testa (vidi ga učenik)", value=zadani_naziv)
-        c1, c2 = st.columns(2)
-        ucenik_id = c1.text_input("Šifra učenika (prazno = svi)", placeholder="npr. AA1111")
-        program = c2.selectbox("Program (prazno = svi)", PROGRAMI)
         c3, c4, c5 = st.columns(3)
         trajanje = c3.number_input("Trajanje (minuta)", min_value=5, max_value=240, value=45, step=5)
         otvara = c4.date_input("Otvoren od", value=_danas(), format="DD.MM.YYYY")
@@ -521,22 +655,28 @@ def prikazi_objavu(st, sheet, odabrani, predmet: str, autor: str = "Caki",
                 st.error(g)
         else:
             try:
-                redak = objavi_test(
-                    sheet, zadaci=zadaci, naziv=naziv, predmet=predmet,
-                    ucenik_id=ucenik_id, program=program, trajanje_min=trajanje,
-                    otvara_od=str(otvara), zatvara_do=str(zatvara), autor=autor,
-                    napomena=napomena, pomoc="Da" if pomoc else "Ne",
-                    formule=_formule_json,
-                    rad="Da" if rad else "Ne",
+                rez = objavi_prema_publici(
+                    sheet, zadaci=zadaci, naziv=naziv, predmet=predmet, publika=publika,
+                    cilj_grupe=cilj_grupe, cilj_ucenici=cilj_ucenici, program=program,
+                    trajanje_min=trajanje, otvara_od=str(otvara), zatvara_do=str(zatvara),
+                    autor=autor, napomena=napomena, pomoc="Da" if pomoc else "Ne",
+                    formule=_formule_json, rad="Da" if rad else "Ne",
                 )
             except Exception as e:  # noqa: BLE001 — Caki mora vidjeti što je Google rekao
                 st.error(f"Objava nije uspjela: {e}")
             else:
-                st.success(
-                    f"✅ Test je objavljen. **ID: `{redak['test_id']}`** · "
-                    f"{redak['broj_zadataka']} zadataka · {redak['bodovi_ukupno']:g} bodova · "
-                    f"otvoren {redak['otvara_od']} – {redak['zatvara_do']}."
-                )
+                prvi = rez["redci"][0]
+                if rez["publika"] == "nacrt":
+                    st.info(f"🔒 **Spremljeno kao nacrt** (ID `{prvi['test_id']}`). Test je u "
+                            "Sheetu, ali ga **ne vidi nijedan učenik**. Objavi ga kad budeš "
+                            "spreman — 📝 Testovi → 🧾 Nacrti.", icon="🔒")
+                else:
+                    st.success(
+                        f"✅ Objavljeno: **{len(rez['redci'])} učenika** · {prvi['broj_zadataka']} "
+                        f"zadataka · {prvi['bodovi_ukupno']:g} bodova · otvoren "
+                        f"{prvi['otvara_od']} – {prvi['zatvara_do']}.\n\n{rez['opis']}.")
+                    st.caption("Učenici ga vide u Moj CAKI → 📝 Testovi unutar razdoblja. Rezultati "
+                               "se upisuju u `Rezultati_testova` (isti CRM Sheet).")
                 st.caption("Učenik ga vidi u Moj CAKI → 📝 Testovi. Rezultati se upisuju u "
                            "`Rezultati_testova` (isti CRM Sheet).")
 
