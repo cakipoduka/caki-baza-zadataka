@@ -301,6 +301,11 @@ def _ocisti_ai_podjelu(redak: dict, podaci: dict):
 
 def _predlozi_cijepanje_ai(redak: dict, sheet=None):
     """Kao determinističko cijepanje, ali podjelu predlaže AI (samo kad deterministički ne ide)."""
+    # 25.10.2026. — PRESUDNO: AI smije raditi SAMO na kandidatima (2+ oznake u tekstu).
+    # Prije ovoga AI se zvao za SVE retke, pa je za obične zadatke s jednim pitanjem vraćao
+    # 1 dio i sve je padalo na provjeri ("1 dijelova (treba 2+)").
+    if not pz.je_kandidat(redak):
+        return None
     if pz.podijeli(redak) is not None:
         return None                                   # deterministički zna - ne troši AI
     import os
