@@ -81,6 +81,35 @@ def _pokreni_radnika(**ulazi) -> tuple[bool, str]:
     return False, f"GitHub je vratio grešku {r.status_code}."
 
 
+def _zadnji_poslovi(limit: int = 5) -> list:
+    """Zadnjih N pokretanja workflowa `radnik.yml` (status + link). Prazno ako ne radi."""
+    token = str(st.secrets.get("GITHUB_DISPATCH_TOKEN", "")).strip()
+    if not token:
+        return []
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{GITHUB_WORKFLOW}/runs"
+    try:
+        r = requests.get(url, headers={"Authorization": f"Bearer {token}",
+                                       "Accept": "application/vnd.github+json"},
+                         params={"per_page": limit}, timeout=20)
+        if r.status_code != 200:
+            return [{"naziv": f"GitHub greška {r.status_code}", "status": "", "zakljucak": "",
+                     "kada": "", "link": ""}]
+        redci = []
+        for run in r.json().get("workflow_runs", [])[:limit]:
+            redci.append({
+                "kada": str(run.get("created_at", ""))[:16].replace("T", " "),
+                "status": run.get("status", ""),
+                "zakljucak": run.get("conclusion") or "—",
+                "grana": run.get("head_branch", ""),
+                "link": run.get("html_url", ""),
+                "naziv": f"{run.get('id', '')}",
+            })
+        return redci
+    except Exception as e:                                  # noqa: BLE001
+        return [{"naziv": f"Nije moguće kontaktirati GitHub ({type(e).__name__})", "status": "",
+                 "zakljucak": "", "kada": "", "grana": "", "link": ""}]
+
+
 def _tab_ili_nista(sheet, naziv):
     try:
         return sheet.worksheet(naziv)
@@ -94,6 +123,8 @@ st.title("✂️ Cijepanje zadataka na podpitanja")
 st.caption("Posao radi radnik na GitHub Actions — stranicu možeš zatvoriti, posao se nastavlja.")
 
 _sheet_id = pc.sheet_id(predmet, st.secrets)
+st.caption(f"Sheet: …{_sheet_id[-10:]} (predmet `{predmet}`) — radnik na GitHubu koristi "
+           f"SVOJ `SHEET_ID` iz GitHub Secrets; za pilot oba moraju pokazivati istu bazu.")
 redci = _redci(predmet, _sheet_id)
 a = pz.analiza(redci)
 
@@ -157,7 +188,20 @@ with tab_log:
     ws_log = _tab_ili_nista(sheet, rd.LOG_TAB)
     if ws_stanje is None:
         st.caption("Radnik još nije pokretan (nema taba `Radnik_stanje`).")
-    else:
+        st.info("Ako si gore kliknuo 🚀, pogledaj **zadnja pokretanja** niže: ako posao nije na "
+                "popisu, workflow `radnik.yml` nije na grani main (push s tokenom koji nema "
+                "pravo `workflow`); ako je pao, u logu piše razlog (najčešće `SHEET_ID` ili "
+                "servisni račun nije podijeljen s bazom).")
+    if st.button("🔄 Provjeri zadnja pokretanja radnika"):
+        poslovi = _zadnji_poslovi()
+        if not poslovi:
+            st.warning("Nema podataka (nedostaje GITHUB_DISPATCH_TOKEN u Secrets).")
+        else:
+            st.dataframe(poslovi, hide_index=True, width="stretch")
+            for p in poslovi:
+                if p.get("link"):
+                    st.markdown(f"- [{p['kada']} — {p['zakljucak']}]({p['link']})")
+    if ws_stanje is not None:
         try:
             stanja = ws_stanje.get_all_records()
         except Exception:                                  # noqa: BLE001

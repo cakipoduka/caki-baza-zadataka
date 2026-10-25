@@ -289,7 +289,9 @@ def main(argv=None) -> int:
                 redci = redci[i + 1:]
                 break
 
-    postavi_stanje(ws_stanje, serija, args.posao, args.predmet, zadnji_id, obradeno, "u_tijeku")
+    # U isprobavanju se NE piše ništa, ni stanje — da probni prolaz ne ostavi trag u bazi.
+    if not args.isprobaj:
+        postavi_stanje(ws_stanje, serija, args.posao, args.predmet, zadnji_id, obradeno, "u_tijeku")
     print(f"Radnik: posao={args.posao} predmet={args.predmet} serija={serija} "
           f"nastavak={bool(zadnji_id)} isprobaj={args.isprobaj}")
 
