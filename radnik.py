@@ -342,7 +342,11 @@ def main(argv=None) -> int:
         return 2
 
     ws_zadaci = sheet.worksheet(ZADACI_TAB)
-    headers, redci = ucitaj_zadatke(ws_zadaci)
+    headers, svi_redci = ucitaj_zadatke(ws_zadaci)
+    # BROJ RETKA se veže uz podatke PRIJE ikakvog filtriranja i nastavljanja - inače filtrirani
+    # popis počinje od 2 i upisi slete na POGREŠNE retke (greška otkrivena 25.10.2026. na kopiji:
+    # 317 tuđih redaka dobilo je uloga=skupina). Zato se dalje radi s (broj, redak) parovima.
+    redci = list(enumerate(svi_redci, start=2))
     ws_stanje = osiguraj_tab(sheet, STANJE_TAB, STANJE_HEADERS)
     ws_log = osiguraj_tab(sheet, LOG_TAB, LOG_HEADERS)
 
@@ -353,7 +357,7 @@ def main(argv=None) -> int:
 
     # nastavak: preskoči sve do (uključivo) zadnjeg obrađenog retka
     if zadnji_id:
-        for i, r in enumerate(redci):
+        for i, (_br, r) in enumerate(redci):
             if _s(r.get("id")) == zadnji_id:
                 redci = redci[i + 1:]
                 break
@@ -366,12 +370,13 @@ def main(argv=None) -> int:
 
     if args.izvor:
         prije_filter = len(redci)
-        redci = [r for r in redci if args.izvor.lower() in _s(r.get("izvor_naziv")).lower()]
+        redci = [(br, r) for br, r in redci
+                 if args.izvor.lower() in _s(r.get("izvor_naziv")).lower()]
         print(f"Filter izvora '{args.izvor}': {len(redci)} od {prije_filter} redaka.")
 
     azuriranja, novi_redci, log_promjene, preskoceno = [], [], [], 0
     ukupno = 0
-    for br, redak in enumerate(redci, start=2):
+    for br, redak in redci:
         if args.limit and ukupno >= args.limit:
             break
         rid = _s(redak.get("id"))
@@ -386,6 +391,10 @@ def main(argv=None) -> int:
         if not posao["provjeri"](redak, promjene):
             preskoceno += 1
             continue
+        if _s(svi_redci[br - 2].get("id")) != rid:
+            raise RuntimeError(
+                f"Ne slaže se redak {br}: očekivan '{rid}', u Sheetu je "
+                f"'{_s(svi_redci[br - 2].get('id'))}'. Ništa nije upisano.")
         azuriranja.append({"redak": br, "polja": promjene["polja"]})
         novi_redci.extend(promjene["novi_redci"])
         log_promjene.extend(promjene["log"])
