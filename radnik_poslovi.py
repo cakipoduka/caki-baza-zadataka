@@ -140,11 +140,22 @@ Shema: {"uvod": "...", "dijelovi": [{"oznaka": "a", "tekst": "...", "rjesenje": 
 
 
 def _norm_za_usporedbu(tekst: str) -> str:
-    """Isto pravilo kao u podjela_zadataka.norm: slova/brojke/formule, bez oznaka i praznina."""
+    """Sadržaj za usporedbu: slova, brojke, formule i operatori — bez interpunkcije i praznina.
+
+    Zašto ovako: model (i kad doslovno prepisuje) promijeni pokoju interpunkciju, razmak ili
+    završni znak — pa bi provjera "znak po znak" odbila SVE predloge (viđeno 25.10.2026.).
+    Zato se uspoređuje SADRŽAJ: `$x=2$,` i `$x=2$` su isto, a `$x=3$` nije. Izmišljena riječ,
+    broj ili formula i dalje se vide.
+    """
     t = _s(tekst).lower()
     t = t.replace("\\newline", "").replace("\\\\", "").replace("<br>", "")
-    t = t.replace(")", "").replace("\\", "")
-    return re.sub(r"\s+", "", t)
+    # LaTeX kozmetika koju model rutinski "popravi" - ne mijenja značenje, pa se izjednači
+    for a, b in (("\\dfrac", "\\frac"), ("\\tfrac", "\\frac"), ("\\le", "\\leq"),
+                 ("\\ge", "\\geq"), ("\\left", ""), ("\\right", ""), ("\\displaystyle", ""),
+                 ("\\,", ""), ("\\;", ""), ("\\!", ""), ("{,}", ".")):
+        t = t.replace(a, b)
+    t = re.sub(r"[\s.,;:!?()\[\]{}\"'„“”‚‘’–—~\\]+", "", t)
+    return t
 
 
 def _pozovi_ai(sistem: str, korisnik: str, model: str) -> str:
@@ -254,13 +265,30 @@ def _ocisti_ai_podjelu(redak: dict, podaci: dict):
         ocisceni.append({"oznaka": oznaka, "tekst": deo_teksta, "rjesenje": deo_rjesenja,
                          "konacan_odgovor": odgovor})
 
-    # doslovnost: uvod + oznake + dijelovi moraju dati izvorni tekst (oznaka je u izvorniku
-    # dio teksta kao "a)" — zato se u usporedbu uključuje i oznaka, bez zagrade)
-    sastavljeno = _norm_za_usporedbu(uvod) + "".join(
-        _norm_za_usporedbu(d["oznaka"]) + _norm_za_usporedbu(d["tekst"]) for d in ocisceni)
-    if sastavljeno != _norm_za_usporedbu(tekst):
+    # doslovnost (25.10.2026. popravljeno): svaki dio MORA postojati u izvornom tekstu, i to
+    # REDOM. Time se izmišljeni tekst odbija, a promijenjena interpunkcija više ne ruši predlog.
+    izvor = _norm_za_usporedbu(tekst)
+    poz = 0
+    pokriveno = 0
+    for d in ocisceni:
+        dio = _norm_za_usporedbu(d["tekst"])
+        if not dio:
+            return None
+        i = izvor.find(dio, poz)
+        if i == -1:
+            print("AI predlog odbijen: dio teksta ne postoji u izvorniku.")
+            return None
+        poz = i + len(dio)
+        pokriveno += len(dio)
+    if _norm_za_usporedbu(uvod) and _norm_za_usporedbu(uvod) not in izvor:
+        print("AI predlog odbijen: uvod nije iz izvornika.")
+        return None
+    ukupno_pokriveno = pokriveno + len(_norm_za_usporedbu(uvod))
+    if ukupno_pokriveno < 0.6 * len(izvor):
+        print(f"AI predlog odbijen: pokriveno {ukupno_pokriveno}/{len(izvor)} znakova izvornika.")
         return None
     return uvod, ocisceni
+
 
 
 def _predlozi_cijepanje_ai(redak: dict, sheet=None):
@@ -282,7 +310,14 @@ def _predlozi_cijepanje_ai(redak: dict, sheet=None):
         return None
     podaci = _json_iz_odgovora(odgovor)
     if not podaci:
-        print("AI odgovor nije JSON; zadatak preskočen.")
+        try:
+            odgovor = _pozovi_ai(AI_SISTEM, korisnik + "\n\nVAŽNO: vrati SAMO JSON objekt.",
+                                 model)
+            podaci = _json_iz_odgovora(odgovor)
+        except Exception:                          # noqa: BLE001
+            podaci = None
+    if not podaci:
+        print("AI odgovor nije JSON ni nakon ponovnog pokušaja; zadatak preskočen.")
         return None
     rezultat = _ocisti_ai_podjelu(redak, podaci)
     if not rezultat:
