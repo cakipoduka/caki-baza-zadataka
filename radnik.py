@@ -39,6 +39,32 @@ LOG_HEADERS = ["serija", "vrijeme", "posao", "predmet", "id", "polje", "staro", 
 
 PAKET = 50            # koliko promjena ide u jednom pozivu prema Sheetu
 PAUZA_S = 1.0         # pauza između paketa (kvota: ~60 upisa/min)
+PONOVI_NA_429 = (20, 40, 60, 90, 120)     # čekanja između pokušaja kad Google vrati kvotu
+
+
+def _mozda_kvota(greska) -> bool:
+    """Je li greška 429 (kvota) ili 5xx (Google privremeno nedostupan)."""
+    tekst = str(greska)
+    return ("429" in tekst) or ("Quota exceeded" in tekst) or ("[500]" in tekst) or ("[503]" in tekst)
+
+
+def s_pauzom(funkcija, *args, **kwargs):
+    """Pozovi upis prema Sheetu, ali kod kvote (429) pričekaj i pokušaj ponovno.
+
+    Zašto: Google dopušta ~60 upisa/min po korisniku; undo 50 zadataka znači ~600 ćelija, pa
+    bez pauze i ponovnog pokušaja posao pukne na pola (prvi pravi undo je to i pokazao).
+    """
+    zadnja = None
+    for cekanje in (0,) + PONOVI_NA_429:
+        if cekanje:
+            time.sleep(cekanje)
+        try:
+            return funkcija(*args, **kwargs)
+        except Exception as e:                            # noqa: BLE001
+            if not _mozda_kvota(e):
+                raise
+            zadnja = e
+    raise zadnja
 
 
 def _s(vrijednost) -> str:
@@ -163,14 +189,49 @@ def primijeni(ws_zadaci, headers: list, azuriranja: list, novi_redci: list) -> t
                 paket.append({"range": f"{_slovo(idx)}{a['redak']}",
                               "values": [[vrijednost]]})
         if paket:
-            ws_zadaci.batch_update(paket, value_input_option="RAW")
+            s_pauzom(ws_zadaci.batch_update, paket, value_input_option="RAW")
             izmijenjeno += len(azuriranja[i:i + PAKET])
         time.sleep(PAUZA_S)
     for i in range(0, len(novi_redci), PAKET):
-        ws_zadaci.append_rows([[r.get(h, "") for h in headers] for r in novi_redci[i:i + PAKET]],
-                              value_input_option="RAW")
+        s_pauzom(ws_zadaci.append_rows,
+                 [[r.get(h, "") for h in headers] for r in novi_redci[i:i + PAKET]],
+                 value_input_option="RAW")
         time.sleep(PAUZA_S)
     return izmijenjeno, len(novi_redci)
+
+
+def obrisi_retke(ws, brojevi: list) -> int:
+    """Obriši retke po brojevima JEDNIM batchUpdate pozivom (ne red po red — kvota!).
+
+    Grupira uzastopne retke u raspone i briše ODOZDO PREMA GORE, da pomicanje redaka ne pokvari
+    indekse preostalih raspona. Ovo je popravak prvog pravog undo-a (429 kvota, 22.10.2026.):
+    brisanje 285 redaka "red po red" potroši cijelu minutu kvote samo na to.
+    """
+    brojevi = sorted(set(int(b) for b in brojevi if b and int(b) > 1))
+    if not brojevi:
+        return 0
+    rasponi = []
+    pocetak = prethodni = brojevi[0]
+    for b in brojevi[1:]:
+        if b == prethodni + 1:
+            prethodni = b
+            continue
+        rasponi.append((pocetak, prethodni))
+        pocetak = prethodni = b
+    rasponi.append((pocetak, prethodni))
+
+    sheet_id = getattr(ws, "id", None)
+    if sheet_id is None:                                    # lažni list u testovima
+        for br in sorted(brojevi, reverse=True):
+            ws.delete_rows(br)
+        return len(brojevi)
+
+    zahtjevi = [{"deleteDimension": {"range": {"sheetId": sheet_id, "dimension": "ROWS",
+                                               "startIndex": p - 1, "endIndex": k}}}
+                for p, k in rasponi]
+    for i in range(0, len(zahtjevi), 100):
+        s_pauzom(ws.spreadsheet.batch_update, {"requests": zahtjevi[::-1][i:i + 100]})
+    return len(brojevi)
 
 
 def vrati_seriju(sheet, serija: str) -> dict:
@@ -188,10 +249,9 @@ def vrati_seriju(sheet, serija: str) -> dict:
     ws = sheet.worksheet(ZADACI_TAB)
     headers, redci = ucitaj_zadatke(ws)
     redak_po_id = {_s(r.get("id")): br for br, r in enumerate(redci, start=2) if _s(r.get("id"))}
-    id_stupac = _stupac(headers, "id")
 
     brisati = []
-    vraceno = 0
+    celije = []
     for z in log:
         rid = _s(z.get("id"))
         if _s(z.get("polje")) == "+redak":
@@ -202,12 +262,15 @@ def vrati_seriju(sheet, serija: str) -> dict:
         idx = _stupac(headers, _s(z.get("polje")))
         if not br or idx < 0:
             continue
-        ws.update(values=[[_s(z.get("staro"))]], range_name=f"{_slovo(idx)}{br}", value_input_option="RAW")
-        vraceno += 1
+        celije.append({"range": f"{_slovo(idx)}{br}", "values": [[_s(z.get("staro"))]]})
 
-    for br in sorted(set(brisati), reverse=True):
-        ws.delete_rows(br)
-    return {"vraceno_polja": vraceno, "obrisano_redaka": len(set(brisati))}
+    # Vraćanje u PAKETIMA (jedan poziv = jedan upis prema Googleu, ne 600)
+    for i in range(0, len(celije), PAKET):
+        s_pauzom(ws.batch_update, celije[i:i + PAKET], value_input_option="RAW")
+        time.sleep(PAUZA_S)
+
+    obrisano = obrisi_retke(ws, brisati)
+    return {"vraceno_polja": len(celije), "obrisano_redaka": obrisano}
 
 
 # ---------------------------------------------------------------------------------------------
