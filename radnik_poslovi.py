@@ -235,16 +235,19 @@ def _ocisti_ai_podjelu(redak: dict, podaci: dict):
       - barem 2 dijela, svaki s tekstom, oznake jedinstvene.
     """
     if not isinstance(podaci, dict):
+        print("AI predlog odbijen: odgovor nije JSON objekt.")
         return None
     tekst = _s(redak.get("tekst_zadatka_latex"))
     rjesenje = _s(redak.get("rjesenje"))
     uvod = _s(podaci.get("uvod"))
     dijelovi = podaci.get("dijelovi")
     if not isinstance(dijelovi, list) or len(dijelovi) < 2:
+        print(f"AI predlog odbijen: {len(dijelovi) if isinstance(dijelovi, list) else 0} dijelova (treba 2+).")
         return None
 
     ocisceni = []
     oznake = set()
+    odbaceno_rjesenje = False
     for d in dijelovi:
         if not isinstance(d, dict):
             return None
@@ -253,10 +256,15 @@ def _ocisti_ai_podjelu(redak: dict, podaci: dict):
         deo_rjesenja = _s(d.get("rjesenje"))
         odgovor = _s(d.get("konacan_odgovor"))
         if not oznaka or not deo_teksta or oznaka in oznake:
+            print(f"AI predlog odbijen: dio bez oznake/teksta ili dupla oznaka ({oznaka!r}).")
             return None
         oznake.add(oznaka)
         if deo_rjesenja and _norm_za_usporedbu(deo_rjesenja) not in _norm_za_usporedbu(rjesenje):
-            return None                      # izmišljeno rješenje - odbij
+            # Rješenje nije doslovno iz izvora (model ga često prepriča). NE odbijamo cijeli
+            # zadatak (tekst je provjeren!) — samo odbacimo taj dio rješenja i označimo.
+            deo_rjesenja = ""
+            odgovor = ""
+            odbaceno_rjesenje = True
         if odgovor and (not deo_rjesenja
                         or _norm_za_usporedbu(odgovor) not in _norm_za_usporedbu(deo_rjesenja)):
             # kratak odgovor mora biti u rjesenju TOG dijela (ne bilo gdje u cijelom rjesenju -
@@ -326,13 +334,14 @@ def _predlozi_cijepanje_ai(redak: dict, sheet=None):
     uvod, dijelovi = rezultat
 
     roditelj_id = _s(redak.get("id"))
+    napomena = "RAZDVOJENO: " + ", ".join(f"{d['oznaka']})" for d in dijelovi) + "; AI podjela (provjereno)"
+    if _s(redak.get("rjesenje")) and not any(d["rjesenje"] for d in dijelovi):
+        napomena += "; RJESENJE: AI nije doslovno prepoznao dio rješenja"
     polja = {
         "uloga": "skupina",
         "tekst_zadatka_latex": uvod,
         "tekst_zadatka_mathjax": uvod.replace("\\\\", "<br>"),
-        "status_provjere": _dodaj_napomenu(
-            redak.get("status_provjere"),
-            "RAZDVOJENO: " + ", ".join(f"{d['oznaka']})" for d in dijelovi) + "; AI podjela (provjereno)"),
+        "status_provjere": _dodaj_napomenu(redak.get("status_provjere"), napomena),
     }
     novi_redci = [_redak_stavke(redak, d["oznaka"], d["tekst"], d["rjesenje"],
                                 d["konacan_odgovor"], "", roditelj_id)
