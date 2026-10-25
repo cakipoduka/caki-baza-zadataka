@@ -28,7 +28,7 @@ def _dodaj_napomenu(tekst: str, napomena: str) -> str:
 
 
 def _redak_stavke(redak: dict, oznaka: str, tekst: str, rjesenje: str, odgovor: str,
-                  bodovi, roditelj_id: str) -> dict:
+                  bodovi, roditelj_id: str, napomena: str = "") -> dict:
     """Novi redak stavke: kopija roditeljevih podataka + vlastiti tekst, rješenje i oznaka."""
     novi = dict(redak)
     novi.update({
@@ -47,7 +47,8 @@ def _redak_stavke(redak: dict, oznaka: str, tekst: str, rjesenje: str, odgovor: 
         "slika_zadana": "ne",
         "slika_putanja": "",
         "slika_rjesenje_putanja": "",
-        "status_provjere": _s(redak.get("status_provjere")),
+        "status_provjere": _dodaj_napomenu(redak.get("status_provjere"), napomena) if napomena
+                           else _s(redak.get("status_provjere")),
     })
     return novi
 
@@ -77,7 +78,8 @@ def _predlozi_cijepanje(redak: dict, sheet=None):
         ),
     }
     novi_redci = [_redak_stavke(redak, s["oznaka"], s["tekst"], s["rjesenje"],
-                                s["konacan_odgovor"], s["max_bodovi"], roditelj_id)
+                                s["konacan_odgovor"], s["max_bodovi"], roditelj_id,
+                                napomena=s.get("napomena", ""))
                   for s in p["stavke"]]
     log = [{"id": roditelj_id, "polje": k, "staro": _s(redak.get(k)), "novo": _s(v)}
            for k, v in polja.items()]

@@ -247,10 +247,16 @@ def podijeli(redak: dict) -> dict | None:
         bodovi = po_dijelu
         if ukupno_bodova and i == len(dijelovi) - 1:      # ostatak zaokruživanja na zadnji dio
             bodovi = round(ukupno_bodova - po_dijelu * (len(dijelovi) - 1), 2)
+        napomena_dijela = ""
+        if rjesenja_po_oznaci and not dio_rjesenja:
+            # izvor ima rješenja po oznakama, ali za OVAJ dio je prazno — tipično crtež koji
+            # OCR/uvoz nije prenio (npr. "1) 2) ... 4) ∅"). Ne izmišljamo: samo označimo.
+            napomena_dijela = "RJESENJE: prazno u izvoru (vjerojatno crtež)"
         stavke.append({
             "oznaka": oznaka,
             "tekst": sadrzaj,
             "rjesenje": dio_rjesenja,
+            "napomena": napomena_dijela,
             "konacan_odgovor": kratki_odgovor(dio_rjesenja) if dio_rjesenja else "",
             "max_bodovi": bodovi,
         })
@@ -262,13 +268,19 @@ def podijeli(redak: dict) -> dict | None:
     if abs(zbroj - izvorno) > max(3, izvorno // 200):
         return None                     # maskiranje/rezanje ne slaže - ne upisuj
 
+    bez_rjesenja = [s["oznaka"] for s in stavke if s["napomena"]]
+    if bez_rjesenja:
+        napomene.append("RJESENJE: bez rješenja u izvoru za " + ", ".join(f"{o})" for o in bez_rjesenja)
+                        + " (vjerojatno crtež)")
+
     return {
         "id": str(redak.get("id") or "").strip(),
         "uvod": uvod,
         "oznake": [o for o, _ in dijelovi],
         "stavke": stavke,
         "napomene": napomene,
-        "sigurno": bool(rjesenja_po_oznaci) and not any("nedostaje" in n for n in napomene),
+        "sigurno": (bool(rjesenja_po_oznaci) and not bez_rjesenja
+                    and not any("nedostaje" in n for n in napomene)),
     }
 
 
