@@ -104,6 +104,32 @@ def _razdvoji_po_oznakama(tekst: str, oznake: list[tuple[str, int]]) -> tuple[st
 # Kratki odgovor iz dijela rješenja — samo kad je JEDNOZNAČAN, inače prazno (nikad se ne pogađa)
 # ---------------------------------------------------------------------------------------------
 
+_RUBOVI = re.compile(r"(?:\s|\\newline|\\par|\\\\|<br\s*/?>|~)+", re.I)
+
+
+def ocisti_rubove(tekst: str) -> str:
+    """Skini s početka i kraja ostatke prijeloma retka (`\\newline`, `\\\\`, `<br>`, `~`).
+
+    Zašto: uvezeni zadaci (npr. matura `B2010_jesenski_...`) dijelove odvajaju s `\\newline`, pa
+    nakon rezanja uvodu i dijelovima ostane taj rep i u aplikaciji se vidi kao doslovan tekst.
+    22.10.2026.: uočeno na prvom pravom prolazu radnika.
+    """
+    t = tekst or ""
+    for _ in range(3):
+        novi = t.strip()
+        for rep in ("\\newline", "\\par", "\\\\", "<br>", "<br/>", "<br />", "~"):
+            if novi.lower().endswith(rep):
+                novi = novi[: -len(rep)]
+            if novi.lower().startswith(rep):
+                novi = novi[len(rep):]
+        novi = novi.strip()
+        novi = novi.rstrip("\\").rstrip()      # ostatak prekinutog `\newline` (npr. "\n\")
+        if novi == t:
+            break
+        t = novi
+    return t
+
+
 def _bez_latex_kratica(tekst: str) -> str:
     """Ukloni LaTeX kratice (\\cdot, \\dfrac, \\left…) — ostaju samo 'prave' riječi."""
     t = re.sub(r"\\[a-zA-Z]+", " ", tekst or "")
@@ -184,16 +210,19 @@ def podijeli(redak: dict) -> dict | None:
     oznake_teksta = nadi_oznake(tekst)
     if len(oznake_teksta) < 2:
         return None
-    uvod, dijelovi = _razdvoji_po_oznakama(tekst, oznake_teksta)
-    if any(not sadrzaj for _, sadrzaj in dijelovi):
+    uvod_sirov, dijelovi_sirov = _razdvoji_po_oznakama(tekst, oznake_teksta)
+    if any(not sadrzaj for _, sadrzaj in dijelovi_sirov):
         return None                     # prazan dio (npr. "a) b) ...") - ne diraj, čeka pregled
+    # čišćenje rubova je kozmetika (odvajači `\newline` i sl.) — provjera gubitka radi na sirovom
+    uvod = ocisti_rubove(uvod_sirov)
+    dijelovi = [(o, ocisti_rubove(s)) for o, s in dijelovi_sirov]
 
     napomene = []
     oznake_rjesenja = nadi_oznake(rjesenje) if rjesenje else []
     rjesenja_po_oznaci: dict[str, str] = {}
     if oznake_rjesenja and [o for o, _ in oznake_rjesenja] == [o for o, _ in oznake_teksta]:
         _, dijelovi_rj = _razdvoji_po_oznakama(rjesenje, oznake_rjesenja)
-        rjesenja_po_oznaci = {o: s for o, s in dijelovi_rj}
+        rjesenja_po_oznaci = {o: ocisti_rubove(s) for o, s in dijelovi_rj}
     elif rjesenje:
         return None                     # rješenje nije po istim oznakama - treba AI/pregled
     else:
@@ -228,7 +257,7 @@ def podijeli(redak: dict) -> dict | None:
 
     # provjera: ništa se ne smije izgubiti (uvod + dijelovi ≈ izvorni tekst, bez oznaka/razmaka)
     bez = lambda s: re.sub(r"\s+", "", s or "")                      # noqa: E731
-    zbroj = len(bez(uvod)) + sum(len(bez(s)) for _, s in dijelovi)
+    zbroj = len(bez(uvod_sirov)) + sum(len(bez(s)) for _, s in dijelovi_sirov)
     izvorno = len(bez(tekst)) - sum(len(o) + 1 for o, _ in oznake_teksta)
     if abs(zbroj - izvorno) > max(3, izvorno // 200):
         return None                     # maskiranje/rezanje ne slaže - ne upisuj

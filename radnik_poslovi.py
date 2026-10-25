@@ -66,11 +66,15 @@ def _predlozi_cijepanje(redak: dict, sheet=None):
         "uloga": "skupina",
         "tekst_zadatka_latex": uvod,
         "tekst_zadatka_mathjax": uvod.replace("\\\\", "<br>"),
-        "rjesenje": "",
-        "rjesenje_status": "",
-        "konacan_odgovor": "",
-        "status_provjere": _dodaj_napomenu(redak.get("status_provjere"),
-                                          "RAZDVOJENO: " + ", ".join(f"{o})" for o in p["oznake"])),
+        # 22.10.2026.: rješenje i konačni odgovor NE brišu se s roditelja (prvi pravi prolaz je
+        # pokazao da se time gubi podatak, npr. "19.7907 km" kod B2010_jesenski_021). Ostaju na
+        # skupini kao zapis; stavke nose svoje dijelove, a Test Builder rješenje skupine ionako
+        # ne prikazuje (dodaj_jedinicu ga čisti u kopiji testa).
+        "status_provjere": _dodaj_napomenu(
+            redak.get("status_provjere"),
+            "RAZDVOJENO: " + ", ".join(f"{o})" for o in p["oznake"])
+            + ("; RJESENJE: cijelo ostaje na skupini" if _s(redak.get("rjesenje")) else ""),
+        ),
     }
     novi_redci = [_redak_stavke(redak, s["oznaka"], s["tekst"], s["rjesenje"],
                                 s["konacan_odgovor"], s["max_bodovi"], roditelj_id)
