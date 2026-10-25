@@ -170,7 +170,8 @@ def _pozovi_ai(sistem: str, korisnik: str, model: str) -> str:
                                {"role": "user", "content": korisnik}]},
             timeout=120,
         )
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise RuntimeError(f"DeepSeek HTTP {r.status_code}: {r.text[:300]}")
         return r.json()["choices"][0]["message"]["content"]
 
     kljuc = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -179,11 +180,16 @@ def _pozovi_ai(sistem: str, korisnik: str, model: str) -> str:
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": kljuc, "anthropic-version": "2023-06-01"},
-        json={"model": model, "max_tokens": 4000, "temperature": 0.1, "system": sistem,
-              "messages": [{"role": "user", "content": korisnik}]},
+        # BEZ `temperature` i s ISKLJUČENIM razmišljanjem: Claude Sonnet 5 po defaultu uključi
+        # "adaptive thinking", a Anthropic tada odbija temperature != 1 (400). Isto radi i app
+        # u `extract_zadaci_with_claude` (thinking disabled), pa je i ovdje tako.
+        json={"model": model, "max_tokens": 4000, "thinking": {"type": "disabled"},
+              "system": sistem, "messages": [{"role": "user", "content": korisnik}]},
         timeout=120,
     )
-    r.raise_for_status()
+    if r.status_code >= 400:
+        # Bez ovoga log kaže samo "HTTPError" i ne zna se je li ključ, model ili oblik zahtjeva.
+        raise RuntimeError(f"Claude HTTP {r.status_code} (model {model}): {r.text[:300]}")
     return "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
 
 
@@ -264,7 +270,7 @@ def _predlozi_cijepanje_ai(redak: dict, sheet=None):
     try:
         odgovor = _pozovi_ai(AI_SISTEM, korisnik, model)
     except Exception as e:                            # noqa: BLE001 - bez AI-ja se preskače
-        print(f"AI nije odgovorio ({type(e).__name__}); zadatak preskočen.")
+        print(f"AI nije odgovorio: {type(e).__name__}: {str(e)[:300]}; zadatak preskočen.")
         return None
     podaci = _json_iz_odgovora(odgovor)
     rezultat = _ocisti_ai_podjelu(redak, podaci) if podaci else None
