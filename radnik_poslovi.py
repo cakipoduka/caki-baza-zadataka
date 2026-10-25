@@ -168,8 +168,16 @@ def _pozovi_ai(sistem: str, korisnik: str, model: str) -> str:
                   "response_format": {"type": "json_object"},
                   "messages": [{"role": "system", "content": sistem},
                                {"role": "user", "content": korisnik}]},
-            timeout=120,
+            timeout=60,
         )
+        if r.status_code == 400 and "response_format" in r.text:
+            # neki DeepSeek modeli ne podržavaju JSON mode - ponovi bez njega
+            tijelo = {"model": model, "max_tokens": 4000, "temperature": 0.1,
+                      "messages": [{"role": "system", "content": sistem},
+                                   {"role": "user", "content": korisnik}]}
+            r = requests.post("https://api.deepseek.com/chat/completions",
+                              headers={"Authorization": f"Bearer {kljuc}"},
+                              json=tijelo, timeout=60)
         if r.status_code >= 400:
             raise RuntimeError(f"DeepSeek HTTP {r.status_code}: {r.text[:300]}")
         return r.json()["choices"][0]["message"]["content"]
@@ -185,7 +193,7 @@ def _pozovi_ai(sistem: str, korisnik: str, model: str) -> str:
         # u `extract_zadaci_with_claude` (thinking disabled), pa je i ovdje tako.
         json={"model": model, "max_tokens": 4000, "thinking": {"type": "disabled"},
               "system": sistem, "messages": [{"role": "user", "content": korisnik}]},
-        timeout=120,
+        timeout=60,
     )
     if r.status_code >= 400:
         # Bez ovoga log kaže samo "HTTPError" i ne zna se je li ključ, model ili oblik zahtjeva.
@@ -273,9 +281,13 @@ def _predlozi_cijepanje_ai(redak: dict, sheet=None):
         print(f"AI nije odgovorio: {type(e).__name__}: {str(e)[:300]}; zadatak preskočen.")
         return None
     podaci = _json_iz_odgovora(odgovor)
-    rezultat = _ocisti_ai_podjelu(redak, podaci) if podaci else None
+    if not podaci:
+        print("AI odgovor nije JSON; zadatak preskočen.")
+        return None
+    rezultat = _ocisti_ai_podjelu(redak, podaci)
     if not rezultat:
-        return None                                   # provjera nije prošla - ne upisujemo
+        print("AI predlog odbijen (provjera doslovnosti/rješenja nije prošla); zadatak preskočen.")
+        return None
     uvod, dijelovi = rezultat
 
     roditelj_id = _s(redak.get("id"))

@@ -95,7 +95,7 @@ jobs:
           if [ "$ISPROBAJ" = "da" ]; then ARGS+=(--isprobaj); fi
           if [ -n "$IZVOR" ]; then ARGS+=(--izvor "$IZVOR"); fi
           if [ -n "$VRATI" ]; then
-            python radnik.py --vrati "$VRATI"
+            python -u radnik.py --vrati "$VRATI"
           else
-            python radnik.py --posao "$POSAO" --predmet "$PREDMET" --limit "$LIMIT" "${ARGS[@]}"
+            python -u radnik.py --posao "$POSAO" --predmet "$PREDMET" --limit "$LIMIT" "${ARGS[@]}"
           fi
