@@ -201,7 +201,13 @@ def je_tocan(zadatak, odgovor) -> bool:
 
 
 def ocjeni(zadaci, odgovori) -> tuple[float, float, list]:
-    """Vraca (bodovi, bodovi_max, detalji). `odgovori` je dict {redni_broj: odgovor}."""
+    """Vraca (bodovi, bodovi_max, detalji). `odgovori` je dict {redni_broj: odgovor}.
+
+    25.10.2026.: svaki zadatak dobiva `status` — `tocno`, `netocno`, `prazno` ili **`ceka`**
+    (treba Cakijeva provjera prije konačne ocjene). „ceka" je kad zadatak NEMA ključ
+    (`odgovor` prazan) ili je `prosireni_odgovor` (postupak se ne može automatski ocijeniti).
+    Takav zadatak NE dobiva 0 kao konačno — vidljiv je u 🧑‍🏫 Provjeri rješenja.
+    """
     bodovi = 0.0
     maks = 0.0
     detalji = []
@@ -209,15 +215,25 @@ def ocjeni(zadaci, odgovori) -> tuple[float, float, list]:
         m = _broj(z.get("bodovi"))
         maks += m
         odgovor = _tekst((odgovori or {}).get(i))
-        tocno = je_tocan(z, odgovor)
-        b = m if tocno else 0.0
+        ocekivano = _tekst(z.get("odgovor"))
+        if not odgovor:
+            status, b = "prazno", 0.0
+        elif not ocekivano:
+            status, b = "ceka", 0.0
+        elif je_tocan(z, odgovor):
+            status, b = "tocno", m
+        elif _tekst(z.get("tip")) == "prosireni_odgovor":
+            status, b = "ceka", 0.0
+        else:
+            status, b = "netocno", 0.0
         bodovi += b
         detalji.append({
             "id": _tekst(z.get("id")),
-            "tocno": tocno,
+            "tocno": status == "tocno",
+            "status": status,
             "bodovi": round(b, 2),
             "max": round(m, 2),
             "odgovor": odgovor,
-            "ocekivano": _tekst(z.get("odgovor")),
+            "ocekivano": ocekivano,
         })
     return round(bodovi, 2), round(maks, 2), detalji

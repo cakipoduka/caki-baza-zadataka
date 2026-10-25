@@ -2602,3 +2602,70 @@ __all__ = [
     "azuriraj_seriju", "postavi_aktivan_seriju",
     "prikazi_pregled", "prikazi_stranicu", "kratak_tekst",
 ]
+
+
+# ============================================================
+# 🧑‍🏫 Ručna provjera rješenja (25.10.2026.)
+# ============================================================
+
+def potrebna_provjera(rezultat) -> bool:
+    """Ima li rezultat ijedan zadatak sa statusom "ceka" (nema ključa ili je postupak)."""
+    return any(_tekst(d.get("status")) == "ceka" for d in detalji_iz_retka(rezultat))
+
+
+def zadaci_za_provjeru(rezultat) -> list:
+    """Popis (redni_broj, detalj) samo za zadatke koji čekaju provjeru."""
+    return [(i, d) for i, d in enumerate(detalji_iz_retka(rezultat))
+            if _tekst(d.get("status")) == "ceka"]
+
+
+def primijeni_provjeru(ws, redak: int, rezultat: dict, odluke: dict, provjerio: str = "") -> dict:
+    """Upiši Cakijeve odluke u JEDAN redak rezultata i preračunaj ukupno.
+
+    `odluke` = {redni_broj_zadatka: {"status": "tocno"|"netocno"|"ceka", "bodovi": broj}}
+    Pravilo: "tocno" nosi sve bodove zadatka (`max`), "netocno" 0, "ceka" ostaje otvoreno
+    (npr. dio koji se provjerava naknadno). Vraća polja koja su upisana.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+
+    detalji = detalji_iz_retka(rezultat)
+    for i, d in enumerate(detalji):
+        o = (odluke or {}).get(i)
+        if not o:
+            continue
+        st = _tekst(o.get("status")) or "netocno"
+        d["status"] = st if st in ("tocno", "netocno", "ceka") else "netocno"
+        d["tocno"] = d["status"] == "tocno"
+        if d["status"] == "tocno":
+            d["bodovi"] = round(_broj(d.get("max")), 2)
+        elif d["status"] == "netocno":
+            d["bodovi"] = 0.0
+        else:
+            d["bodovi"] = round(_broj(o.get("bodovi"), 0.0), 2)
+
+    bodovi = round(sum(_broj(d.get("bodovi")) for d in detalji), 2)
+    maks = round(sum(_broj(d.get("max")) for d in detalji), 2)
+    ostalo = any(_tekst(d.get("status")) == "ceka" for d in detalji)
+    polja = {
+        "detalji_json": _json.dumps(detalji, ensure_ascii=False),
+        "bodovi": bodovi,
+        "postotak": int(round(100 * bodovi / maks)) if maks else 0,
+        "provjera": "ceka" if ostalo else "ocjenjeno",
+        "provjerio": _tekst(provjerio),
+        "provjereno": _dt.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+    zaglavlje = [_tekst(h) for h in ws.row_values(1)]
+    paket = []
+    for naziv, vrijednost in polja.items():
+        if naziv in zaglavlje:
+            slovo = ""
+            idx = zaglavlje.index(naziv) + 1
+            while idx > 0:
+                idx, ostatak = divmod(idx - 1, 26)
+                slovo = chr(65 + ostatak) + slovo
+            paket.append({"range": f"{slovo}{redak}", "values": [[vrijednost]]})
+    if paket:
+        ws.batch_update(paket, value_input_option="RAW")
+    return polja

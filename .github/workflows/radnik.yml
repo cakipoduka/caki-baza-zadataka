@@ -28,6 +28,11 @@ on:
         required: false
         default: ""
         type: string
+      model:
+        description: "Model za AI poslove (claude-sonnet-5 ili deepseek-flash)"
+        required: false
+        default: "claude-sonnet-5"
+        type: string
       izvor:
         description: "Samo izvor koji SADRŽI taj tekst (npr. Matematika 1, 1. dio); prazno = svi"
         required: false
@@ -76,6 +81,9 @@ jobs:
           SERIJA: ${{ inputs.serija }}
           ISPROBAJ: ${{ inputs.isprobaj }}
           IZVOR: ${{ inputs.izvor }}
+          AI_MODEL: ${{ inputs.model }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           VRATI: ${{ inputs.vrati }}
         run: |
           set -e
