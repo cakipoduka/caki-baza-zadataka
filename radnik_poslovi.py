@@ -348,9 +348,12 @@ def _predlozi_cijepanje_ai(redak: dict, sheet=None):
         "tekst_zadatka_mathjax": uvod.replace("\\\\", "<br>"),
         "status_provjere": _dodaj_napomenu(redak.get("status_provjere"), napomena),
     }
-    novi_redci = [_redak_stavke(redak, d["oznaka"], d["tekst"], d["rjesenje"],
-                                d["konacan_odgovor"], "", roditelj_id)
-                  for d in dijelovi]
+    ima_izvorno_rjesenje = bool(_s(redak.get("rjesenje")))
+    novi_redci = [_redak_stavke(
+        redak, d["oznaka"], d["tekst"], d["rjesenje"], d["konacan_odgovor"], "", roditelj_id,
+        napomena=("RJESENJE: AI nije doslovno prepoznao rješenje ovog dijela (ručna provjera)"
+                  if ima_izvorno_rjesenje and not d["rjesenje"] else ""))
+        for d in dijelovi]
     log = [{"id": roditelj_id, "polje": k, "staro": _s(redak.get(k)), "novo": _s(v)}
            for k, v in polja.items()]
     log += [{"id": r["id"], "polje": "+redak", "staro": "", "novo": ""} for r in novi_redci]
