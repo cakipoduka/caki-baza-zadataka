@@ -73,6 +73,7 @@ jobs:
           VRATI: ${{ inputs.vrati }}
         run: |
           set -e
+          echo "Commit: $GITHUB_SHA (grana $GITHUB_REF_NAME)"
           ARG=""
           if [ -n "$SERIJA" ]; then ARG="--serija $SERIJA"; fi
           if [ "$ISPROBAJ" = "da" ]; then ARG="$ARG --isprobaj"; fi
