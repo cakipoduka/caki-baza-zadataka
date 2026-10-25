@@ -305,6 +305,8 @@ def main(argv=None) -> int:
     p.add_argument("--serija", default="", help="ID serije za nastavak; prazno = nova serija")
     p.add_argument("--isprobaj", action="store_true", help="ništa ne piše, samo izbroji")
     p.add_argument("--vrati", default="", help="ID serije koju treba vratiti (undo)")
+    p.add_argument("--izvor", default="", help="samo zadaci kojima izvor_naziv SADRŽI taj tekst "
+                                            "(npr. \"Matematika 1, 1. dio\"); prazno = svi")
     p.add_argument("--sheet-id", default="", help="ako je prazno, uzima se iz predmet_config")
     p.add_argument("--pauza", type=float, default=PAUZA_S)
     args = p.parse_args(argv)
@@ -361,6 +363,11 @@ def main(argv=None) -> int:
         postavi_stanje(ws_stanje, serija, args.posao, args.predmet, zadnji_id, obradeno, "u_tijeku")
     print(f"Radnik: posao={args.posao} predmet={args.predmet} serija={serija} "
           f"nastavak={bool(zadnji_id)} isprobaj={args.isprobaj}")
+
+    if args.izvor:
+        prije_filter = len(redci)
+        redci = [r for r in redci if args.izvor.lower() in _s(r.get("izvor_naziv")).lower()]
+        print(f"Filter izvora '{args.izvor}': {len(redci)} od {prije_filter} redaka.")
 
     azuriranja, novi_redci, log_promjene, preskoceno = [], [], [], 0
     ukupno = 0

@@ -28,6 +28,11 @@ on:
         required: false
         default: ""
         type: string
+      izvor:
+        description: "Samo izvor koji SADRŽI taj tekst (npr. Matematika 1, 1. dio); prazno = svi"
+        required: false
+        default: ""
+        type: string
       isprobaj:
         description: "Isprobaj (ništa se ne upisuje)"
         required: true
@@ -70,6 +75,7 @@ jobs:
           LIMIT: ${{ inputs.limit }}
           SERIJA: ${{ inputs.serija }}
           ISPROBAJ: ${{ inputs.isprobaj }}
+          IZVOR: ${{ inputs.izvor }}
           VRATI: ${{ inputs.vrati }}
         run: |
           set -e
@@ -77,6 +83,7 @@ jobs:
           ARG=""
           if [ -n "$SERIJA" ]; then ARG="--serija $SERIJA"; fi
           if [ "$ISPROBAJ" = "da" ]; then ARG="$ARG --isprobaj"; fi
+          if [ -n "$IZVOR" ]; then ARG="$ARG --izvor \"$IZVOR\""; fi
           if [ -n "$VRATI" ]; then
             python radnik.py --vrati "$VRATI"
           else
