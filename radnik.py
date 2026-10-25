@@ -261,6 +261,10 @@ def main(argv=None) -> int:
 
     sheet = _otvori_sheet(sirovi_kljuc, args.predmet, sheet_id)
 
+    # U log se ispiše NAZIV Sheeta i zadnjih 6 znakova ID-a — da se iz loga vidi na koju bazu je
+    # radnik radio (GitHub tajne se ne mogu pročitati, pa je ovo jedini način provjere).
+    print(f"Sheet: {getattr(sheet, 'title', '?')} (…{sheet_id[-6:]}) — predmet {args.predmet}")
+
     if args.vrati:
         rez = vrati_seriju(sheet, args.vrati)
         print(f"UNDO {args.vrati}: vraćeno polja {rez['vraceno_polja']}, "
