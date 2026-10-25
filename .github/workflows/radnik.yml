@@ -80,12 +80,14 @@ jobs:
         run: |
           set -e
           echo "Commit: $GITHUB_SHA (grana $GITHUB_REF_NAME)"
-          ARG=""
-          if [ -n "$SERIJA" ]; then ARG="--serija $SERIJA"; fi
-          if [ "$ISPROBAJ" = "da" ]; then ARG="$ARG --isprobaj"; fi
-          if [ -n "$IZVOR" ]; then ARG="$ARG --izvor \"$IZVOR\""; fi
+          # Argumenti idu kao BASH NIZ, ne kao jedan string: inače se "$IZVOR" poput
+          # "Matematika 1, 1. dio" raspadne na riječi i argparse prijavi nepoznate argumente.
+          ARGS=()
+          if [ -n "$SERIJA" ]; then ARGS+=(--serija "$SERIJA"); fi
+          if [ "$ISPROBAJ" = "da" ]; then ARGS+=(--isprobaj); fi
+          if [ -n "$IZVOR" ]; then ARGS+=(--izvor "$IZVOR"); fi
           if [ -n "$VRATI" ]; then
             python radnik.py --vrati "$VRATI"
           else
-            python radnik.py --posao "$POSAO" --predmet "$PREDMET" --limit "$LIMIT" $ARG
+            python radnik.py --posao "$POSAO" --predmet "$PREDMET" --limit "$LIMIT" "${ARGS[@]}"
           fi
