@@ -39,6 +39,10 @@ LOG_HEADERS = ["serija", "vrijeme", "posao", "predmet", "id", "polje", "staro", 
 
 PAKET = 50            # koliko promjena ide u jednom pozivu prema Sheetu
 PAUZA_S = 1.0         # pauza između paketa (kvota: ~60 upisa/min)
+FLUSH_SVAKIH = 100    # nakon koliko zadataka se UPIŠE i zabilježi napredak (26.10.2026.)
+                      # Zašto: prije se sve skupljalo i pisalo tek na kraju — ako GitHub prekine
+                      # posao (60 min limit), ništa nije bilo upisano. Sada prekid gubi najviše
+                      # ovaj paket, a `Radnik_stanje` pamti gdje se stalo.
 PONOVI_NA_429 = (20, 40, 60, 90, 120)     # čekanja između pokušaja kad Google vrati kvotu
 
 
@@ -401,21 +405,30 @@ def main(argv=None) -> int:
         ukupno += 1
         zadnji_id = rid
 
+        # UPIS TIJEKOM RADA: prekid ne gubi cijeli posao (v. FLUSH_SVAKIH)
+        if not args.isprobaj and len(azuriranja) >= FLUSH_SVAKIH:
+            i_, d_ = primijeni(ws_zadaci, headers, azuriranja, novi_redci)
+            zapisi_promjene(ws_log, serija, args.posao, args.predmet, log_promjene)
+            obradeno += len(azuriranja)
+            postavi_stanje(ws_stanje, serija, args.posao, args.predmet, zadnji_id, obradeno,
+                           "u_tijeku")
+            print(f"… upisano {i_}, novih {d_} (obrađeno {obradeno}, nastavlja se)")
+            azuriranja, novi_redci, log_promjene = [], [], []
+
     print(f"Za upis: {len(azuriranja)} zadataka, {len(novi_redci)} novih redaka, preskočeno {preskoceno}.")
 
     if args.isprobaj:
         print("ISPROBAJ: ništa nije upisano.")
         return 0
 
+    # upiši preostalo i zaključi
     if azuriranja or novi_redci:
         izmijenjeno, dodano = primijeni(ws_zadaci, headers, azuriranja, novi_redci)
         zapisi_promjene(ws_log, serija, args.posao, args.predmet, log_promjene)
         obradeno += len(azuriranja)
-        postavi_stanje(ws_stanje, serija, args.posao, args.predmet, zadnji_id, obradeno, "gotovo")
-        print(f"Upisano: izmijenjeno {izmijenjeno}, novih {dodano}. Serija {serija}.")
-    else:
-        postavi_stanje(ws_stanje, serija, args.posao, args.predmet, zadnji_id, obradeno, "gotovo")
-        print("Nema što upisati.")
+        print(f"Upisano: izmijenjeno {izmijenjeno}, novih {dodano}.")
+    postavi_stanje(ws_stanje, serija, args.posao, args.predmet, zadnji_id, obradeno, "gotovo")
+    print(f"Gotovo. Serija {serija} (obrađeno {obradeno}).")
     return 0
 
 
