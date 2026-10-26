@@ -1748,7 +1748,7 @@ PRAG_SLICNOSTI_KRATKA_STAVKA = 0.98
 
 def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza,
                                 skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None,
-                                ogranici_po_cjelini=False, biblioteka_izvora=""):
+                                ogranici_po_cjelini=False, biblioteka_izvora="", koristi_kao_primjer_na_satu=""):
     """
     Upisuje zadatke u tab 'Zadaci' s detekcijom duplikata (isto ponašanje kao i prije za
     samostalne zadatke) i, od 10.10.2026., podržava SKUPINE ZADATAKA:
@@ -1947,7 +1947,9 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
             " || ".join(z.get("ponudjeni_odgovori", []) or []), z.get("konacan_odgovor", ""),
             z.get("uputa", ""),
             "",  # redoslijed_u_potpoglavlju - postavlja se ručno kasnije (stranica u appu)
-            "",  # koristi_kao_primjer_na_satu - postavlja se ručno kasnije
+            # 26.10.2026.: koristi_kao_primjer_na_satu smije doći iz parametra batcha (npr. "Uvoz iz
+            # foldera" kad je cijela serija jedan "Primjeri" izvor) - default "" (ne) kao i prije.
+            koristi_kao_primjer_na_satu,
             "",  # u_skriptu - postavlja se ručno kasnije
             biblioteka_izvora,
         ]

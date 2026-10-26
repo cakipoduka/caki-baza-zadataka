@@ -379,7 +379,33 @@ def _provjeri_kratki_odgovor(redak: dict, promjene: dict) -> bool:
     return provjeri(redak, promjene)
 
 
+# ---------------------------------------------------------------------------------------------
+# POSLOVI: popravci postojećih podataka (popravci_posao.py)
+# ---------------------------------------------------------------------------------------------
+
+def _predlozi_popravi_cjeline(redak, sheet=None):
+    from popravci_posao import predlozi_cjeline
+    return predlozi_cjeline(redak, sheet=sheet)
+
+
+def _predlozi_popravi_tezinu(redak, sheet=None):
+    from popravci_posao import predlozi_tezinu
+    return predlozi_tezinu(redak)
+
+
 POSLOVI = {
+    "popravi_cjeline": {
+        "naziv": "Popravi cjelinu/potpoglavlje prema šifrarniku (samo jednoznačno)",
+        "predlozi": _predlozi_popravi_cjeline,
+        "vec_obradjeno": lambda redak: __import__("popravci_posao").vec_obradjeno_cjeline(redak),
+        "provjeri": lambda redak, promjene: __import__("popravci_posao").provjeri_cjeline(redak, promjene),
+    },
+    "popravi_tezinu": {
+        "naziv": "Normaliziraj težinu (tesko -> teško, lako/srednje)",
+        "predlozi": _predlozi_popravi_tezinu,
+        "vec_obradjeno": lambda redak: __import__("popravci_posao").vec_obradjeno_tezina(redak),
+        "provjeri": lambda redak, promjene: __import__("popravci_posao").provjeri_tezinu(redak, promjene),
+    },
     "kratki_odgovor": {
         "naziv": "Kratki odgovori iz rješenja (deterministički + AI, uz provjeru)",
         "predlozi": _predlozi_kratki_odgovor,

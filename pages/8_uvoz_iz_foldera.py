@@ -289,6 +289,12 @@ with tab3:
         godina = c3.text_input("godina", iz["izvor"]["godina"])
         razina = st.selectbox("razina", predmet_config.razine(predmet))
         biblioteka = st.selectbox("Biblioteka izvora (neobavezno)", [""] + list(get_biblioteke_izvora(sheet)))
+        primjer_na_satu = st.checkbox(
+            "📘 Cijela ova serija su primjeri (koristi_kao_primjer_na_satu)", value=False,
+            help="Uključi SAMO ako je cijeli ovaj izvor serija riješenih primjera (npr. udžbenički \"Primjer 1./2./3.\" "
+                 "blok s rješenjem), ne zadaci za samostalnu vježbu. Postavlja koristi_kao_primjer_na_satu=\"da\" na SVE "
+                 "zadatke ovog upisa - u PreTeXt izlazu idu kao primjer (§27.3), a Test Builder ih svejedno prikazuje "
+                 "jednako kao i sve ostale (ne isključuje ih iz pretrage).")
         samo_cisti = st.checkbox("Upiši samo zadatke BEZ upozorenja", value=False)
         if iz.get("nepotpuno"):
             st.warning("Odgovor modela je bio nepotpun — provjeri da nedostaju zadnji zadaci.")
@@ -301,7 +307,8 @@ with tab3:
                     zad = uf.pripremi_za_upis(zad, iz["mapa_slika"], izvor_naziv, dio, slike_folder)
                     dodano, azur = nadopuni_ili_dodaj_zadatke(
                         ws_zadaci, zad, izvor_tip, izvor_naziv, godina, razina, max(1, len((r.get("datoteke") or "").split("; "))),
-                        skenirano=iz.get("skenirano", "da"), biblioteka_izvora=biblioteka)
+                        skenirano=iz.get("skenirano", "da"), biblioteka_izvora=biblioteka,
+                        koristi_kao_primjer_na_satu=("da" if primjer_na_satu else ""))
                 uf.zapisi_evidenciju(ws_evid, {"grupa": r["grupa"], "model": r["model"], "status": "uneseno", "otisak": r["otisak"],
                                                "dodano": dodano, "nadopunjeno": azur})
                 st.success(f"✅ Dodano {dodano}, nadopunjeno {azur}.")

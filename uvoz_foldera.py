@@ -253,6 +253,21 @@ D11. POTPUNOST
   ne spajaj dva zadatka u jedan.
 - Dodatno NEOBAVEZNO polje: slika_rjesenje_url (vidi D7).
 
+D12. PRESKAKANJE ZADATAKA IZ DRŽAVNE MATURE (oznaka "DM") - 26.10.2026.
+- Neki udžbenici/zbirke u dijelu "Zadatci za vježbu" preuzimaju stvarne zadatke s prošlih državnih matura i označe ih
+  neposredno iznad/uz tekst zadatka natpisom oblika "DM A GODINA./GODINA." ili "DM B GODINA./GODINA." (npr.
+  "DM B 2020./2021.", "DM A 2015./2016."). To je oznaka razine (A ili B) i školske godine ispita iz kojeg zadatak
+  dolazi, nije dio teksta zadatka.
+- Takav zadatak NEMOJ uključiti u odgovor - ni njega, ni njegove ponuđene odgovore, ni rješenje. Ovo je NAMJERNA
+  iznimka od D11 (potpunost): ti zadaci su već u bazi iz izvornih matura (izvor_tip="matura"), pa bi ponovni unos
+  stvorio duplikat iste zadaće.
+- Zadatak BEZ oznake "DM ..." uključi normalno, kao i inače, čak i ako je u istom popisu "Zadatci za vježbu" odmah
+  uz DM-označene zadatke.
+- Oznaka "DM ..." nije isto što i privremeni_broj - privremeni_broj ostaje tiskani broj zadatka (npr. "9."), a
+  "DM B 2020./2021." je zaseban natpis uz njega koji samo određuje treba li zadatak preskočiti.
+- Ako nisi siguran je li natpis uz zadatak stvarno "DM" oznaka (npr. nejasan OCR) ili nešto drugo, NE preskači
+  zadatak - uključi ga i u status_provjere upiši "NEJASNO: moguća DM oznaka, provjeri je li zadatak s državne mature".
+
 PRIMJERI (prikazana su samo bitna polja; ostala popuni kao inače)
 
 Primjer 1 - višestruki izbor sa slikom u pitanju. Ulaz: "5. Na slici je kocka $ABCDEFGH$. ![](SLIKA_03) A B C D E F G H Kolika je duljina
@@ -267,6 +282,10 @@ Primjer 2 - set. Ulaz: "Za zadatke 6. i 7. koristi tablicu. [tablica] 6. Koliko 
 
 Primjer 3 - slika koje nema u ulazu (fotografija). Ulaz: "3. Na slici je graf funkcije $f$. Odredi $f(2)$." (bez oznake slike). Izlaz:
 {"privremeni_broj": "3", "uloga": "samostalan", "tekst_zadatka_latex": "Na slici je graf funkcije $f$. Odredi $f(2)$.", "tip_zadatka": "kratki_odgovor", "slika_zadana": "da", "slika_url": "", "status_provjere": "SLIKA: zadatak ovisi o slici koje nema u ulazu, treba ručno dodati"}
+
+Primjer 4 - zadatak s državne mature prepisan u udžbenik (D12). Ulaz: "9. DM B 2020./2021. Na slici su prikazani jednakostraničan
+trokut, kvadrat i pravilni peterokut. Kolika je mjera kuta α? A) 96° B) 102° C) 120° D) 144°". Izlaz: NIŠTA - ovaj zadatak se
+NE pojavljuje u listi "zadaci" (preskače se u cijelosti po D12, nema ga ni kao [NEJASNO]).
 """
 
 DEEPSEEK_NAPOMENA = """
