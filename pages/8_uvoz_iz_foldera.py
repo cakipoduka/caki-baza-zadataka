@@ -256,22 +256,75 @@ with tab2:
         if izlazi:
             mk = st.selectbox("Prikaži rezultat modela", list(izlazi), key="pregled_model")
             iz = izlazi[mk]
+            r_model = next(r for r in moji if r["model"] == mk)
             if iz.get("nepotpuno") or iz.get("greske"):
                 st.warning("Upozorenja obrade: " + " | ".join(iz.get("greske", [])))
             for u in iz.get("izvjestaj", {}).get("upozorenja_skupa", []):
                 st.warning(u)
+            if iz.get("mapa_slika"):
+                with st.expander(f"📎 Dostupne oznake slika u ovom izvoru ({len(iz['mapa_slika'])}) - za ručno popunjavanje polja ispod"):
+                    for oznaka, info in sorted(iz["mapa_slika"].items()):
+                        st.markdown(f"`{oznaka}` — [otvori]({'https://drive.google.com/file/d/' + info['drive_id'] + '/view'})")
             samo = st.checkbox("Samo zadaci s upozorenjem", value=False)
             tab = pd.DataFrame([{"br": z["privremeni_broj"], "uloga": z["uloga"], "tip": z["tip_zadatka"], "odgovor": z["konacan_odgovor"],
                                  "slika": z["slika_url"], "status_provjere": z["status_provjere"],
                                  "tekst": z["tekst_zadatka_latex"][:160]} for z in iz["zadaci"]
                                 if not samo or z["status_provjere"]])
             st.dataframe(tab, hide_index=True, use_container_width=True)
-            br = st.selectbox("Detalj zadatka", [z["privremeni_broj"] for z in iz["zadaci"]], key="pregled_detalj")
-            z = next(z for z in iz["zadaci"] if z["privremeni_broj"] == br)
-            st.markdown(z["tekst_zadatka_latex"])
-            if z["ponudjeni_odgovori"]:
-                st.markdown("\n".join(f"- **{'ABCDEFGH'[i]}**  {o}" for i, o in enumerate(z["ponudjeni_odgovori"])))
-            st.json({k: v for k, v in z.items() if k not in ("tekst_zadatka_latex", "tekst_zadatka_mathjax")}, expanded=False)
+            # 27.10.2026.: SVI (filtrirani) zadaci odjednom, ne jedan po jedan iz padajućeg
+            # izbornika (Caki - usporava pregled) - isti st.container(border=True) stil kao
+            # popis zadataka u pages/2_test_builder.py, radi vizualne dosljednosti.
+            #
+            # 27.10.2026. (ista večer, iduća izmjena): polja su UREDIVA izravno ovdje, PRIJE
+            # upisa u bazu (Caki eksplicitno - ne želi ispravljati NAKON upisa, nego prije).
+            # Widgeti pišu u st.session_state (ključ po izlaz_file_id + privremeni_broj, da se
+            # ne miješaju između grupa/modela). Gumb "Spremi izmjene" ispod upisuje NATRAG u
+            # ISTU cache datoteku na Driveu (prepisuje izlaz_file_id preko DriveIO.spremi_json
+            # s postojeci_id) - ucitaj_izlaz() NIJE keširan (obično st.cache_data), pa tab 3
+            # "Upiši u bazu" kod sljedećeg čitanja automatski vidi ispravljenu verziju, bez
+            # dodatnog koraka sinkronizacije.
+            st.divider()
+            baza_kljuc = r_model["izlaz_file_id"]
+            for z in iz["zadaci"]:
+                if samo and not z["status_provjere"]:
+                    continue
+                broj = z["privremeni_broj"]
+                pref = f"ured_{baza_kljuc}_{broj}_"
+                with st.container(border=True):
+                    st.markdown(f"**#{broj}** · {z['uloga']} · {z['tip_zadatka']}")
+                    st.text_area("Tekst zadatka", value=z["tekst_zadatka_latex"], key=pref + "tekst", height=100)
+                    if z["tip_zadatka"] == "visestruki_izbor" or z["ponudjeni_odgovori"]:
+                        st.text_input(
+                            "Ponuđeni odgovori (odvoji s ||)", value=" || ".join(z["ponudjeni_odgovori"]), key=pref + "opcije",
+                        )
+                    c1, c2 = st.columns(2)
+                    c1.text_input("Konačan odgovor", value=z["konacan_odgovor"], key=pref + "odgovor")
+                    c2.text_input("Oznaka slike (slika_url, npr. SLIKA_08)", value=z["slika_url"], key=pref + "slika")
+                    st.text_area("Rješenje", value=z.get("rjesenje", ""), key=pref + "rjesenje", height=80)
+                    st.text_input("status_provjere (isprazni kad ispraviš)", value=z["status_provjere"], key=pref + "status")
+            if st.button("💾 Spremi izmjene u ovaj izvor", key=f"spremi_izmjene_{baza_kljuc}"):
+                for z in iz["zadaci"]:
+                    broj = z["privremeni_broj"]
+                    pref = f"ured_{baza_kljuc}_{broj}_"
+                    if pref + "tekst" not in st.session_state:
+                        continue  # zadatak trenutno skriven filterom "samo upozorenja" - ne diraj
+                    novi_tekst = st.session_state[pref + "tekst"]
+                    z["tekst_zadatka_latex"] = novi_tekst
+                    z["tekst_zadatka_mathjax"] = novi_tekst.replace("\\\\", "<br>")
+                    if pref + "opcije" in st.session_state:
+                        z["ponudjeni_odgovori"] = [o.strip() for o in st.session_state[pref + "opcije"].split("||") if o.strip()]
+                    z["konacan_odgovor"] = st.session_state[pref + "odgovor"]
+                    nova_slika = st.session_state[pref + "slika"].strip()
+                    z["slika_url"] = nova_slika
+                    if nova_slika:
+                        z["slika_zadana"] = "da"
+                    z["rjesenje"] = st.session_state[pref + "rjesenje"]
+                    z["status_provjere"] = st.session_state[pref + "status"]
+                try:
+                    drive_io().spremi_json(None, None, iz, postojeci_id=baza_kljuc)
+                    st.success("✅ Izmjene spremljene - korak 3 ('Upiši u bazu') sad koristi ovu, ispravljenu verziju.")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Spremanje nije uspjelo: {e}")
 
 with tab3:
     evid = [r for r in uf.ucitaj_evidenciju(ws_evid) if r.get("izlaz_file_id")]
