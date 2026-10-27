@@ -292,16 +292,23 @@ with tab2:
                 pref = f"ured_{baza_kljuc}_{broj}_"
                 with st.container(border=True):
                     st.markdown(f"**#{broj}** · {z['uloga']} · {z['tip_zadatka']}")
-                    st.text_area("Tekst zadatka", value=z["tekst_zadatka_latex"], key=pref + "tekst", height=100)
-                    if z["tip_zadatka"] == "visestruki_izbor" or z["ponudjeni_odgovori"]:
-                        st.text_input(
-                            "Ponuđeni odgovori (odvoji s ||)", value=" || ".join(z["ponudjeni_odgovori"]), key=pref + "opcije",
-                        )
-                    c1, c2 = st.columns(2)
-                    c1.text_input("Konačan odgovor", value=z["konacan_odgovor"], key=pref + "odgovor")
-                    c2.text_input("Oznaka slike (slika_url, npr. SLIKA_08)", value=z["slika_url"], key=pref + "slika")
-                    st.text_area("Rješenje", value=z.get("rjesenje", ""), key=pref + "rjesenje", height=80)
-                    st.text_input("status_provjere (isprazni kad ispraviš)", value=z["status_provjere"], key=pref + "status")
+                    st.markdown(z["tekst_zadatka_latex"])
+                    if z["ponudjeni_odgovori"]:
+                        for _opcija in z["ponudjeni_odgovori"]:
+                            st.markdown(f"- {_opcija}")
+                    if z.get("konacan_odgovor"):
+                        st.markdown(f"**Rješenje (konačan odgovor):** {z['konacan_odgovor']}")
+                    with st.expander("✏️ Uredi (tekst, odgovori, slika, puni postupak, status)"):
+                        st.text_area("Tekst zadatka", value=z["tekst_zadatka_latex"], key=pref + "tekst", height=100)
+                        if z["tip_zadatka"] == "visestruki_izbor" or z["ponudjeni_odgovori"]:
+                            st.text_input(
+                                "Ponuđeni odgovori (odvoji s ||)", value=" || ".join(z["ponudjeni_odgovori"]), key=pref + "opcije",
+                            )
+                        c1, c2 = st.columns(2)
+                        c1.text_input("Konačan odgovor", value=z["konacan_odgovor"], key=pref + "odgovor")
+                        c2.text_input("Oznaka slike (slika_url, npr. SLIKA_08)", value=z["slika_url"], key=pref + "slika")
+                        st.text_area("Rješenje (puni postupak)", value=z.get("rjesenje", ""), key=pref + "rjesenje", height=80)
+                        st.text_input("status_provjere (isprazni kad ispraviš)", value=z["status_provjere"], key=pref + "status")
             if st.button("💾 Spremi izmjene u ovaj izvor", key=f"spremi_izmjene_{baza_kljuc}"):
                 for z in iz["zadaci"]:
                     broj = z["privremeni_broj"]
