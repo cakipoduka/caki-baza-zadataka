@@ -1251,6 +1251,32 @@ def formatiraj_opciju(opcija):
     return escape_outside_math(opcija)
 
 
+_SLIKA_OPCIJA_RE = re.compile(r"(?i)^slika\s*[A-H]$")  # "re" je vec importan na vrhu datoteke
+
+
+def _opcije_su_slike_info(opcije_za_prikaz, tip_zadatka, slika_putanja_raw):
+    """28.10.2026.: PONUDJENI ODGOVORI (visestruki izbor) koji su same slike/crtezi/grafovi -
+    isti slucaj i ista heuristika kao u baza_zadataka_pipeline._build_statement_hint_solution_video
+    (v. TRACKER 28.10.2026.). AI pri uvozu (D6 u uvoz_foldera.py) sprema ponudjeni_odgovori kao
+    placeholder "slika A"/"slika B"/... redoslijedom, a stvarne slike idu u slika_putanja istim
+    redoslijedom - uz eventualno JOS JEDNU sliku ISPRED (slika samog pitanja). Prepoznaje se
+    ISKLJUCIVO kad SVE opcije odgovaraju obrascu "slika <slovo>" - obican tekst/brojcane opcije
+    ovo nikad ne pogode (regresija iskljucena, provjereno uzivo 28.10.2026.: 0 od 1105 trenutnih
+    visestruki_izbor redaka u bazi ima ovaj obrazac). Vraca (je_slike, slika_pitanja ili None,
+    [nazivi slika opcija redoslijedom] ili []) - prazna lista/None znaci "nije ovaj slucaj",
+    pozivatelj se tad ponasa kao prije (tekstualne opcije + genericka galerija)."""
+    if tip_zadatka != "visestruki_izbor" or len(opcije_za_prikaz) < 2:
+        return False, None, []
+    if not all(_SLIKA_OPCIJA_RE.match((o or "").strip()) for o in opcije_za_prikaz):
+        return False, None, []
+    nazivi_slika = razdvoji_slike(slika_putanja_raw)
+    if len(nazivi_slika) == len(opcije_za_prikaz):
+        return True, None, nazivi_slika
+    if len(nazivi_slika) == len(opcije_za_prikaz) + 1:
+        return True, nazivi_slika[0], nazivi_slika[1:]
+    return False, None, []  # broj slika se ne poklapa s brojem opcija - siguran fallback na tekst
+
+
 def izgradi_opcije_blok(ponudjeni_odgovori):
     """Gradi LaTeX za prikaz ponuđenih odgovora (A/B/C/D...) ispod teksta zadatka,
     kao PRIRODAN tok teksta (ne fiksna tablica/popis) - LaTeX sam odlučuje hoće
