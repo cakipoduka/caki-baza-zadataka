@@ -22,6 +22,7 @@ import streamlit as st
 import predmet_config
 import uvoz_foldera as uf
 from baza_zadataka_pipeline import (
+    _izgleda_kao_recenica,
     build_sifrarnik_potpoglavlja_text,
     build_sifrarnik_text,
     get_biblioteke_izvora,
@@ -29,6 +30,7 @@ from baza_zadataka_pipeline import (
     get_gspread_client,
     get_or_create_worksheet,
     nadopuni_ili_dodaj_zadatke,
+    prikazi_opcije_markdown,
 )
 
 import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
@@ -232,6 +234,18 @@ def ucitaj_izlaz(file_id):
     return drive_io().procitaj_json(file_id)
 
 
+def _prikazi_bez_dolar(v: str) -> str:
+    """Prikaz za polja koja baza sprema BEZ $ omotaca (npr. konacan_odgovor kod
+    kratki_odgovor/prosireni_odgovor - isto pravilo kao ponudjeni_odgovori, v. D6 u
+    sistemskom promptu u uvoz_foldera.py). Ista heuristika kao prikazi_opcije_markdown()
+    u baza_zadataka_pipeline.py (ako vec ima $, ostavi; ako izgleda kao recenica, ostavi
+    kao tekst; inace omotaj u $...$), samo bez A)/B) prefiksa jer je ovo JEDNA vrijednost."""
+    v = (v or "").strip()
+    if not v or "$" in v or _izgleda_kao_recenica(v):
+        return v
+    return f"${v}$"
+
+
 with tab2:
     evid = [r for r in uf.ucitaj_evidenciju(ws_evid) if r.get("izlaz_file_id")]
     if not evid:
@@ -294,10 +308,9 @@ with tab2:
                     st.markdown(f"**#{broj}** · {z['uloga']} · {z['tip_zadatka']}")
                     st.markdown(z["tekst_zadatka_latex"])
                     if z["ponudjeni_odgovori"]:
-                        for _opcija in z["ponudjeni_odgovori"]:
-                            st.markdown(f"- {_opcija}")
+                        st.markdown(prikazi_opcije_markdown(z["ponudjeni_odgovori"]))
                     if z.get("konacan_odgovor"):
-                        st.markdown(f"**Rješenje (konačan odgovor):** {z['konacan_odgovor']}")
+                        st.markdown(f"**Rješenje (konačan odgovor):** {_prikazi_bez_dolar(z['konacan_odgovor'])}")
                     with st.expander("✏️ Uredi (tekst, odgovori, slika, puni postupak, status)"):
                         st.text_area("Tekst zadatka", value=z["tekst_zadatka_latex"], key=pref + "tekst", height=100)
                         if z["tip_zadatka"] == "visestruki_izbor" or z["ponudjeni_odgovori"]:
