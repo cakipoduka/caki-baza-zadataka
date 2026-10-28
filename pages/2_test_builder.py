@@ -1312,6 +1312,7 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
             # escapiranja (sadrži prave LaTeX naredbe) - isti obrazac kao izgradi_opcije_blok.
             tekst += izgradi_stavke_blok(z["stavke"], escape=escape_outside_math)
 
+        _opcije_prikazane_kao_slike = False
         if z.get("prikazi_opcije", True) and z.get("tip_zadatka") == "visestruki_izbor" and z.get("ponudjeni_odgovori"):
             # Lokalna kopija (ne diramo spremljeni z["ponudjeni_odgovori"]) - mamac
             # se dodaje samo za OVO generiranje, profesor ga može uključiti/isključiti
@@ -1319,11 +1320,33 @@ def izgradi_tex(zadaci_odabrani, ukljuci_rjesenja, slike_bytes=None, dodaj_mamac
             opcije_za_prikaz = list(z["ponudjeni_odgovori"])
             if dodaj_mamac and mamac_tekst.strip():
                 opcije_za_prikaz.append(mamac_tekst.strip())
-            tekst += izgradi_opcije_blok(opcije_za_prikaz)
+            # 28.10.2026.: opcije koje su SAME SLIKE (grafovi/crteži umjesto teksta) - svaka
+            # dobije svoje slovo i ide kroz cakislikeopcije umjesto kroz tekstualni
+            # izgradi_opcije_blok (v. _opcije_su_slike_info gore). Mamac je uvijek tekst, pa
+            # ako je dodan, broj slika se sigurno neće poklopiti s brojem opcija - siguran
+            # fallback na staro ponašanje (tekstualne opcije) u else grani ispod.
+            _je_slike, _slika_pitanja, _slike_opcija = _opcije_su_slike_info(
+                opcije_za_prikaz, z.get("tip_zadatka"), z.get("slika_putanja")
+            )
+            if _je_slike and all(slike_bytes.get(x) for x in _slike_opcija) and (
+                _slika_pitanja is None or slike_bytes.get(_slika_pitanja)
+            ):
+                if _slika_pitanja:
+                    tekst += f"\n\\par\\vspace{{2mm}}\n{{\\centering\\cakislike{{images/{_slika_pitanja}}}\\par}}"
+                _lista_opcija = ",".join(f"images/{x}" for x in _slike_opcija)
+                tekst += f"\n\\par\\vspace{{2mm}}\n{{\\centering\\cakislikeopcije{{{_lista_opcija}}}\\par}}"
+                _opcije_prikazane_kao_slike = True
+            else:
+                tekst += izgradi_opcije_blok(opcije_za_prikaz)
 
         # Više slika uz zadatak: 4. argument \\zadatakbod je lista putanja odvojena ZAREZOM
         # (caki-style.sty ih slaže jednu uz drugu). Jedna slika = isti oblik kao prije.
-        slika_rel = ",".join(f"images/{x}" for x in razdvoji_slike(z.get("slika_putanja")) if slike_bytes.get(x))
+        # 28.10.2026.: ako su opcije prikazane kao slike (grana iznad), slika pitanja i slike
+        # opcija su VEĆ umetnute izravno u tekst - ne prikazuj ih JOŠ jednom ovdje kao
+        # genericku galeriju (duplikat).
+        slika_rel = "" if _opcije_prikazane_kao_slike else ",".join(
+            f"images/{x}" for x in razdvoji_slike(z.get("slika_putanja")) if slike_bytes.get(x)
+        )
         zad_lines.append(
             f"\\zadatakbod{{{tekst}}}{{{video}}}{{{bodovi}}}{{{slika_rel}}}{{{tip_z}}}{{{kategorije_tex}}}"
         )

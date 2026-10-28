@@ -473,6 +473,32 @@
     \forcsvlist{\cakislikaukljuci}{#1}%
 }
 
+% \cakislikeopcije{lista} - PONUĐENI ODGOVORI (višestruki izbor) koji su same slike/crteži/grafovi
+% umjesto teksta (28.10.2026., v. _opcije_su_slike_info + izgradi_tex u pages/2_test_builder.py).
+% Lista je popis putanja odvojen ZAREZOM, REDOSLIJEDOM A, B, C, D... - svaka slika dobije veliko
+% slovo i obrub iznad/oko sebe, da se vizualno razlikuje od obične "slike uz pitanje". Ista
+% širinska logika kao \cakislike (1->55%, 2->46%, 3+->30%) da izgleda dosljedno s ostatkom
+% dokumenta - dijeli brojač cakislikan i duljinu \cakisirinaslike s \cakislike.
+\newcounter{cakiopcbroji}
+\newcommand{\cakiopcslovo}{\ifcase\value{cakiopcbroji}A\or B\or C\or D\or E\or F\or G\or H\fi}
+\newcommand{\cakiopcukljuci}[1]{%
+    \begin{minipage}[t]{\cakisirinaslike\linewidth}
+        \centering
+        {\small\bfseries\sffamily\color{MathAccent}\cakiopcslovo)}\\[0.5mm]
+        \fbox{\includegraphics[width=0.9\linewidth]{#1}}%
+    \end{minipage}\hspace{0.02\linewidth}%
+    \stepcounter{cakiopcbroji}%
+}
+\newcommand{\cakislikeopcije}[1]{%
+    \setcounter{cakislikan}{0}%
+    \forcsvlist{\cakislikabroji}{#1}%
+    \ifnum\value{cakislikan}=1 \def\cakisirinaslike{0.55}\else
+    \ifnum\value{cakislikan}=2 \def\cakisirinaslike{0.46}\else
+    \def\cakisirinaslike{0.30}\fi\fi
+    \setcounter{cakiopcbroji}{0}%
+    \forcsvlist{\cakiopcukljuci}{#1}%
+}
+
 % \zadatakbod{tekst}{video_url ili prazno}{bodovi ili prazno}{slika (relativna
 % putanja unutar kompajlacijskog foldera) ili prazno}{tip_zadatka ili prazno}
 % {kategorije vrednovanja - već formatiran LaTeX tekst ili prazno}
