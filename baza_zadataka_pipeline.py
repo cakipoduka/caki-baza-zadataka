@@ -822,6 +822,9 @@ def _je_primjer_na_satu(row):
     return (row.get("koristi_kao_primjer_na_satu") or "").strip().lower() == "da"
 
 
+_SLIKA_OPCIJA_RE = re.compile(r"(?i)^slika\s*[A-H]$")
+
+
 def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
     """Zajednička jezgra za <exercise> I <example>: <statement> (tekst + opcionalna slika +
     opcije za visestruki_izbor), <hint>, <solution>, <video>. Vraća (lines, slika_ok) BEZ
@@ -842,23 +845,71 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
     lines.append(f'        <statement>')
     lines.append(f'          <p>{oznaka}{tekst}</p>')
 
+    opcije = []
+    if tip_zadatka == "visestruki_izbor" and ponudjeni_odgovori_raw:
+        opcije = [o.strip() for o in ponudjeni_odgovori_raw.split("||") if o.strip()]
+
+    # 28.10.2026.: OPCIJE VIŠESTRUKOG IZBORA koje su same slike/crteži/grafovi (ne tekst) - v. D6
+    # u sistemskom promptu uvoz_foldera.py ("Ako su same opcije slike..."). AI tad sprema
+    # ponudjeni_odgovori kao placeholder "slika A"/"slika B"/... (redoslijedom A,B,C...), a
+    # STVARNE slike idu u slika_url/slika_putanja istim redoslijedom - uz JOŠ JEDNU sliku ISPRED
+    # (slika samog PITANJA) kad pitanje I opcije imaju slike (D6: "prvo slika pitanja, zatim
+    # slike opcija"). Prepoznaje se ISKLJUČIVO kad SVE opcije odgovaraju obrascu "slika <slovo>"
+    # (case-insensitive) - običan tekst/brojčane opcije ovo nikad ne pogode (provjereno uživo
+    # 28.10.2026.: 0 od 1105 trenutnih visestruki_izbor redaka u bazi ima ovaj obrazac - nema
+    # rizika regresije na postojeće zadatke). Broj slika koji se ne poklapa s brojem opcija (ni
+    # jednako, ni +1) je siguran FALLBACK na staro ponašanje (generička galerija slika + tekstualna
+    # lista opcija) - ne pucamo, samo gubimo "slika uz slovo" prikaz za taj rub slučaj.
+    opcije_su_slike = bool(opcije) and len(opcije) >= 2 and all(_SLIKA_OPCIJA_RE.match(o) for o in opcije)
+
     slika_ok = False
     # slika_putanja je SAMO naziv datoteke (ili više njih odvojenih "|", vidi razdvoji_slike) -
     # puni izvor je 02_SLIKE/<naziv>, kopiramo u 03_PRETEXT_IZVOR/images/<naziv>.
-    for naziv_datoteke in (os.path.basename(x) for x in razdvoji_slike(slika_putanja)):
+    nazivi_slika = [os.path.basename(x) for x in razdvoji_slike(slika_putanja)]
+    slika_pitanja = None
+    slike_opcija = {}
+    if opcije_su_slike and len(nazivi_slika) == len(opcije):
+        slike_opcija = dict(enumerate(nazivi_slika))
+    elif opcije_su_slike and len(nazivi_slika) == len(opcije) + 1:
+        slika_pitanja = nazivi_slika[0]
+        slike_opcija = dict(enumerate(nazivi_slika[1:]))
+    else:
+        opcije_su_slike = False  # broj slika ne odgovara broju opcija - sigurni fallback na staro
+
+    def _kopiraj_i_oznaci(naziv_datoteke):
         izvorna = os.path.join(slike_izvor_dir, naziv_datoteke)
         if os.path.exists(izvorna):
             shutil.copyfile(izvorna, os.path.join(images_dir_abs, naziv_datoteke))
-            slika_ok = True
-            lines.append(f'          <image source="images/{_xml_escape(naziv_datoteke)}" width="70%"/>')
-        else:
-            print(f"    ⚠️ Slika nije pronađena na disku za zadatak #{row.get('id', '')}: {izvorna}")
+            return f'<image source="images/{_xml_escape(naziv_datoteke)}" width="70%"/>'
+        print(f"    ⚠️ Slika nije pronađena na disku za zadatak #{row.get('id', '')}: {izvorna}")
+        return None
 
-    if tip_zadatka == "visestruki_izbor" and ponudjeni_odgovori_raw:
-        opcije = [o.strip() for o in ponudjeni_odgovori_raw.split("||") if o.strip()]
+    if opcije_su_slike:
+        if slika_pitanja:
+            tag = _kopiraj_i_oznaci(slika_pitanja)
+            if tag:
+                slika_ok = True
+                lines.append(f'          {tag}')
+    else:
+        for naziv_datoteke in nazivi_slika:
+            tag = _kopiraj_i_oznaci(naziv_datoteke)
+            if tag:
+                slika_ok = True
+                lines.append(f'          {tag}')
+
+    if opcije:
         lines.append('          <ol marker="A.">')
-        for opcija in opcije:
-            lines.append(f'            <li><p>{_pretext_math_or_text(opcija)}</p></li>')
+        for i, opcija in enumerate(opcije):
+            sadrzaj = None
+            if opcije_su_slike:
+                naziv_datoteke = slike_opcija.get(i)
+                tag = _kopiraj_i_oznaci(naziv_datoteke) if naziv_datoteke else None
+                if tag:
+                    slika_ok = True
+                    sadrzaj = tag
+            if sadrzaj is None:
+                sadrzaj = _pretext_math_or_text(opcija)  # tekst, ili fallback kad slika opcije nedostaje na disku
+            lines.append(f'            <li><p>{sadrzaj}</p></li>')
         lines.append('          </ol>')
 
     lines.append(f'        </statement>')
