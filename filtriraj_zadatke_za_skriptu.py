@@ -39,7 +39,8 @@ def filtriraj_zadatke_za_skriptu(zadaci: list, stupac: str = "u_skriptu", vrijed
 # Kriteriji se kombiniraju s I (AND); vrijednosti unutar jednog kriterija s ILI (OR).
 # ---------------------------------------------------------------------------
 
-FILTRI_KLJUCEVI = ("razine", "cjeline", "izvori", "biblioteke", "godina_od", "godina_do", "samo_u_skriptu")
+FILTRI_KLJUCEVI = ("razine", "cjeline", "izvori", "biblioteke", "godina_od", "godina_do", "samo_u_skriptu",
+                   "grupiraj_po_poglavlju")
 
 
 def normaliziraj_filtre(filtri) -> dict:
@@ -71,6 +72,11 @@ def normaliziraj_filtre(filtri) -> dict:
         "godina_od": _godina("godina_od"),
         "godina_do": _godina("godina_do"),
         "samo_u_skriptu": bool(filtri.get("samo_u_skriptu", False)),
+        # 28.10.2026.: kronoloski PDF build po poglavlju izvora umjesto po kurikulumskoj
+        # cjelini - vidi izgradi_skriptu_xml_kronoloski u baza_zadataka_pipeline.py. Ovo je
+        # NACIN GRADNJE, ne filtar u pravom smislu, ali zivi ovdje da ne treba nova kolona
+        # u tabu Skripta_zahtjevi (filtri_json vec postoji i prenosi se cijela).
+        "grupiraj_po_poglavlju": bool(filtri.get("grupiraj_po_poglavlju", False)),
     }
 
 
@@ -128,6 +134,8 @@ def opis_filtara(filtri) -> str:
         dijelovi.append(f"godine {f['godina_od'] or '...'}-{f['godina_do'] or '...'}")
     if f["samo_u_skriptu"]:
         dijelovi.append("samo oznaceni za skriptu")
+    if f["grupiraj_po_poglavlju"]:
+        dijelovi.append("kronoloski po poglavlju")
     return "; ".join(dijelovi) or "svi zadaci"
 
 

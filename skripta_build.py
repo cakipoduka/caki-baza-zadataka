@@ -257,9 +257,18 @@ def izgradi(zahtjev_id: str, sheet, drive, slike_folder_id: str, skripte_folder_
         skinuto = skini_slike(drive, slike_folder_id, potrebne_slike, slike_dir)
         images_izlaz = os.path.join(radni_dir, "images_izlaz")
         os.makedirs(images_izlaz, exist_ok=True)
-        xml, _, n, _ = bp.izgradi_skriptu_xml(
-            redovi, zahtjev, bp.get_potpoglavlja_po_cjelini(sheet), images_izlaz, slike_dir,
-            teorija_po_potpoglavlju=bp.get_teorija_po_potpoglavlju(sheet))
+        # 28.10.2026.: kronoloski build (po poglavlju izvora, za materijal uvezen preko
+        # "Uvoz iz foldera" - Caki) umjesto standardnog, po kurikulumskoj cjelini - v.
+        # grupiraj_po_poglavlju u filtriraj_zadatke_za_skriptu.normaliziraj_filtre i
+        # bp.izgradi_skriptu_xml_kronoloski. Zahtjev bira granu, sve ostalo (slike, upload,
+        # status u Sheetu) ostaje identicno za oba puta.
+        if bp.normaliziraj_filtre(zahtjev.get("filtri")).get("grupiraj_po_poglavlju"):
+            xml, _, n, _ = bp.izgradi_skriptu_xml_kronoloski(
+                redovi, zahtjev, bp.get_naslovi_poglavlja(sheet), images_izlaz, slike_dir)
+        else:
+            xml, _, n, _ = bp.izgradi_skriptu_xml(
+                redovi, zahtjev, bp.get_potpoglavlja_po_cjelini(sheet), images_izlaz, slike_dir,
+                teorija_po_potpoglavlju=bp.get_teorija_po_potpoglavlju(sheet))
         print(f"Zadataka: {n}, slika skinuto: {skinuto}")
         projekt = os.path.join(radni_dir, "pretext")
         napisi_pretext_projekt(projekt, xml, images_izlaz)

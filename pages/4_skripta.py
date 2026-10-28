@@ -172,9 +172,22 @@ filtriraj = st.checkbox(
     help="Uključi ako želiš samo fiksni skup 'zadaci za rad na satu' koje si ručno označila.",
 )
 
+grupiraj_po_poglavlju = st.checkbox(
+    "📖 Kronološki po poglavlju knjige (umjesto po cjelini)",
+    value=False,
+    key="skripta_grupiraj_po_poglavlju",
+    help="Za materijal unesen preko 'Uvoz iz foldera' (PoglavljeX.Y_Primjeri / "
+         "PoglavljeX.Y_zadaci) - poglavlja idu redom 1→30 kako su u knjizi, Primjeri prije "
+         "Zadataka unutar svakog poglavlja, BEZ sortiranja po težini (čuva redoslijed skeniranja). "
+         "Naslove pojedinih poglavlja možeš promijeniti u tabu 'Sifrarnik_poglavlja_knjige' "
+         "u Google Sheetu (stupci: poglavlje_kljuc, naslov_prikaz) - inače se prikazuje sirovi "
+         "naziv (npr. 'Poglavlje3.1').",
+)
+
 filtri = {
     "razine": razine, "cjeline": cjeline_odabrane, "izvori": izvori, "biblioteke": biblioteke,
     "godina_od": godina_od, "godina_do": godina_do, "samo_u_skriptu": filtriraj,
+    "grupiraj_po_poglavlju": grupiraj_po_poglavlju,
 }
 _pogodaka = filtriraj_zadatke(_svi, filtri)
 st.metric("Zadataka koji zadovoljavaju filtre", len(_pogodaka), help="Broj prije gradnje - isti filtar koristi Colab.")

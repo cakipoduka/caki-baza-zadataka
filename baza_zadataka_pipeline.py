@@ -1171,6 +1171,137 @@ def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, 
     lines += ['  </article>', '</pretext>']
     return "\n".join(lines), broj_slika, len(odabrani), naslov
 
+# --- "Skripta" KRONOLOSKI po poglavlju izvora (28.10.2026., na Cakijev zahtjev) ---
+#
+# Za skriptu sastavljenu IZ JEDNOG udzbenika/materijala ("Uvoz iz foldera", nazivlje
+# PoglavljeX.Y_Primjeri / PoglavljeX.Y_zadaci) poredak po kurikulumskoj cjelina/potpoglavlje
+# (izgradi_skriptu_xml iznad) NE odgovara - treba ici REDOSLIJEDOM KNJIGE, poglavlje po
+# poglavlje, Primjeri prije Zadataka unutar svakog poglavlja, BEZ sortiranja po tezini (to bi
+# razbilo redoslijed materijala). Ne dira NISTA postojece (izgradi_skriptu_xml,
+# _build_inner_content, _dodaj_primjere_i_vjezbe ostaju netaknuti) - ovo je ZASEBAN,
+# PARALELAN put koji iznova koristi iste niskorazinske graditelje (_build_example_lines,
+# _build_exercise_lines - genericki, ne znaju nista o cjelini/potpoglavlju).
+#
+# Redoslijed zadataka UNUTAR poglavlja = redoslijed redaka u tabu 'Zadaci' (NE sortira se) -
+# to vec odgovara redoslijedu skeniranja JER "Uvoz iz foldera" (nadopuni_ili_dodaj_zadatke)
+# dodaje retke append_rows() redoslijedom AI izlaza = redoslijedom privremeni_broj iz skena,
+# POD UVJETOM da se poglavlja upisuju jedno za drugim (normalan tijek rada), bez naknadnog
+# premetanja redaka u Sheetu.
+
+_POGLAVLJE_SUFIKS_RE = re.compile(r"(?i)[_\s\-]+(primjeri?|zada(?:ci|tci|tak))\d*\s*$")
+
+def parsiraj_poglavlje_iz_izvora(izvor_naziv: str) -> str:
+    """'Poglavlje3.1_zadaci' -> 'Poglavlje3.1'; 'Poglavlje3.1_Primjeri' -> 'Poglavlje3.1' -
+    tako se Primjeri i Zadaci istog poglavlja spoje u ISTU skripta-sekciju. Ako naziv ne
+    zavrsava poznatim sufiksom, vraca se NETAKNUT (siguran fallback - u najgorem slucaju
+    Primjeri/Zadaci ostanu kao dvije odvojene sekcije, nista ne puca)."""
+    naziv = (izvor_naziv or "").strip()
+    novi = _POGLAVLJE_SUFIKS_RE.sub("", naziv).strip()
+    return novi or naziv
+
+
+_POGLAVLJE_BROJ_RE = re.compile(r"^(\D*)(\d+(?:\.\d+)*)\s*$")
+
+def _poglavlje_sort_key(naziv: str):
+    """Prirodni poredak za nazive oblika 'Poglavlje3.1'/'Poglavlje3.10'/'Poglavlje4.2' -
+    brojevi odvojeni tockom usporedjuju se KOMPONENTA PO KOMPONENTU kao verzije (3.10 poslije
+    3.9), NE kao decimalni razlomak (3.10 == 3.1 kao float - bila bi pogresna usporedba).
+    Nazivi koji ne odgovaraju obrascu idu na kraj (abecedno medju sobom), ne nasumicno u sredinu."""
+    m = _POGLAVLJE_BROJ_RE.match((naziv or "").strip())
+    if not m:
+        return (1, (naziv or "").lower(), ())
+    prefiks, broj = m.groups()
+    komponente = tuple(int(x) for x in broj.split("."))
+    return (0, prefiks.lower(), komponente)
+
+
+NASLOVI_POGLAVLJA_HEADERS = ["poglavlje_kljuc", "naslov_prikaz"]
+
+def get_naslovi_poglavlja(sheet) -> dict:
+    """Vraca {poglavlje_kljuc: naslov_prikaz} iz tab 'Sifrarnik_poglavlja_knjige' (isti
+    obrazac kao get_biblioteke_izvora - auto-kreira prazan tab ako ne postoji, NE seedira
+    nicim, Caki rucno upisuje parove kad zeli preimenovati sekciju u PDF-u). Poglavlje bez
+    upisa u ovom tabu prikazuje se pod svojim sirovim kljucem (npr. 'Poglavlje3.1') -
+    ovo je cisto KOZMETICKO, build ne puca ako je tab prazan ili ne postoji."""
+    try:
+        ws = sheet.worksheet("Sifrarnik_poglavlja_knjige")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title="Sifrarnik_poglavlja_knjige", rows=200, cols=2)
+        ws.append_row(NASLOVI_POGLAVLJA_HEADERS)
+        return {}
+    rows = ws.get_all_values()[1:]
+    return {r[0].strip(): r[1].strip() for r in rows if len(r) >= 2 and r[0].strip() and r[1].strip()}
+
+
+def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir,
+                                     naslovi_poglavlja=None):
+    """KRONOLOSKA inacica _build_inner_content - grupira po 'poglavlju' izvucenom iz
+    izvor_naziv (parsiraj_poglavlje_iz_izvora), poglavlja prirodnim brojcanim redom
+    (_poglavlje_sort_key), a UNUTAR poglavlja zadaci OSTAJU u redoslijedu kako su u Sheetu
+    (BEZ _puni_sort_key sortiranja po tezini - to bi razbilo redoslijed materijala). Primjeri
+    (koristi_kao_primjer_na_satu='da') idu kao <example> PRIJE <exercises>, isto kao u
+    postojecem kodu. naslovi_poglavlja: v. get_naslovi_poglavlja - neobavezno, prazan dict
+    ili None = svako poglavlje prikazuje svoj sirovi kljuc kao naslov sekcije."""
+    naslovi_poglavlja = naslovi_poglavlja or {}
+    lines = []
+    broj_slika = 0
+
+    po_poglavlju = {}
+    for row in zadaci_redovi:
+        poglavlje = parsiraj_poglavlje_iz_izvora(row.get("izvor_naziv", ""))
+        po_poglavlju.setdefault(poglavlje, []).append(row)
+
+    for poglavlje in sorted(po_poglavlju, key=_poglavlje_sort_key):
+        grupa = po_poglavlju[poglavlje]
+        naslov_sekcije = naslovi_poglavlja.get(poglavlje) or poglavlje
+        sec_id = _sanitize_id(f"{xml_id_root}-{poglavlje}")
+        lines.append(f'    <section xml:id="{sec_id}">')
+        lines.append(f'      <title>{_xml_escape(naslov_sekcije)}</title>')
+
+        primjeri = [r for r in grupa if _je_primjer_na_satu(r)]
+        vjezbe = [r for r in grupa if not _je_primjer_na_satu(r)]
+        for row in primjeri:
+            ex_lines, slika_ok = _build_example_lines(row, images_dir_abs, slike_izvor_dir)
+            lines.extend(ex_lines)
+            broj_slika += 1 if slika_ok else 0
+        lines.append('      <exercises>')
+        for row in vjezbe:
+            ex_lines, slika_ok = _build_exercise_lines(row, images_dir_abs, slike_izvor_dir)
+            lines.extend(ex_lines)
+            broj_slika += 1 if slika_ok else 0
+        lines.append('      </exercises>')
+
+        lines.append('    </section>')
+
+    return lines, broj_slika
+
+
+def izgradi_skriptu_xml_kronoloski(rows, zahtjev, naslovi_poglavlja, images_dir_abs, slike_izvor_dir):
+    """KRONOLOSKA sestra izgradi_skriptu_xml (iznad) - ISTA vanjska forma (docinfo/
+    frontmatter/backmatter s rjesenjima na kraju preko PreTeXt-ove divizijske mehanike,
+    isti filtriraj_zadatke za odabir redaka), ali unutarnji sadrzaj grupira
+    _build_inner_content_kronoloski umjesto po cjelina/potpoglavlje/tezina. Poziva se kad
+    zahtjev['filtri']['grupiraj_po_poglavlju'] je istinit (v. skripta_build.izgradi)."""
+    filtri = normaliziraj_filtre(zahtjev.get("filtri"))
+    odabrani = filtriraj_zadatke(rows, filtri)
+    naslov = " ".join((zahtjev.get("naslov") or "").split()) or ("Skripta - " + opis_filtara(filtri))
+    podnaslov = " ".join((zahtjev.get("podnaslov") or "").split())
+    if not odabrani:
+        return None, 0, 0, naslov
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<pretext>']
+    lines += _skripta_docinfo_lines()
+    lines += ['  <article xml:id="skripta">', f'    <title>{_xml_escape(naslov)}</title>']
+    if podnaslov:
+        lines.append(f'    <subtitle>{_xml_escape(podnaslov)}</subtitle>')
+    lines += _skripta_frontmatter_lines()
+    inner, broj_slika = _build_inner_content_kronoloski(
+        odabrani, "skripta", images_dir_abs, slike_izvor_dir, naslovi_poglavlja=naslovi_poglavlja)
+    lines.extend(inner)
+    lines += _skripta_backmatter_lines()
+    lines += ['  </article>', '</pretext>']
+    return "\n".join(lines), broj_slika, len(odabrani), naslov
+
 # --- Log obrade (upisuje se u Sheet, NE samo u Streamlit session_state) ---
 #
 # st.session_state i on-screen log (st.empty().text(...)) žive samo dok proces same
