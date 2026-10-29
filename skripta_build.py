@@ -68,6 +68,13 @@ STIL_PREAMBULA = r"""
 \usepackage{xcolor}
 \definecolor{cakiplava}{HTML}{1F4E79}
 \definecolor{cakisiva}{HTML}{6B7280}
+% 29.10.2026.: FIX - "\overparen{XY}" (luk XY, npr. obodni/sredisnji kut) nije
+% definiran ni u LaTeX kernelu ni u amsmath/amssymb - AI (Mathpix/Claude
+% strukturiranje) ga ipak proizvodi za zadatke o kruznici/kutovima, pa build
+% puca s "Undefined control sequence" (v. main.tex, zahtjev 80f2ab69fc).
+% Definicija ispod koristi standardni amssymb simbol \frown preko \stackrel -
+% nema novu ovisnost (paket), vizualno isto kao uobicajena "luk nad slovima".
+\newcommand{\overparen}[1]{\stackrel{\frown}{#1}}
 \usepackage{polyglossia}
 \setmainlanguage{croatian}
 \usepackage{fancyhdr}
