@@ -263,8 +263,11 @@ def izgradi(zahtjev_id: str, sheet, drive, slike_folder_id: str, skripte_folder_
         # bp.izgradi_skriptu_xml_kronoloski. Zahtjev bira granu, sve ostalo (slike, upload,
         # status u Sheetu) ostaje identicno za oba puta.
         if bp.normaliziraj_filtre(zahtjev.get("filtri")).get("grupiraj_po_poglavlju"):
+            # 29.10.2026.: redoslijed_poglavlja (Cakijev rucni poredak, v. pages/4_skripta.py)
+            # - prazan dict ako tab/stupac ne postoji, tad pada natrag na prirodni poredak.
             xml, _, n, _ = bp.izgradi_skriptu_xml_kronoloski(
-                redovi, zahtjev, bp.get_naslovi_poglavlja(sheet), images_izlaz, slike_dir)
+                redovi, zahtjev, bp.get_naslovi_poglavlja(sheet), images_izlaz, slike_dir,
+                redoslijed_poglavlja=bp.get_redoslijed_poglavlja(sheet))
         else:
             xml, _, n, _ = bp.izgradi_skriptu_xml(
                 redovi, zahtjev, bp.get_potpoglavlja_po_cjelini(sheet), images_izlaz, slike_dir,

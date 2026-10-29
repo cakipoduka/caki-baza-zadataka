@@ -22,13 +22,18 @@ import predmet_config
 from baza_zadataka_pipeline import (
     get_drive_service,
     get_gspread_client,
+    get_naslovi_poglavlja,
+    get_redoslijed_poglavlja,
     get_sifrarnik_cjelina,
+    parsiraj_poglavlje_iz_izvora,
     pokreni_github_build_skripte,
     popis_zahtjeva_skripte,
     preuzmi_datoteku_iz_drivea,
+    spremi_naslove_poglavlja,
     spremi_zahtjev_skripte,
     ucitaj_zadnji_zahtjev_skripte,
 )
+from baza_zadataka_pipeline import _poglavlje_sort_key  # noqa: E402 - interni helper, isti obrazac kao _izgleda_kao_recenica u pages/8_uvoz_iz_foldera.py
 from filtriraj_zadatke_za_skriptu import filtriraj_zadatke, opis_filtara
 
 import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
@@ -177,11 +182,12 @@ grupiraj_po_poglavlju = st.checkbox(
     value=False,
     key="skripta_grupiraj_po_poglavlju",
     help="Za materijal unesen preko 'Uvoz iz foldera' (PoglavljeX.Y_Primjeri / "
-         "PoglavljeX.Y_zadaci) - poglavlja idu redom 1→30 kako su u knjizi, Primjeri prije "
-         "Zadataka unutar svakog poglavlja, BEZ sortiranja po težini (čuva redoslijed skeniranja). "
-         "Naslove pojedinih poglavlja možeš promijeniti u tabu 'Sifrarnik_poglavlja_knjige' "
-         "u Google Sheetu (stupci: poglavlje_kljuc, naslov_prikaz) - inače se prikazuje sirovi "
-         "naziv (npr. 'Poglavlje3.1').",
+         "PoglavljeX.Y_zadaci) - poglavlja idu redom 1→30 kako su u knjizi (ili po ručnom "
+         "poretku, v. tablicu ispod), Primjeri prije Zadataka unutar svakog poglavlja, BEZ "
+         "sortiranja po težini (čuva redoslijed skeniranja). Naziv i redoslijed svakog "
+         "poglavlja upisuješ u tablici ispod (čim uključiš ovu kvačicu) - sprema se u tab "
+         "'Sifrarnik_poglavlja_knjige' u Google Sheetu, isto vrijedi i ako ga uredite izravno "
+         "tamo.",
 )
 
 filtri = {
@@ -198,6 +204,65 @@ if _pogodaka:
         c = str(r.get("cjelina", "")).strip() or "Nekategorizirano"
         _po[c] = _po.get(c, 0) + 1
     st.dataframe([{"cjelina": c, "zadataka": n} for c, n in sorted(_po.items())], hide_index=True)
+
+if grupiraj_po_poglavlju:
+    st.markdown("###### 📖 Nazivi i redoslijed poglavlja")
+    st.caption(
+        "Poglavlja prepoznata iz trenutno filtriranih zadataka (iz 'izvor_naziv', npr. "
+        "'Poglavlje2.11_zadaci' i 'Poglavlje2.11_Primjeri' postaju JEDNO poglavlje "
+        "'Poglavlje2.11'). Suzi filtre iznad (npr. biblioteka = jedna knjiga) da ovdje vidiš "
+        "SAMO poglavlja te knjige. **Redoslijed**: manji broj ide prije u skripti - po "
+        "defaultu popunjen prirodnim poretkom (1.1, 1.2, ... 1.10), promijeni SAMO retke "
+        "gdje želiš drugačiji poredak (decimale su ok, npr. 2.5 da umetneš između 2 i 3 bez "
+        "pretipkavanja svih ostalih). **Naziv**: prazno = u PDF-u ide sirovi ključ."
+    )
+    _poglavlja_kljucevi = sorted(
+        {parsiraj_poglavlje_iz_izvora(r.get("izvor_naziv", "")) for r in _pogodaka
+         if parsiraj_poglavlje_iz_izvora(r.get("izvor_naziv", "")).strip()},
+        key=_poglavlje_sort_key,
+    )
+    if not _poglavlja_kljucevi:
+        st.caption("Nijedan trenutno filtrirani zadatak nema prepoznatljiv 'PoglavljeX.Y' ključ "
+                   "u izvor_naziv - ova tablica se puni samo za materijal unesen preko 'Uvoz iz "
+                   "foldera'.")
+    else:
+        try:
+            _sheet_za_poglavlja = init_sheet()
+            _postojeci_naslovi = get_naslovi_poglavlja(_sheet_za_poglavlja)
+            _postojeci_redoslijed = get_redoslijed_poglavlja(_sheet_za_poglavlja)
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"Ne mogu učitati postojeće nazive/redoslijed: {e}")
+            _postojeci_naslovi, _postojeci_redoslijed = {}, {}
+        _poglavlja_tablica = [
+            {
+                "poglavlje_kljuc": k,
+                "redoslijed": _postojeci_redoslijed.get(k, float(_i + 1)),
+                "naziv_cjeline": _postojeci_naslovi.get(k, ""),
+            }
+            for _i, k in enumerate(_poglavlja_kljucevi)
+        ]
+        _poglavlja_uredeno = st.data_editor(
+            _poglavlja_tablica, hide_index=True, use_container_width=True,
+            key="skripta_poglavlja_editor",
+            column_config={
+                "poglavlje_kljuc": st.column_config.TextColumn("Poglavlje (ključ)", disabled=True),
+                "redoslijed": st.column_config.NumberColumn(
+                    "Redoslijed", help="Manji broj = ranije u skripti.", step=1, format="%.2f"),
+                "naziv_cjeline": st.column_config.TextColumn("Naziv cjeline (u PDF-u)"),
+            },
+        )
+        if st.button("💾 Spremi nazive i redoslijed poglavlja", key="skripta_spremi_poglavlja"):
+            try:
+                spremi_naslove_poglavlja(init_sheet(), [
+                    {"poglavlje_kljuc": r.get("poglavlje_kljuc"), "redoslijed": r.get("redoslijed"),
+                     "naslov_prikaz": r.get("naziv_cjeline")}
+                    for r in _poglavlja_uredeno
+                ])
+                st.success(f"✅ Spremljeno {len(_poglavlja_uredeno)} poglavlja u "
+                          "'Sifrarnik_poglavlja_knjige'.")
+                st.cache_data.clear()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Greška: {e}")
 
 st.subheader("Naslov i podnaslov")
 n1, n2 = st.columns(2)

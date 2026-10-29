@@ -1454,33 +1454,98 @@ def _poglavlje_sort_key(naziv: str):
     return (0, prefiks.lower(), komponente)
 
 
-NASLOVI_POGLAVLJA_HEADERS = ["poglavlje_kljuc", "naslov_prikaz"]
+NASLOVI_POGLAVLJA_HEADERS = ["poglavlje_kljuc", "naslov_prikaz", "redoslijed"]
 
 def get_naslovi_poglavlja(sheet) -> dict:
     """Vraca {poglavlje_kljuc: naslov_prikaz} iz tab 'Sifrarnik_poglavlja_knjige' (isti
     obrazac kao get_biblioteke_izvora - auto-kreira prazan tab ako ne postoji, NE seedira
-    nicim, Caki rucno upisuje parove kad zeli preimenovati sekciju u PDF-u). Poglavlje bez
+    nicim; od 29.10.2026. Caki to pretezno upisuje kroz UI u pages/4_skripta.py preko
+    spremi_naslove_poglavlja, rucno u Google Sheetu i dalje radi isto). Poglavlje bez
     upisa u ovom tabu prikazuje se pod svojim sirovim kljucem (npr. 'Poglavlje3.1') -
     ovo je cisto KOZMETICKO, build ne puca ako je tab prazan ili ne postoji."""
     try:
         ws = sheet.worksheet("Sifrarnik_poglavlja_knjige")
     except gspread.exceptions.WorksheetNotFound:
-        ws = sheet.add_worksheet(title="Sifrarnik_poglavlja_knjige", rows=200, cols=2)
+        ws = sheet.add_worksheet(title="Sifrarnik_poglavlja_knjige", rows=200,
+                                 cols=len(NASLOVI_POGLAVLJA_HEADERS))
         ws.append_row(NASLOVI_POGLAVLJA_HEADERS)
         return {}
     rows = ws.get_all_values()[1:]
     return {r[0].strip(): r[1].strip() for r in rows if len(r) >= 2 and r[0].strip() and r[1].strip()}
 
 
+def get_redoslijed_poglavlja(sheet) -> dict:
+    """Vraca {poglavlje_kljuc: redoslijed} (float) iz 3. stupca ISTOG tab-a kao
+    get_naslovi_poglavlja ('redoslijed', dodano 29.10.2026. na Cakijev zahtjev - rucni
+    poredak poglavlja u kronoloskoj skripti, kad prirodni brojcani poredak
+    (_poglavlje_sort_key) ne odgovara sto treba). Poglavlje bez upisanog/valjanog broja ovdje
+    NIJE u rjecniku - _poglavlje_sort_key_s_redoslijedom tad pada natrag na prirodni poredak,
+    nista ne puca ako je tab prazan, ne postoji, ili redoslijed stupac nedostaje/sadrzi
+    neispravan unos (npr. tekst umjesto broja)."""
+    try:
+        ws = sheet.worksheet("Sifrarnik_poglavlja_knjige")
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    rows = ws.get_all_values()[1:]
+    izlaz = {}
+    for r in rows:
+        if len(r) < 3 or not r[0].strip() or not r[2].strip():
+            continue
+        try:
+            izlaz[r[0].strip()] = float(r[2].strip().replace(",", "."))
+        except ValueError:
+            continue
+    return izlaz
+
+
+def spremi_naslove_poglavlja(sheet, zapisi: list):
+    """Prepisuje CIJELI tab 'Sifrarnik_poglavlja_knjige' (mali tab, desetci redaka - sigurnije
+    prepisati u cijelosti nego upsert po retku, isto nacelo kao get_biblioteke_izvora/
+    Sifrarnik_biblioteka_izvora). zapisi: lista rjecnika
+    {"poglavlje_kljuc", "naslov_prikaz", "redoslijed"} (npr. izravno iz st.data_editor-a u
+    pages/4_skripta.py). Redci bez poglavlje_kljuc se preskaču; redoslijed se pise kao tekst
+    (dozvoljava i decimalne vrijednosti radi umetanja izmedju dva postojeca cijela broja bez
+    pretipkavanja svih ostalih)."""
+    ws = get_or_create_worksheet(sheet, "Sifrarnik_poglavlja_knjige", NASLOVI_POGLAVLJA_HEADERS,
+                                 rows=200)
+    redovi = []
+    for z in zapisi:
+        kljuc = str((z or {}).get("poglavlje_kljuc", "")).strip()
+        if not kljuc:
+            continue
+        redoslijed = z.get("redoslijed")
+        redovi.append([
+            kljuc,
+            str(z.get("naslov_prikaz", "") or "").strip(),
+            "" if redoslijed in (None, "") else str(redoslijed),
+        ])
+    ws.clear()
+    ws.update(range_name="A1", values=[NASLOVI_POGLAVLJA_HEADERS] + redovi)
+
+
+def _poglavlje_sort_key_s_redoslijedom(naziv, redoslijed_poglavlja):
+    """Isto kao _poglavlje_sort_key, ali RUCNI redoslijed (get_redoslijed_poglavlja) ima
+    prednost kad postoji za taj naziv - poglavlja BEZ rucnog broja idu NAKON svih poglavlja
+    S rucnim brojem, prirodno sortirana medju sobom (siguran fallback, 29.10.2026.)."""
+    rucni = (redoslijed_poglavlja or {}).get(naziv)
+    if rucni is not None:
+        return (0, rucni, (naziv or "").lower())
+    return (1,) + _poglavlje_sort_key(naziv)
+
+
 def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir,
-                                     naslovi_poglavlja=None):
+                                     naslovi_poglavlja=None, redoslijed_poglavlja=None):
     """KRONOLOSKA inacica _build_inner_content - grupira po 'poglavlju' izvucenom iz
     izvor_naziv (parsiraj_poglavlje_iz_izvora), poglavlja prirodnim brojcanim redom
-    (_poglavlje_sort_key), a UNUTAR poglavlja zadaci OSTAJU u redoslijedu kako su u Sheetu
-    (BEZ _puni_sort_key sortiranja po tezini - to bi razbilo redoslijed materijala). Primjeri
+    (_poglavlje_sort_key), OSIM gdje je Caki rucno postavio drugaciji poredak
+    (redoslijed_poglavlja, v. _poglavlje_sort_key_s_redoslijedom - dodano 29.10.2026.), a
+    UNUTAR poglavlja zadaci OSTAJU u redoslijedu kako su u Sheetu (BEZ _puni_sort_key
+    sortiranja po tezini - to bi razbilo redoslijed materijala). Primjeri
     (koristi_kao_primjer_na_satu='da') idu kao <example> PRIJE <exercises>, isto kao u
     postojecem kodu. naslovi_poglavlja: v. get_naslovi_poglavlja - neobavezno, prazan dict
-    ili None = svako poglavlje prikazuje svoj sirovi kljuc kao naslov sekcije."""
+    ili None = svako poglavlje prikazuje svoj sirovi kljuc kao naslov sekcije.
+    redoslijed_poglavlja: v. get_redoslijed_poglavlja - neobavezno, prazan dict ili None =
+    cisto prirodni poredak (staro ponasanje, bez promjene)."""
     naslovi_poglavlja = naslovi_poglavlja or {}
     lines = []
     broj_slika = 0
@@ -1490,7 +1555,7 @@ def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, 
         poglavlje = parsiraj_poglavlje_iz_izvora(row.get("izvor_naziv", ""))
         po_poglavlju.setdefault(poglavlje, []).append(row)
 
-    for poglavlje in sorted(po_poglavlju, key=_poglavlje_sort_key):
+    for poglavlje in sorted(po_poglavlju, key=lambda p: _poglavlje_sort_key_s_redoslijedom(p, redoslijed_poglavlja)):
         grupa = po_poglavlju[poglavlje]
         naslov_sekcije = naslovi_poglavlja.get(poglavlje) or poglavlje
         sec_id = _sanitize_id(f"{xml_id_root}-{poglavlje}")
@@ -1515,12 +1580,14 @@ def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, 
     return lines, broj_slika
 
 
-def izgradi_skriptu_xml_kronoloski(rows, zahtjev, naslovi_poglavlja, images_dir_abs, slike_izvor_dir):
+def izgradi_skriptu_xml_kronoloski(rows, zahtjev, naslovi_poglavlja, images_dir_abs, slike_izvor_dir,
+                                   redoslijed_poglavlja=None):
     """KRONOLOSKA sestra izgradi_skriptu_xml (iznad) - ISTA vanjska forma (docinfo/
     frontmatter/backmatter s rjesenjima na kraju preko PreTeXt-ove divizijske mehanike,
     isti filtriraj_zadatke za odabir redaka), ali unutarnji sadrzaj grupira
     _build_inner_content_kronoloski umjesto po cjelina/potpoglavlje/tezina. Poziva se kad
-    zahtjev['filtri']['grupiraj_po_poglavlju'] je istinit (v. skripta_build.izgradi)."""
+    zahtjev['filtri']['grupiraj_po_poglavlju'] je istinit (v. skripta_build.izgradi).
+    redoslijed_poglavlja: v. get_redoslijed_poglavlja - neobavezno (dodano 29.10.2026.)."""
     filtri = normaliziraj_filtre(zahtjev.get("filtri"))
     odabrani = filtriraj_zadatke(rows, filtri)
     naslov = " ".join((zahtjev.get("naslov") or "").split()) or ("Skripta - " + opis_filtara(filtri))
@@ -1535,7 +1602,8 @@ def izgradi_skriptu_xml_kronoloski(rows, zahtjev, naslovi_poglavlja, images_dir_
         lines.append(f'    <subtitle>{_xml_escape(podnaslov)}</subtitle>')
     lines += _skripta_frontmatter_lines()
     inner, broj_slika = _build_inner_content_kronoloski(
-        odabrani, "skripta", images_dir_abs, slike_izvor_dir, naslovi_poglavlja=naslovi_poglavlja)
+        odabrani, "skripta", images_dir_abs, slike_izvor_dir, naslovi_poglavlja=naslovi_poglavlja,
+        redoslijed_poglavlja=redoslijed_poglavlja)
     lines.extend(inner)
     lines += _skripta_backmatter_lines()
     lines += ['  </article>', '</pretext>']
