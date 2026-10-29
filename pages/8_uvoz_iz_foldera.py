@@ -352,38 +352,111 @@ with tab3:
         st.info("Nema ničega za upis.")
     else:
         opcije = [f"{r['grupa']} · {r['model']} ({r['broj_jedinica']} jedinica, {r['broj_upozorenja']} upozorenja)" for r in evid]
-        i = st.selectbox("Što upisati", range(len(evid)), format_func=lambda k: opcije[k])
-        r = evid[i]
-        iz = ucitaj_izlaz(r["izlaz_file_id"])
-        st.write(f"Izvor: **{iz['izvor']['izvor_naziv']}** · tip {iz['izvor']['izvor_tip']} · godina {iz['izvor']['godina'] or '—'}")
-        c1, c2, c3 = st.columns(3)
-        izvor_naziv = c1.text_input("izvor_naziv", iz["izvor"]["izvor_naziv"])
-        izvor_tip = c2.selectbox("izvor_tip", uf.IZVOR_TIPOVI, index=uf.IZVOR_TIPOVI.index(iz["izvor"]["izvor_tip"]))
-        godina = c3.text_input("godina", iz["izvor"]["godina"])
-        razina = st.selectbox("razina", predmet_config.razine(predmet))
-        biblioteka = st.selectbox("Biblioteka izvora (neobavezno)", [""] + list(get_biblioteke_izvora(sheet)))
-        primjer_na_satu = st.checkbox(
-            "📘 Cijela ova serija su primjeri (koristi_kao_primjer_na_satu)", value=False,
-            help="Uključi SAMO ako je cijeli ovaj izvor serija riješenih primjera (npr. udžbenički \"Primjer 1./2./3.\" "
-                 "blok s rješenjem), ne zadaci za samostalnu vježbu. Postavlja koristi_kao_primjer_na_satu=\"da\" na SVE "
-                 "zadatke ovog upisa - u PreTeXt izlazu idu kao primjer (§27.3), a Test Builder ih svejedno prikazuje "
-                 "jednako kao i sve ostale (ne isključuje ih iz pretrage).")
-        samo_cisti = st.checkbox("Upiši samo zadatke BEZ upozorenja", value=False)
-        if iz.get("nepotpuno"):
-            st.warning("Odgovor modela je bio nepotpun — provjeri da nedostaju zadnji zadaci.")
-        if st.button("✅ Upiši u bazu", type="primary"):
-            try:
+        # 29.10.2026.: VIŠESTRUKI odabir (Caki - "da izaberem više poglavlja zadaci i primjeri
+        # da ne moram pojedinačno birati") - multiselect umjesto selectbox. Kod JEDNOG odabira
+        # ponašanje je IDENTIČNO kao prije (izvor_naziv/tip/godina editabilni) - regresijska
+        # garancija, nema promjene za postojeći tijek rada. Kod VIŠE odabranih, izvor_naziv/
+        # izvor_tip/godina se NE prikazuju kao zajednička polja za uređivanje (svaka grupa ima
+        # svoj, već upisan kod obrade u Tab 1/2 - uređuju se tamo ako treba) - prikazuje se samo
+        # pregledna tablica, a razina/biblioteka/primjer_na_satu/samo_cisti su ZAJEDNIČKI za sve
+        # odabrane (pretpostavka: ista knjiga/isto poglavlje, isti stupanj) - upis ide redom,
+        # grupa po grupa, jedna greška ne prekida ostale (svaka grupa je zaseban try/except).
+        odabrani_idx = st.multiselect(
+            "Što upisati (odaberi jedan ili više izvora odjednom)",
+            range(len(evid)), format_func=lambda k: opcije[k], key="upis_odabrani_idx",
+        )
+        if not odabrani_idx:
+            st.info("Odaberi bar jedan izvor iznad.")
+        elif len(odabrani_idx) == 1:
+            # --- JEDAN odabran: STARO ponašanje, bez promjene ---
+            i = odabrani_idx[0]
+            r = evid[i]
+            iz = ucitaj_izlaz(r["izlaz_file_id"])
+            st.write(f"Izvor: **{iz['izvor']['izvor_naziv']}** · tip {iz['izvor']['izvor_tip']} · godina {iz['izvor']['godina'] or '—'}")
+            c1, c2, c3 = st.columns(3)
+            izvor_naziv = c1.text_input("izvor_naziv", iz["izvor"]["izvor_naziv"])
+            izvor_tip = c2.selectbox("izvor_tip", uf.IZVOR_TIPOVI, index=uf.IZVOR_TIPOVI.index(iz["izvor"]["izvor_tip"]))
+            godina = c3.text_input("godina", iz["izvor"]["godina"])
+            razina = st.selectbox("razina", predmet_config.razine(predmet))
+            biblioteka = st.selectbox("Biblioteka izvora (neobavezno)", [""] + list(get_biblioteke_izvora(sheet)))
+            primjer_na_satu = st.checkbox(
+                "📘 Cijela ova serija su primjeri (koristi_kao_primjer_na_satu)", value=False,
+                help="Uključi SAMO ako je cijeli ovaj izvor serija riješenih primjera (npr. udžbenički \"Primjer 1./2./3.\" "
+                     "blok s rješenjem), ne zadaci za samostalnu vježbu. Postavlja koristi_kao_primjer_na_satu=\"da\" na SVE "
+                     "zadatke ovog upisa - u PreTeXt izlazu idu kao primjer (§27.3), a Test Builder ih svejedno prikazuje "
+                     "jednako kao i sve ostale (ne isključuje ih iz pretrage).")
+            samo_cisti = st.checkbox("Upiši samo zadatke BEZ upozorenja", value=False)
+            if iz.get("nepotpuno"):
+                st.warning("Odgovor modela je bio nepotpun — provjeri da nedostaju zadnji zadaci.")
+            if st.button("✅ Upiši u bazu", type="primary"):
+                try:
+                    dio = drive_io()
+                    slike_folder = predmet_config.slike_folder_id(predmet, st.secrets)
+                    zad = [z for z in iz["zadaci"] if not (samo_cisti and z["status_provjere"])]
+                    with st.spinner("Kopiram slike i upisujem..."):
+                        zad = uf.pripremi_za_upis(zad, iz["mapa_slika"], izvor_naziv, dio, slike_folder)
+                        dodano, azur = nadopuni_ili_dodaj_zadatke(
+                            ws_zadaci, zad, izvor_tip, izvor_naziv, godina, razina, max(1, len((r.get("datoteke") or "").split("; "))),
+                            skenirano=iz.get("skenirano", "da"), biblioteka_izvora=biblioteka,
+                            koristi_kao_primjer_na_satu=("da" if primjer_na_satu else ""))
+                    uf.zapisi_evidenciju(ws_evid, {"grupa": r["grupa"], "model": r["model"], "status": "uneseno", "otisak": r["otisak"],
+                                                   "dodano": dodano, "nadopunjeno": azur})
+                    st.success(f"✅ Dodano {dodano}, nadopunjeno {azur}.")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Upis nije uspio: {e}")
+        else:
+            # --- VIŠE odabrano: zajedničke postavke, upis redom za svaku grupu ---
+            odabrani = [evid[k] for k in odabrani_idx]
+            pregled_rows = []
+            for r in odabrani:
+                iz_r = ucitaj_izlaz(r["izlaz_file_id"])
+                pregled_rows.append({
+                    "grupa": r["grupa"], "model": r["model"],
+                    "izvor_naziv": iz_r["izvor"]["izvor_naziv"], "izvor_tip": iz_r["izvor"]["izvor_tip"],
+                    "godina": iz_r["izvor"]["godina"] or "—",
+                    "jedinica": r["broj_jedinica"], "upozorenja": r["broj_upozorenja"],
+                })
+            st.dataframe(pd.DataFrame(pregled_rows), hide_index=True, use_container_width=True)
+            st.caption("izvor_naziv / izvor_tip / godina se NE uređuju ovdje kod više odabranih izvora - "
+                       "koriste se onakvi kakvi su već zapisani kod obrade (Tab 1/2). Ako nešto od toga treba "
+                       "promijeniti, odaberi SAMO taj jedan izvor gore (vraća se stari način s poljima za uređivanje).")
+            razina = st.selectbox("razina (zajednička za sve odabrane)", predmet_config.razine(predmet), key="upis_vise_razina")
+            biblioteka = st.selectbox(
+                "Biblioteka izvora (neobavezno, zajednička za sve odabrane)",
+                [""] + list(get_biblioteke_izvora(sheet)), key="upis_vise_biblioteka",
+            )
+            primjer_na_satu = st.checkbox(
+                "📘 Cijela ova serija su primjeri (koristi_kao_primjer_na_satu) - za SVE odabrane",
+                value=False, key="upis_vise_primjer",
+                help="Postavlja koristi_kao_primjer_na_satu=\"da\" na SVE zadatke iz SVIH odabranih izvora.",
+            )
+            samo_cisti = st.checkbox(
+                "Upiši samo zadatke BEZ upozorenja - za SVE odabrane", key="upis_vise_samo_cisti",
+            )
+            if st.button(f"✅ Upiši svih {len(odabrani)} odabranih izvora u bazu", type="primary", key="upis_vise_gumb"):
                 dio = drive_io()
                 slike_folder = predmet_config.slike_folder_id(predmet, st.secrets)
-                zad = [z for z in iz["zadaci"] if not (samo_cisti and z["status_provjere"])]
-                with st.spinner("Kopiram slike i upisujem..."):
-                    zad = uf.pripremi_za_upis(zad, iz["mapa_slika"], izvor_naziv, dio, slike_folder)
-                    dodano, azur = nadopuni_ili_dodaj_zadatke(
-                        ws_zadaci, zad, izvor_tip, izvor_naziv, godina, razina, max(1, len((r.get("datoteke") or "").split("; "))),
-                        skenirano=iz.get("skenirano", "da"), biblioteka_izvora=biblioteka,
-                        koristi_kao_primjer_na_satu=("da" if primjer_na_satu else ""))
-                uf.zapisi_evidenciju(ws_evid, {"grupa": r["grupa"], "model": r["model"], "status": "uneseno", "otisak": r["otisak"],
-                                               "dodano": dodano, "nadopunjeno": azur})
-                st.success(f"✅ Dodano {dodano}, nadopunjeno {azur}.")
-            except Exception as e:  # noqa: BLE001
-                st.error(f"Upis nije uspio: {e}")
+                ukupno_dodano = 0
+                ukupno_azur = 0
+                rezultati = []
+                with st.spinner(f"Kopiram slike i upisujem ({len(odabrani)} izvora)..."):
+                    for r in odabrani:
+                        try:
+                            iz_r = ucitaj_izlaz(r["izlaz_file_id"])
+                            zad = [z for z in iz_r["zadaci"] if not (samo_cisti and z["status_provjere"])]
+                            zad = uf.pripremi_za_upis(zad, iz_r["mapa_slika"], iz_r["izvor"]["izvor_naziv"], dio, slike_folder)
+                            dodano, azur = nadopuni_ili_dodaj_zadatke(
+                                ws_zadaci, zad, iz_r["izvor"]["izvor_tip"], iz_r["izvor"]["izvor_naziv"],
+                                iz_r["izvor"]["godina"], razina, max(1, len((r.get("datoteke") or "").split("; "))),
+                                skenirano=iz_r.get("skenirano", "da"), biblioteka_izvora=biblioteka,
+                                koristi_kao_primjer_na_satu=("da" if primjer_na_satu else ""))
+                            uf.zapisi_evidenciju(ws_evid, {"grupa": r["grupa"], "model": r["model"], "status": "uneseno",
+                                                           "otisak": r["otisak"], "dodano": dodano, "nadopunjeno": azur})
+                            ukupno_dodano += dodano
+                            ukupno_azur += azur
+                            rezultati.append(f"✅ {r['grupa']} · {r['model']}: dodano {dodano}, nadopunjeno {azur}")
+                        except Exception as e:  # noqa: BLE001
+                            rezultati.append(f"❌ {r['grupa']} · {r['model']}: GREŠKA - {e}")
+                st.success(f"Ukupno: dodano {ukupno_dodano}, nadopunjeno {ukupno_azur} (od {len(odabrani)} odabranih izvora).")
+                for poruka in rezultati:
+                    st.write(poruka)

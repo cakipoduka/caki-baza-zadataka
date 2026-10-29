@@ -751,6 +751,194 @@ def _pretext_math_or_text(raw):
         return _xml_escape(raw)
     return f"<m>{_escape_postotak_u_matematici(_xml_escape(raw))}</m>"
 
+# ------------------------------------------------------- markdown pipe-tablice u tekstu zadatka
+# 29.10.2026.: zadaci ciji tekst_zadatka_latex sadrzi markdown pipe-tablicu ("| $x$ | -3 | ... |"
+# + separator redak "| :--- | :--- |" + redovi podataka) do sada su u PDF skriptu isli DOSLOVNO,
+# sa sirovim "|" znakovima, jer cijeli tekst ide u JEDAN <p>. Streamlit pregled ih je prikazivao
+# lijepo (st.markdown sam renderira GFM tablice), pa je greska bila nevidljiva sve do pravog PDF-a.
+# PreTeXt <tabular> je BLOK element i NE SMIJE stajati unutar <p>, pa se tekst prvo razlomi na niz
+# segmenata (tekst / tablica) i svaki dobije svoj blok. Zadatak BEZ tablice prolazi kroz tocno isti
+# jedan <p> kao prije - v. _statement_tekst_lines i testovi/test_tablice_u_skripti.py.
+# OPSEG: samo skripta (PreTeXt). Test Builder (pages/2_test_builder.py, pdflatex) ima isti
+# nedostatak, ali je svjesno odgodjen za zaseban zadatak.
+
+_PIPE_RED_RE = re.compile(r"^[ \t]*\|(.*)\|[ \t]*$")
+_SEPARATOR_CELIJA_RE = re.compile(r":?-+:?")
+
+
+def _podijeli_pipe_redak(sadrzaj):
+    r"""Dijeli unutrasnjost jednog retka markdown tablice (bez vodeceg i zavrsnog "|") na popis
+    celija. NE dijeli na "|" koji je unutar $...$ - bez toga bi matematika s apsolutnom
+    vrijednosti ($|z-i|=2$, uobicajeno kod kompleksnih brojeva) bila razlomljena na pola i
+    tablica bi dobila kriv broj stupaca. Znak iza "\" preuzima se doslovno, pa ni escapeani
+    pipe (\|) ni escapeani dolar (\$) ne zavaraju podjelu."""
+    stanice, buf, u_matematici = [], [], False
+    i, n = 0, len(sadrzaj)
+    while i < n:
+        c = sadrzaj[i]
+        if c == "\\" and i + 1 < n:
+            buf.append(c)
+            buf.append(sadrzaj[i + 1])
+            i += 2
+            continue
+        if c == "$":
+            u_matematici = not u_matematici
+        if c == "|" and not u_matematici:
+            stanice.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(c)
+        i += 1
+    stanice.append("".join(buf).strip())
+    return stanice
+
+
+def _je_separator_redak(stanice):
+    """Separator redak markdown tablice (drugi redak, npr. "| :--- | ---: |"): SVE celije su
+    samo crtice i eventualne dvotocke (oznaka poravnanja), bez ikakvog sadrzaja."""
+    return bool(stanice) and all(
+        _SEPARATOR_CELIJA_RE.fullmatch(s.replace(" ", "")) for s in stanice)
+
+
+def _pronadji_pipe_tablice(tekst):
+    """Razlomi tekst na segmente [("t", tekst), ("tab", [[celija, ...], ...]), ...].
+
+    Blok se priznaje kao tablica SAMO ako zaglavlje ima ODMAH ispod separator redak s ISTIM
+    brojem stupaca i ako svaki sljedeci redak podataka ima taj isti broj stupaca. Cim nesto
+    odstupa (AI ekstrakcija je izostavila celiju, zaglavlje bez separatora, tablica bez ijednog
+    retka podataka), cijeli blok ostaje OBICAN TEKST - siguran fallback koji ne rusi build i ne
+    gradi krivu tablicu, isto nacelo kao fallback za slike-opcije od 28.10.2026."""
+    retci = (tekst or "").split("\n")
+    segmenti, buf, i, n = [], [], 0, len(retci)
+
+    def isprazni():
+        if buf:
+            segmenti.append(("t", "\n".join(buf)))
+            buf.clear()
+
+    while i < n:
+        m = _PIPE_RED_RE.match(retci[i])
+        if m and i + 1 < n:
+            zaglavlje = _podijeli_pipe_redak(m.group(1))
+            m2 = _PIPE_RED_RE.match(retci[i + 1])
+            sep = _podijeli_pipe_redak(m2.group(1)) if m2 else None
+            if (sep and len(sep) == len(zaglavlje) and _je_separator_redak(sep)
+                    and not _je_separator_redak(zaglavlje)):
+                j = i + 2
+                redovi, ispravno = [], True
+                while j < n:
+                    mj = _PIPE_RED_RE.match(retci[j])
+                    if not mj:
+                        break
+                    redak = _podijeli_pipe_redak(mj.group(1))
+                    if len(redak) != len(zaglavlje):
+                        ispravno = False
+                        break
+                    redovi.append(redak)
+                    j += 1
+                if ispravno and redovi:
+                    isprazni()
+                    segmenti.append(("tab", [zaglavlje] + redovi))
+                    i = j
+                    continue
+        buf.append(retci[i])
+        i += 1
+    isprazni()
+    return segmenti
+
+
+_CELIJA_MATEMATICKI_ZNAK_RE = re.compile(r"[0-9+\-*/^_=<>\\(){}\[\]]")
+
+
+def _celija_je_tekst(raw):
+    """True ako je celija RIJEC ("disk", "kruznica", "Mjesec"), a ne matematicki izraz.
+
+    Zasto posebno od _pretext_math_or_text: ta funkcija golu rijec BEZ razmaka salje u <m>
+    (ispravno za "3x-9" u ponudjenim odgovorima), ali u tablici su jednoclane rijeci ceste kao
+    zaglavlje ili vrijednost - a u matematickom fontu NEMA hrvatskih slova, pa xelatex tiho
+    ispusti znak ("Missing character: There is no z in font cmmi9", uhvaceno pravim PDF
+    buildom 29.10.2026.). Redoslijed provjera: recenica -> rijec s dijakritikom -> ima
+    brojeva/operatora/zagrada (= matematika) -> cista slovna rijec od barem 2 slova."""
+    if _izgleda_kao_recenica(raw):
+        return True
+    if any(c.isalpha() and ord(c) > 127 for c in raw):
+        return True
+    if _CELIJA_MATEMATICKI_ZNAK_RE.search(raw):
+        return False
+    slova = sum(c.isalpha() for c in raw)
+    return slova >= 2 and slova == len(raw.replace(" ", ""))
+
+
+def _pretext_celija(raw):
+    r"""Jedna celija tablice. PRAZNA celija daje prazan sadrzaj (<cell></cell>), a ne <m></m> -
+    to bi u LaTeX izlazu bila prazna formula \( \). Celija koja je RIJEC ostaje obican tekst
+    (v. _celija_je_tekst), a sve ostalo ide kroz _pretext_math_or_text kao i ponudjeni
+    odgovori: $ znaci matematiku, a goli izraz ("-3", "f(x)") ide u <m> da brojevi u tablici
+    budu u matematickom fontu."""
+    if raw is None or not str(raw).strip():
+        return ""
+    raw = _normalizuj_ostatke_ocr_escapinga(str(raw))
+    if "$" not in raw and _celija_je_tekst(raw):
+        return _xml_escape(raw)
+    return _pretext_math_or_text(raw)
+
+
+def _pretext_tabular_xml(redovi, uvlaka="          "):
+    """Gradi PreTeXt <tabular> iz popisa redaka (PRVI redak je zaglavlje, kako markdown i
+    definira). Tri tanke vodoravne crte: iznad tablice, ispod zaglavlja i ispod zadnjeg retka
+    (izgled kao booktabs); okomitih crta nema, PreTeXt ih ionako ne preporucuje. <tabular> se
+    ispisuje kao SAMOSTALAN blok (bez <table> omota) jer tablica unutar zadatka nije
+    numerirana figura s naslovom, vec dio teksta zadatka.
+
+    PAZI: bottom="minor" NA <tabular> se u PreTeXtu nasljeđuje na SVAKI redak (crta ispod
+    svakog retka, izgled resetke) - provjereno pravim PDF buildom 29.10.2026. Zato donja crta
+    ide na ZADNJI <row>, a ne na <tabular>."""
+    if not redovi:
+        return []
+    zadnji = len(redovi) - 1
+    out = [f'{uvlaka}<tabular top="minor">']
+    for idx, redak in enumerate(redovi):
+        atributi = ' header="yes"' if idx == 0 else ''
+        if idx in (0, zadnji):
+            atributi += ' bottom="minor"'
+        out.append(f'{uvlaka}  <row{atributi}>')
+        for celija in redak:
+            out.append(f'{uvlaka}    <cell>{_pretext_celija(celija)}</cell>')
+        out.append(f'{uvlaka}  </row>')
+    out.append(f'{uvlaka}</tabular>')
+    return out
+
+
+def _statement_tekst_lines(raw_tekst, oznaka, uvlaka="          "):
+    """Niz <p>/<tabular> blokova za pocetak <statement> - zamjena za stari jedan
+    <p>{oznaka}{tekst}</p>.
+
+    oznaka ("[matura 2013, L] ") ide na PRVI <p>. Ako tekst POCINJE tablicom, oznaka dobije
+    vlastiti <p> ispred tablice da se ne izgubi (ako je oznaka prazna, taj <p> se preskace -
+    prazan <p> nije valjan sadrzaj). Prazan tekstualni segment IZA tablice se preskace (da ne
+    nastane prazan <p> od praznog retka koji je u markdownu odvajao tablicu od teksta).
+
+    REGRESIJA: kad u tekstu NEMA tablice, _pronadji_pipe_tablice vrati jedan jedini segment s
+    nepromijenjenim tekstom, pa je izlaz znak-za-znak identican staroj verziji - to je ono sto
+    stiti 17.000+ postojecih zadataka bez tablice (eksplicitno pokriveno testom)."""
+    segmenti = _pronadji_pipe_tablice(raw_tekst) if raw_tekst else []
+    if not segmenti:
+        return [f'{uvlaka}<p>{oznaka}{_pretext_text(raw_tekst)}</p>']
+    izlaz, prvi = [], True
+    for tip, sadrzaj in segmenti:
+        if tip == "tab":
+            if prvi and oznaka:
+                izlaz.append(f'{uvlaka}<p>{oznaka}</p>')
+            izlaz.extend(_pretext_tabular_xml(sadrzaj, uvlaka))
+            prvi = False
+        else:
+            obradjen = _pretext_text(sadrzaj)
+            if not obradjen.strip() and not prvi:
+                continue
+            izlaz.append(f'{uvlaka}<p>{oznaka if prvi else ""}{obradjen}</p>')
+            prvi = False
+    return izlaz
+
 # Težina: sortiranje unutar potpoglavlja (lako -> srednje -> tesko) + vizualna oznaka
 # [izvor, boja+težina] na početku svakog zadatka. Nepoznata/prazna težina ide na KRAJ
 # grupe (99) da ne poremeti poredak lakši->teži, umjesto da nasumično upadne u sredinu.
@@ -831,7 +1019,7 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
     vanjskog <exercise>/<example> omota - pozivatelj (_build_exercise_lines ili
     _build_example_lines) dodaje xml:id i ispravan naziv taga. Izdvojeno iz stare
     _build_exercise_lines (§27.3) da <example> ne duplicira istu logiku ručno."""
-    tekst = _pretext_text(row.get('tekst_zadatka_latex', ''))
+    raw_tekst = str(row.get('tekst_zadatka_latex', '') or '')
     oznaka = _xml_escape(_oznaka_izvor_tezina(row))
     rjesenje = (row.get('rjesenje') or '').strip()
     video_url = (row.get('video_url') or '').strip()
@@ -843,7 +1031,7 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
 
     lines = []
     lines.append(f'        <statement>')
-    lines.append(f'          <p>{oznaka}{tekst}</p>')
+    lines.extend(_statement_tekst_lines(raw_tekst, oznaka))
 
     opcije = []
     if tip_zadatka == "visestruki_izbor" and ponudjeni_odgovori_raw:
