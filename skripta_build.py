@@ -89,7 +89,15 @@ STIL_PREAMBULA = r"""
 \setlength{\medskipamount}{2pt plus 1pt minus 1pt}
 \hypersetup{linkcolor=cakiplava,urlcolor=cakiplava,citecolor=cakiplava}
 \renewcommand{\ptxtriangle}{}
-\tcbset{exercisespacingstyle/.style={before skip={1.1ex plus 0.3ex}}}
+% 30.10.2026. (Caki, PDF v1): svako poglavlje pocinje na NOVOJ STRANICI, ali PRVO poglavlje
+% ostaje odmah ispod naslovnog bloka (bez prazne prve stranice). titlesec izvrsava
+% \sectionbreak prije svakog \section; zastavica preskace prvi, svaki sljedeci ide \clearpage.
+\newif\ifcakiprvasection
+\cakiprvasectiontrue
+\providecommand{\sectionbreak}{}
+\renewcommand{\sectionbreak}{\ifcakiprvasection\cakiprvasectionfalse\else\clearpage\fi}
+% 30.10.2026.: malo veci razmak izmedju dva susjedna zadatka (v1 je bio zbijen, 1.1ex).
+\tcbset{exercisespacingstyle/.style={before skip={2.2ex plus 0.5ex}}}
 \makeatletter
 \renewcommand{\thispagestyle}[1]{}% PreTeXt gasi podnozje 1. stranice; ovdje ga zelimo
 \newcommand{\cakipodnaslov}{\par\vspace{0.2ex}\normalfont\color{cakisiva}}
@@ -238,6 +246,11 @@ def uploadaj_pdf(drive, folder_id: str, putanja_pdf: str, naziv: str) -> str:
 
 def naziv_pdfa(zahtjev: dict) -> str:
     opis = (zahtjev.get("naslov") or "").strip() or bp.opis_filtara(zahtjev.get("filtri"))
+    # 30.10.2026.: dvije verzije iste skripte (ucenik/profesor) moraju imati razlicita imena
+    # i kad Caki nije upisao naslov - inace druga prebrise prvu u istom Drive folderu.
+    verzija = (zahtjev.get("verzija_sadrzaja") or "").strip().lower()
+    if verzija in ("ucenik", "profesor") and verzija not in opis.lower():
+        opis = f"{opis} {verzija}"
     opis = opis.translate(str.maketrans("\u010d\u0107\u017e\u0161\u0111\u010c\u0106\u017d\u0160\u0110", "cczsdCCZSD"))
     sigurno = re.sub(r"[^A-Za-z0-9_-]+", "_", opis).strip("_")[:60] or "skripta"
     return f"skripta_{zahtjev.get('zahtjev_id', '')}_{sigurno}.pdf"
@@ -253,7 +266,12 @@ def izgradi(zahtjev_id: str, sheet, drive, slike_folder_id: str, skripte_folder_
     try:
         vr = sheet.worksheet("Zadaci").get_all_values()
         redovi = [dict(zip(vr[0], r)) for r in vr[1:]]
+        grupiraj = bool(bp.normaliziraj_filtre(zahtjev.get("filtri")).get("grupiraj_po_poglavlju"))
+        # 30.10.2026.: plan poglavlja se cita JEDNOM - za odabir slika i za XML.
+        odabir_poglavlja = bp.get_odabir_poglavlja(sheet) if grupiraj else {}
         odabrani = bp.filtriraj_zadatke(redovi, zahtjev["filtri"])
+        if grupiraj:
+            odabrani = bp.filtriraj_odabir_poglavlja(odabrani, odabir_poglavlja)
         if not odabrani:
             raise SkriptaGreska("Nijedan zadatak ne zadovoljava filtre.")
         slike_dir = os.path.join(radni_dir, "slike_izvor")
@@ -269,12 +287,22 @@ def izgradi(zahtjev_id: str, sheet, drive, slike_folder_id: str, skripte_folder_
         # grupiraj_po_poglavlju u filtriraj_zadatke_za_skriptu.normaliziraj_filtre i
         # bp.izgradi_skriptu_xml_kronoloski. Zahtjev bira granu, sve ostalo (slike, upload,
         # status u Sheetu) ostaje identicno za oba puta.
-        if bp.normaliziraj_filtre(zahtjev.get("filtri")).get("grupiraj_po_poglavlju"):
+        if grupiraj:
             # 29.10.2026.: redoslijed_poglavlja (Cakijev rucni poredak, v. pages/4_skripta.py)
             # - prazan dict ako tab/stupac ne postoji, tad pada natrag na prirodni poredak.
+            # 30.10.2026.: odabir_poglavlja (pojedinacno oznaceni zadaci/primjeri) i
+            # verzija_sadrzaja ("ucenik" = primjeri i zadaci bez rjesenja u tekstu;
+            # "profesor" = isto + konacni odgovori primjera na kraju). Rjesenja ZADATAKA su
+            # u obje verzije na kraju skripte.
+            verzija_sadrzaja = (zahtjev.get("verzija_sadrzaja")
+                                or zahtjev.get("verzija_teorije") or "ucenik")
             xml, _, n, _ = bp.izgradi_skriptu_xml_kronoloski(
                 redovi, zahtjev, bp.get_naslovi_poglavlja(sheet), images_izlaz, slike_dir,
-                redoslijed_poglavlja=bp.get_redoslijed_poglavlja(sheet))
+                redoslijed_poglavlja=bp.get_redoslijed_poglavlja(sheet),
+                odabir_poglavlja=odabir_poglavlja,
+                verzija_sadrzaja=verzija_sadrzaja)
+            if xml is None:
+                raise SkriptaGreska("Nijedno poglavlje nema odabranih zadataka za skriptu.")
         else:
             xml, _, n, _ = bp.izgradi_skriptu_xml(
                 redovi, zahtjev, bp.get_potpoglavlja_po_cjelini(sheet), images_izlaz, slike_dir,

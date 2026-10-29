@@ -451,13 +451,23 @@ TEORIJA_HEADERS = [
 def get_or_create_worksheet(sheet, title: str, headers: list, rows: int = 500):
     """Generička verzija _get_or_create_log_worksheet niže u ovoj datoteci - otvara tab po
     nazivu, ili ga sama kreira (prazan, sa zaglavljem) ako još ne postoji. Koristi je i
-    pages/3_teorija.py (Streamlit) i Colab (Korak 3.1 bootstrap ćelija) - isti kod, dva pozivatelja."""
+    pages/3_teorija.py (Streamlit) i Colab (Korak 3.1 bootstrap ćelija) - isti kod, dva pozivatelja.
+
+    30.10.2026.: postojeći tab može imati MANJE stupaca od novog zaglavlja (npr.
+    'Sifrarnik_poglavlja_knjige' dobio je 4. stupac odabir_json i 5. ukljuceno) - upis bi tada
+    pao na "exceeds grid limits". Zato mrežu proširimo, ali PODATKE ne diramo."""
     try:
-        return sheet.worksheet(title)
+        ws = sheet.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         ws = sheet.add_worksheet(title=title, rows=rows, cols=len(headers))
         ws.append_row(headers)
         return ws
+    try:
+        if getattr(ws, "col_count", 0) < len(headers):
+            ws.add_cols(len(headers) - ws.col_count)
+    except Exception:  # noqa: BLE001 - ako mrezu ne mozemo prosiriti, upis ce javiti svoju gresku
+        pass
+    return ws
 
 def get_teorija_po_potpoglavlju(sheet) -> dict:
     """Vraća {(cjelina, potpoglavlje): {stupac: vrijednost, ...}} za sve retke u tabu
@@ -498,7 +508,10 @@ def get_teorija_po_potpoglavlju(sheet) -> dict:
 # Colab kad zeli, isto kao dosad za obicni build.
 
 SKRIPTA_ZAHTJEVI_HEADERS = ["cjelina", "verzija_teorije", "filtriraj_u_skriptu", "vrijeme", "filtri_json",
-                            "zahtjev_id", "status", "poruka", "pdf_drive_id", "naslov", "podnaslov"]
+                            "zahtjev_id", "status", "poruka", "pdf_drive_id", "naslov", "podnaslov",
+                            # 30.10.2026.: "ucenik"/"profesor" za skriptu iz knjige (stranica Skripta,
+                            # kartica "Iz knjige"). Prazno = staro ponasanje (samo teorija).
+                            "verzija_sadrzaja"]
 # naslov/podnaslov (12.10.2026.): neobavezni, upisuje ih korisnik; prazan naslov = automatski iz filtara.
 # status: "" (stari zahtjev) | "cekanje" | "u_radu" | "gotovo" | "greska"
 # 12.10.2026.: zahtjev_id/status/poruka/pdf_drive_id sluze za automatsku gradnju PDF-a na GitHub Actions
@@ -521,7 +534,8 @@ def _osiguraj_zaglavlje_zahtjeva(ws):
 
 def spremi_zahtjev_skripte(sheet, cjelina: str = "", verzija_teorije: str = "ucenik",
                             filtriraj_u_skriptu: bool = True, filtri: dict = None,
-                            naslov: str = "", podnaslov: str = "") -> str:
+                            naslov: str = "", podnaslov: str = "",
+                            verzija_sadrzaja: str = "") -> str:
     """Dodaje NOV redak u tab 'Skripta_zahtjevi' (uvijek append, nikad prepisivanje - stari
     zahtjevi ostaju kao povijest, Colab uvijek cita samo POSLJEDNJI, v.
     ucitaj_zadnji_zahtjev_skripte). Vraca zahtjev_id (kratki jedinstveni kod).
@@ -549,6 +563,9 @@ def spremi_zahtjev_skripte(sheet, cjelina: str = "", verzija_teorije: str = "uce
         "zahtjev_id": zahtjev_id, "status": "cekanje", "poruka": "", "pdf_drive_id": "",
         "naslov": " ".join((naslov or "").split())[:150],
         "podnaslov": " ".join((podnaslov or "").split())[:200],
+        # Samo "ucenik"/"profesor" imaju smisla; sve ostalo = prazno (staro ponasanje).
+        "verzija_sadrzaja": ("profesor" if str(verzija_sadrzaja).strip().lower() == "profesor"
+                             else "ucenik" if str(verzija_sadrzaja).strip() else ""),
     }
     ws.append_row([vrijednosti.get(h, "") for h in zaglavlje])
     return zahtjev_id
@@ -583,6 +600,9 @@ def _zahtjev_iz_retka(headers, redak, broj_retka=None):
         "pdf_drive_id": _get("pdf_drive_id"),
         "naslov": _get("naslov"),
         "podnaslov": _get("podnaslov"),
+        # 30.10.2026.: verzija sadrzaja za skriptu iz knjige ("ucenik"/"profesor"); stari
+        # zahtjevi nemaju taj stupac pa vracamo prazno (staro ponasanje).
+        "verzija_sadrzaja": _get("verzija_sadrzaja"),
         "redak": broj_retka,
     }
 
@@ -909,6 +929,69 @@ def _pretext_tabular_xml(redovi, uvlaka="          "):
     return out
 
 
+# 30.10.2026. (PDF v1): AI uvoz za tablice vrijednosti katkad vrati PRAVI LaTeX tabular
+# ("\begin{tabular}{|c|c|}\hline x \& f(x) \\ ...") umjesto markdown pipe tablice. PDF ga je
+# ispisivao doslovno (prvi primjer i jos 3 mjesta u v1). Ove funkcije ga pretvore u pipe
+# tablicu koju _pronadji_pipe_tablice vec zna pretvoriti u PreTeXt <tabular>.
+_TABULAR_BLOK_RE = re.compile(
+    r"\\begin\{tabular\}(?:\{(?:[^{}]|\{[^{}]*\})*\})?(.*?)\\end\{tabular\}", re.S)
+_TABULAR_NAREDBA_RE = re.compile(
+    r"\\(?:hline|toprule|midrule|bottomrule|arrayrulecolor\{[^}]*\}|"
+    r"cline\{[^}]*\}|cmidrule(?:\([^)]*\))?\{[^}]*\})")
+_TABULAR_RED_RE = re.compile(r"(?<!\\)\\\\")
+_TABULAR_CELIJA_RE = re.compile(r"(?<!\\)&|\\&")
+
+
+def _tabular_redovi(sadrzaj):
+    """Razdvoji tijelo LaTeX tabulara na retke i celije (lista redaka, svaki lista stringova).
+    Tolerira \\hline, \\multicolumn, escapeani \\& i prazne retke; redove poravna na istu
+    sirinu (prazna celija umjesto kraja retka)."""
+    sadrzaj = _TABULAR_NAREDBA_RE.sub("", sadrzaj or "")
+    redovi = []
+    for sirovi in _TABULAR_RED_RE.split(sadrzaj):
+        sirovi = sirovi.strip()
+        if not sirovi:
+            continue
+        sirovi = re.sub(r"\\multicolumn\{[^}]*\}\{[^}]*\}\{([^{}]*)\}", r"\1", sirovi)
+        celije = [c.strip() for c in _TABULAR_CELIJA_RE.split(sirovi)]
+        if any(celije):
+            redovi.append(celije)
+    if not redovi:
+        return []
+    sirina = max(len(r) for r in redovi)
+    return [r + [""] * (sirina - len(r)) for r in redovi]
+
+
+def _latex_tabular_u_tekst(tekst):
+    """Tablicu pretvori u jedan citljiv redak ("x, f(x); -1, 7; 2, 1") - za rjesenja i kratke
+    odgovore, gdje blok-tablica nije dopustena."""
+    def _zamijeni(m):
+        redovi = _tabular_redovi(m.group(1))
+        if not redovi:
+            return ""
+        return "; ".join(", ".join(c for c in r if c) for r in redovi)
+
+    return _TABULAR_BLOK_RE.sub(_zamijeni, tekst or "")
+
+
+def _latex_tabular_u_pipe(tekst):
+    """LaTeX tabular -> markdown pipe tablica (pa je _pronadji_pipe_tablice pretvori u
+    <tabular>). Ako se iz tabulara ne izvuku barem 2 retka, vraca citljiv tekst - NIKAD
+    sirovi \\begin{tabular}."""
+    def _zamijeni(m):
+        redovi = _tabular_redovi(m.group(1))
+        if len(redovi) < 2:
+            return _latex_tabular_u_tekst(m.group(0))
+        zaglavlje = redovi[0]
+        linije = ["| " + " | ".join(zaglavlje) + " |",
+                  "| " + " | ".join(["---"] * len(zaglavlje)) + " |"]
+        for redak in redovi[1:]:
+            linije.append("| " + " | ".join(redak) + " |")
+        return "\n" + "\n".join(linije) + "\n"
+
+    return _TABULAR_BLOK_RE.sub(_zamijeni, tekst or "")
+
+
 def _statement_tekst_lines(raw_tekst, oznaka, uvlaka="          "):
     """Niz <p>/<tabular> blokova za pocetak <statement> - zamjena za stari jedan
     <p>{oznaka}{tekst}</p>.
@@ -921,6 +1004,8 @@ def _statement_tekst_lines(raw_tekst, oznaka, uvlaka="          "):
     REGRESIJA: kad u tekstu NEMA tablice, _pronadji_pipe_tablice vrati jedan jedini segment s
     nepromijenjenim tekstom, pa je izlaz znak-za-znak identican staroj verziji - to je ono sto
     stiti 17.000+ postojecih zadataka bez tablice (eksplicitno pokriveno testom)."""
+    # 30.10.2026.: prvo LaTeX tabular -> pipe tablica (v. _latex_tabular_u_pipe iznad).
+    raw_tekst = _latex_tabular_u_pipe(raw_tekst)
     segmenti = _pronadji_pipe_tablice(raw_tekst) if raw_tekst else []
     if not segmenti:
         return [f'{uvlaka}<p>{oznaka}{_pretext_text(raw_tekst)}</p>']
@@ -984,7 +1069,7 @@ def _oznaka_izvor_tezina(row):
     Naziv izvora ovisi o izvor_tip (4 moguće vrijednosti u Sheetu: matura, zbirka,
     udzbenik, vlastiti_materijal):
     - "matura"            -> "matura <godina>" (npr. "matura 2010")
-    - "zbirka"            -> "zbirka" (bez konkretnog naziva)
+    - "zbirka"            -> BEZ naziva izvora (samo težina) - od 30.10.2026., Cakijev PDF v1
     - "udzbenik" / "vlastiti_materijal" (i sve ostalo/nepoznato) -> BEZ naziva izvora,
       prikazuje se samo težina."""
     izvor_tip = (row.get("izvor_tip") or "").strip().lower()
@@ -995,8 +1080,9 @@ def _oznaka_izvor_tezina(row):
     izvor_txt = ""
     if izvor_tip == "matura":
         izvor_txt = f"matura {godina}".strip() if godina else "matura"
-    elif izvor_tip == "zbirka":
-        izvor_txt = "zbirka"
+    # 30.10.2026. (Caki, PDF v1): "zbirka" se NE ispisuje - oznaka je samo težina, npr. "[S]".
+    # Naziv konkretne zbirke je ionako u biblioteka_izvora (interno), a ponavljanje "zbirka"
+    # na svakom zadatku samo troši prostor.
     # "udzbenik", "vlastiti_materijal" i sve ostalo -> izvor_txt ostaje prazan (samo težina)
 
     dijelovi = [d for d in [izvor_txt, tezina_txt] if d]
@@ -1004,29 +1090,43 @@ def _oznaka_izvor_tezina(row):
         return ""
     return f"[{', '.join(dijelovi)}] "
 
+_PRIMJERI_SERIJA_RE = re.compile(r"(?i)(?:^|[_\s\-])primjeri?(?:[_\s\-]?\d+)?\s*$")
+
+
 def _je_primjer_na_satu(row):
     """True ako je zadatak označen kao 'primjer na satu' (koristi_kao_primjer_na_satu="da") -
-    ide u <example> blok umjesto u <exercises>, vidi _build_inner_content."""
-    return (row.get("koristi_kao_primjer_na_satu") or "").strip().lower() == "da"
+    ide u <example> blok umjesto u <exercises>, vidi _build_inner_content.
+
+    30.10.2026.: osim kvačice, priznaje i NAZIV SERIJE ('..._primjeri', '..._Primjeri_016') -
+    materijal uvezen preko 'Uvoz iz foldera' nosi to u izvor_naziv, pa primjer ostaje primjer
+    i ako kvačica na pojedinom retku iz nekog razloga nije upisana. Redak iz serije '_zadaci'
+    time NIKAD ne postaje primjer."""
+    if (row.get("koristi_kao_primjer_na_satu") or "").strip().lower() == "da":
+        return True
+    return bool(_PRIMJERI_SERIJA_RE.search(str(row.get("izvor_naziv") or "")))
 
 
 _SLIKA_OPCIJA_RE = re.compile(r"(?i)^slika\s*[A-H]$")
 
 
-def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
+def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir, ukljuci_rjesenje=True):
     """Zajednička jezgra za <exercise> I <example>: <statement> (tekst + opcionalna slika +
     opcije za visestruki_izbor), <hint>, <solution>, <video>. Vraća (lines, slika_ok) BEZ
     vanjskog <exercise>/<example> omota - pozivatelj (_build_exercise_lines ili
     _build_example_lines) dodaje xml:id i ispravan naziv taga. Izdvojeno iz stare
-    _build_exercise_lines (§27.3) da <example> ne duplicira istu logiku ručno."""
+    _build_exercise_lines (§27.3) da <example> ne duplicira istu logiku ručno.
+
+    30.10.2026.: ukljuci_rjesenje=False NE upisuje <solution> (niti kopira slike rješenja) -
+    koristi ga skripta iz knjige za primjere u učeničkoj verziji. Zadano True = identično
+    staro ponašanje za sve postojeće pozive."""
     raw_tekst = str(row.get('tekst_zadatka_latex', '') or '')
     oznaka = _xml_escape(_oznaka_izvor_tezina(row))
-    rjesenje = (row.get('rjesenje') or '').strip()
+    rjesenje = _latex_tabular_u_tekst((row.get('rjesenje') or '').strip())
     video_url = (row.get('video_url') or '').strip()
     slika_putanja = (row.get('slika_putanja') or '').strip()
     tip_zadatka = (row.get('tip_zadatka') or '').strip()
     ponudjeni_odgovori_raw = (row.get('ponudjeni_odgovori') or '').strip()
-    konacan_odgovor = (row.get('konacan_odgovor') or '').strip()
+    konacan_odgovor = _latex_tabular_u_tekst((row.get('konacan_odgovor') or '').strip())
     uputa = (row.get('uputa') or '').strip()
 
     lines = []
@@ -1110,27 +1210,30 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
 
     # Slike rješenja (stupac slika_rjesenje_putanja): kopiraju se u images/ i ispisuju u <solution>
     # iza teksta rješenja. Nedostajuća datoteka se preskače uz upozorenje (kao kod slike zadatka).
-    slike_rjesenja_linije = []
-    for naziv_datoteke in (os.path.basename(x) for x in razdvoji_slike(row.get('slika_rjesenje_putanja'))):
-        izvorna = os.path.join(slike_izvor_dir, naziv_datoteke)
-        if os.path.exists(izvorna):
-            shutil.copyfile(izvorna, os.path.join(images_dir_abs, naziv_datoteke))
-            slike_rjesenja_linije.append(f'          <image source="images/{_xml_escape(naziv_datoteke)}" width="70%"/>')
-        else:
-            print(f"    ⚠️ Slika rješenja nije pronađena na disku za zadatak #{row.get('id', '')}: {izvorna}")
+    # 30.10.2026.: kad rješenje NE ide u ovaj dokument (učenička verzija primjera), ne kopiramo
+    # ni njegove slike - inače bi u PDF-u ostale visjeti bez teksta.
+    if ukljuci_rjesenje:
+        slike_rjesenja_linije = []
+        for naziv_datoteke in (os.path.basename(x) for x in razdvoji_slike(row.get('slika_rjesenje_putanja'))):
+            izvorna = os.path.join(slike_izvor_dir, naziv_datoteke)
+            if os.path.exists(izvorna):
+                shutil.copyfile(izvorna, os.path.join(images_dir_abs, naziv_datoteke))
+                slike_rjesenja_linije.append(f'          <image source="images/{_xml_escape(naziv_datoteke)}" width="70%"/>')
+            else:
+                print(f"    ⚠️ Slika rješenja nije pronađena na disku za zadatak #{row.get('id', '')}: {izvorna}")
 
-    if rjesenje or slike_rjesenja_linije:
-        lines.append(f'        <solution>')
-        if tip_zadatka == "visestruki_izbor" and konacan_odgovor:
-            lines.append(f'          <p>Točan odgovor: {_pretext_math_or_text(konacan_odgovor)}</p>')
-        if rjesenje:
-            lines.append(f'          <p>{_pretext_math_or_text(rjesenje)}</p>')
-        lines.extend(slike_rjesenja_linije)
-        lines.append(f'        </solution>')
-    elif konacan_odgovor:
-        lines.append(f'        <solution>')
-        lines.append(f'          <p>Odgovor: {_pretext_math_or_text(konacan_odgovor)}</p>')
-        lines.append(f'        </solution>')
+        if rjesenje or slike_rjesenja_linije:
+            lines.append(f'        <solution>')
+            if tip_zadatka == "visestruki_izbor" and konacan_odgovor:
+                lines.append(f'          <p>Točan odgovor: {_pretext_math_or_text(konacan_odgovor)}</p>')
+            if rjesenje:
+                lines.append(f'          <p>{_pretext_math_or_text(rjesenje)}</p>')
+            lines.extend(slike_rjesenja_linije)
+            lines.append(f'        </solution>')
+        elif konacan_odgovor:
+            lines.append(f'        <solution>')
+            lines.append(f'          <p>Odgovor: {_pretext_math_or_text(konacan_odgovor)}</p>')
+            lines.append(f'        </solution>')
 
     if video_url:
         # Napomena §27.4 (sljedeći korak, NE dio ove izmjene): ovdje se video_url i dalje
@@ -1140,24 +1243,49 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir):
     return lines, slika_ok
 
 
-def _build_exercise_lines(row, images_dir_abs, slike_izvor_dir):
+def _konacan_odgovor_za_prikaz(row) -> str:
+    """Konačan odgovor za VERZIJU ZA PROFESORA (na kraju skripte, skupina „Primjeri
+    rješenja”): prvo 'konacan_odgovor', a ako je prazan, uzima se 'rjesenje' (u bazi je za
+    dio primjera cijeli postupak upisan tu). Vraća prazno ako nema nijednog - tada se u
+    popisu ispisuje „—”. Tablice se spljošte u čitljiv tekst (v. _latex_tabular_u_tekst)."""
+    for polje in ("konacan_odgovor", "rjesenje"):
+        vrijednost = _latex_tabular_u_tekst(str(row.get(polje) or "").strip())
+        if vrijednost:
+            return vrijednost
+    return ""
+
+
+def _build_exercise_lines(row, images_dir_abs, slike_izvor_dir, ukljuci_rjesenje=True):
     """Gradi <exercise> XML za jedan redak - VJEŽBA koju učenik rješava sam (rješenje
-    sakriveno/na klik u HTML izlazu). Vraća (lines, slika_kopirana_bool)."""
+    sakriveno/na klik u HTML izlazu). Vraća (lines, slika_kopirana_bool).
+    ukljuci_rjesenje=False -> bez <solution> (v. _build_statement_hint_solution_video)."""
     zid = _sanitize_id(f"zad-{row.get('id', '')}")
-    body_lines, slika_ok = _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir)
+    body_lines, slika_ok = _build_statement_hint_solution_video(
+        row, images_dir_abs, slike_izvor_dir, ukljuci_rjesenje=ukljuci_rjesenje)
     lines = [f'      <exercise xml:id="{zid}">'] + body_lines + ['      </exercise>']
     return lines, slika_ok
 
 
-def _build_example_lines(row, images_dir_abs, slike_izvor_dir):
+def _build_example_lines(row, images_dir_abs, slike_izvor_dir, ukljuci_rjesenje=True,
+                         prikazi_odgovor=False):
     """Gradi <example> XML za jedan redak - riješen PRIMJER koji profesor demonstrira NA SATU
     (rješenje se prikazuje kao dio izlaganja, ne kao skriveni odgovor). Semantički odvojeno od
     <exercise>. Ide direktno kao dijete <section>, BEZ <exercises> omota (PreTeXt shema:
     <example> ne treba wrapper, može ih biti više uzastopnih). Zaseban ID-prefiks ('prim-'
     umjesto 'zad-') da isti redak, ako se ikad pojavi na oba mjesta greškom, ne izazove
-    xml:id sudar. Vraća (lines, slika_kopirana_bool)."""
+    xml:id sudar. Vraća (lines, slika_kopirana_bool).
+
+    30.10.2026. (skripta iz knjige): učenička verzija zove s ukljuci_rjesenje=False (primjer
+    bez rješenja - profesor ga rješava na satu), a verzija za profesora s
+    prikazi_odgovor=True (samo konačan odgovor uz primjer, NE cijeli postupak)."""
     zid = _sanitize_id(f"prim-{row.get('id', '')}")
-    body_lines, slika_ok = _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir)
+    body_lines, slika_ok = _build_statement_hint_solution_video(
+        row, images_dir_abs, slike_izvor_dir, ukljuci_rjesenje=ukljuci_rjesenje)
+    if prikazi_odgovor:
+        odgovor = _konacan_odgovor_za_prikaz(row)
+        if odgovor:
+            body_lines = body_lines + [
+                f'        <p><em>Rješenje: {_pretext_math_or_text(odgovor)}</em></p>']
     lines = [f'      <example xml:id="{zid}">'] + body_lines + ['      </example>']
     return lines, slika_ok
 
@@ -1345,15 +1473,53 @@ def _skripta_frontmatter_lines():
         '    </frontmatter>',
     ]
 
-def _skripta_backmatter_lines():
-    """Rjesenja svih zadataka skupljena na kraju skripte (u tekstu ostaju samo zadaci)."""
-    return [
+def _skripta_backmatter_lines(primjeri_rjesenja=None):
+    """Rješenja na kraju skripte, u DVIJE skupine (Cakijev PDF v1, 30.10.2026.):
+    „Primjeri rješenja” (samo u verziji za profesora - konačni odgovori uz primjere) i
+    „Zadaci rješenja” (puna rješenja zadataka; PreTeXt ih tamo premješta iz <exercises>).
+
+    primjeri_rjesenja: lista {"naslov": naziv poglavlja, "stavke": [(oznaka, odgovor), ...]}
+    ili None/[] za učeničku verziju (tada je naslov samo „Rješenja zadataka”).
+
+    30.10.2026. (VAŽNO): primjeri rješenja idu u ZASEBNU <solutions> diviziju BEZ
+    @divisional - PreTeXt u diviziju s @divisional="solution" ubacuje rješenja zadataka
+    (dokazano u pretext-common.xsl: contains(@divisional,'solution')). Da su primjeri u
+    istoj diviziji, PreTeXt bi u nju ubacio i rješenja zadataka pa bi redoslijed/uvod bili
+    nepredvidivi. Ovako je prva divizija isključivo „Primjeri rješenja”, druga isključivo
+    „Zadaci rješenja”."""
+    if not primjeri_rjesenja:
+        return [
+            '    <backmatter>',
+            '      <solutions divisional="solution">',
+            '        <title>Rješenja zadataka</title>',
+            '      </solutions>',
+            '    </backmatter>',
+        ]
+    lines = [
         '    <backmatter>',
-        '      <solutions divisional="solution">',
+        '      <solutions>',
         '        <title>Rješenja</title>',
+        '        <introduction>',
+        '          <title>Primjeri rješenja</title>',
+    ]
+    for grupa in primjeri_rjesenja:
+        lines.append(f'          <p><strong>{_xml_escape(grupa["naslov"])}</strong></p>')
+        # 30.10.2026.: NAMJERNO obicni <p> po primjeru, NE <ul>/<li> - PreTeXt shema u
+        # <introduction> dopusta samo BlockDivision (Paragraph, Tabular, ...), a lista nije
+        # BlockDivision. <ul> bi srusio validaciju/build.
+        for oznaka, odgovor in grupa["stavke"]:
+            lines.append(
+                f'          <p><strong>{_xml_escape(oznaka)}</strong> '
+                f'{_pretext_math_or_text(odgovor or "—")}</p>')
+    lines += [
+        '        </introduction>',
+        '      </solutions>',
+        '      <solutions divisional="solution">',
+        '        <title>Zadaci rješenja</title>',
         '      </solutions>',
         '    </backmatter>',
     ]
+    return lines
 
 def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, slike_izvor_dir,
                          teorija_po_potpoglavlju=None):
@@ -1427,13 +1593,16 @@ def izgradi_skriptu_xml(rows, zahtjev, potpoglavlja_po_cjelini, images_dir_abs, 
 # POD UVJETOM da se poglavlja upisuju jedno za drugim (normalan tijek rada), bez naknadnog
 # premetanja redaka u Sheetu.
 
-_POGLAVLJE_SUFIKS_RE = re.compile(r"(?i)[_\s\-]+(primjeri?|zada(?:ci|tci|tak))\d*\s*$")
+_POGLAVLJE_SUFIKS_RE = re.compile(r"(?i)[_\s\-]+(primjeri?|zada(?:ci|tci|tak))(?:[_\s\-]?\d+)?\s*$")
 
 def parsiraj_poglavlje_iz_izvora(izvor_naziv: str) -> str:
     """'Poglavlje3.1_zadaci' -> 'Poglavlje3.1'; 'Poglavlje3.1_Primjeri' -> 'Poglavlje3.1' -
     tako se Primjeri i Zadaci istog poglavlja spoje u ISTU skripta-sekciju. Ako naziv ne
     zavrsava poznatim sufiksom, vraca se NETAKNUT (siguran fallback - u najgorem slucaju
-    Primjeri/Zadaci ostanu kao dvije odvojene sekcije, nista ne puca)."""
+    Primjeri/Zadaci ostanu kao dvije odvojene sekcije, nista ne puca).
+
+    30.10.2026.: sufiks smije imati i redni broj ('Poglavlje2.14_primjeri_016') - Caki tako
+    naziva stavke u bazi. Bez toga bi svaka stavka postala svoje poglavlje."""
     naziv = (izvor_naziv or "").strip()
     novi = _POGLAVLJE_SUFIKS_RE.sub("", naziv).strip()
     return novi or naziv
@@ -1454,7 +1623,13 @@ def _poglavlje_sort_key(naziv: str):
     return (0, prefiks.lower(), komponente)
 
 
-NASLOVI_POGLAVLJA_HEADERS = ["poglavlje_kljuc", "naslov_prikaz", "redoslijed"]
+NASLOVI_POGLAVLJA_HEADERS = ["poglavlje_kljuc", "naslov_prikaz", "redoslijed",
+                              # 30.10.2026. (skripta iz knjige): JSON s pojedinačno
+                              # označenim stavkama {"primjeri": [...], "zadaci": [...]};
+                              # prazno = svi. Vidi get_odabir_poglavlja.
+                              "odabir_json",
+                              # "da"/"ne" - je li poglavlje uopće u skripti; prazno = da.
+                              "ukljuceno"]
 
 def get_naslovi_poglavlja(sheet) -> dict:
     """Vraca {poglavlje_kljuc: naslov_prikaz} iz tab 'Sifrarnik_poglavlja_knjige' (isti
@@ -1498,26 +1673,96 @@ def get_redoslijed_poglavlja(sheet) -> dict:
     return izlaz
 
 
+def get_odabir_poglavlja(sheet) -> dict:
+    """Vraca {poglavlje_kljuc: {"primjeri": None|[...], "zadaci": None|[...],
+    "ukljuceno": bool}} iz 4./5. stupca taba 'Sifrarnik_poglavlja_knjige' (dodano 30.10.2026.).
+
+    None = SVI redci tog poglavlja (uključujući kasnije dodane), [] = nijedan, lista id-eva =
+    točno ti. Prazan/neispravan JSON, tab koji ne postoji ili stari tab bez tih stupaca ->
+    poglavlje se NE nalazi u rezultatu, a build ga tada tretira kao "svi" (staro ponašanje,
+    nista ne puca)."""
+    try:
+        ws = sheet.worksheet("Sifrarnik_poglavlja_knjige")
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    redovi = ws.get_all_values()
+    if len(redovi) < 2:
+        return {}
+    zaglavlje = [str(h).strip() for h in redovi[0]]
+    i_odabir = zaglavlje.index("odabir_json") if "odabir_json" in zaglavlje else None
+    i_uklj = zaglavlje.index("ukljuceno") if "ukljuceno" in zaglavlje else None
+    izlaz = {}
+    for r in redovi[1:]:
+        kljuc = str(r[0]).strip() if r else ""
+        if not kljuc:
+            continue
+        primjeri, zadaci = None, None
+        if i_odabir is not None and i_odabir < len(r) and str(r[i_odabir]).strip():
+            try:
+                vrijednost = json.loads(r[i_odabir])
+            except (ValueError, TypeError):
+                vrijednost = None
+            if isinstance(vrijednost, dict):
+                for naziv in ("primjeri", "zadaci"):
+                    x = vrijednost.get(naziv)
+                    if isinstance(x, list):
+                        if naziv == "primjeri":
+                            primjeri = [str(y) for y in x if str(y).strip()]
+                        else:
+                            zadaci = [str(y) for y in x if str(y).strip()]
+        ukljuceno = True
+        if i_uklj is not None and i_uklj < len(r):
+            ukljuceno = str(r[i_uklj]).strip().lower() not in ("ne", "no", "false", "0")
+        izlaz[kljuc] = {"primjeri": primjeri, "zadaci": zadaci, "ukljuceno": ukljuceno}
+    return izlaz
+
+
 def spremi_naslove_poglavlja(sheet, zapisi: list):
     """Prepisuje CIJELI tab 'Sifrarnik_poglavlja_knjige' (mali tab, desetci redaka - sigurnije
     prepisati u cijelosti nego upsert po retku, isto nacelo kao get_biblioteke_izvora/
     Sifrarnik_biblioteka_izvora). zapisi: lista rjecnika
-    {"poglavlje_kljuc", "naslov_prikaz", "redoslijed"} (npr. izravno iz st.data_editor-a u
-    pages/4_skripta.py). Redci bez poglavlje_kljuc se preskaču; redoslijed se pise kao tekst
-    (dozvoljava i decimalne vrijednosti radi umetanja izmedju dva postojeca cijela broja bez
-    pretipkavanja svih ostalih)."""
+    {"poglavlje_kljuc", "naslov_prikaz", "redoslijed", "odabir_json", "ukljuceno"} (npr.
+    izravno iz st.data_editor-a u pages/4_skripta.py). Redci bez poglavlje_kljuc se preskacaju;
+    redoslijed se pise kao tekst (dozvoljava i decimalne vrijednosti radi umetanja izmedju dva
+    postojeca cijela broja bez pretipkavanja svih ostalih).
+
+    30.10.2026.: odabir_json/ukljuceno su NEOBAVEZNI u zapisu. Ako ih pozivatelj ne posalje,
+    za taj kljuc se PREUZIMA postojeća vrijednost iz taba - staro sucelje (i stari testovi)
+    tako ne moze slucajno obrisati Cakijev odabir zadataka."""
     ws = get_or_create_worksheet(sheet, "Sifrarnik_poglavlja_knjige", NASLOVI_POGLAVLJA_HEADERS,
                                  rows=200)
+    postojeci = {}
+    try:
+        for r in ws.get_all_values()[1:]:
+            if r and str(r[0]).strip():
+                postojeci[str(r[0]).strip()] = {
+                    "odabir_json": r[3] if len(r) > 3 else "",
+                    "ukljuceno": r[4] if len(r) > 4 else "",
+                }
+    except Exception:  # noqa: BLE001 - prazan/neocekivan tab ne smije srusiti spremanje
+        postojeci = {}
     redovi = []
     for z in zapisi:
         kljuc = str((z or {}).get("poglavlje_kljuc", "")).strip()
         if not kljuc:
             continue
         redoslijed = z.get("redoslijed")
+        odabir = z.get("odabir_json", None)
+        if odabir is None:
+            odabir = postojeci.get(kljuc, {}).get("odabir_json", "")
+        if isinstance(odabir, (dict, list)):
+            odabir = json.dumps(odabir, ensure_ascii=False)
+        ukljuceno = z.get("ukljuceno", None)
+        if ukljuceno is None:
+            ukljuceno = postojeci.get(kljuc, {}).get("ukljuceno", "")
+        elif isinstance(ukljuceno, bool):
+            ukljuceno = "da" if ukljuceno else "ne"
         redovi.append([
             kljuc,
             str(z.get("naslov_prikaz", "") or "").strip(),
             "" if redoslijed in (None, "") else str(redoslijed),
+            str(odabir or ""),
+            str(ukljuceno or ""),
         ])
     ws.clear()
     ws.update(range_name="A1", values=[NASLOVI_POGLAVLJA_HEADERS] + redovi)
@@ -1533,22 +1778,71 @@ def _poglavlje_sort_key_s_redoslijedom(naziv, redoslijed_poglavlja):
     return (1,) + _poglavlje_sort_key(naziv)
 
 
+def _filtriraj_po_odabiru(redovi, izbor):
+    """Odabir pojedinačnih zadataka unutar jednog poglavlja (skripta iz knjige):
+    izbor None = svi (uključujući kasnije dodane), [] = nijedan, lista id-eva = točno ti.
+    REDOSLIJED REDOVA OSTAJE kakav je u Sheetu - odabir samo izbacuje, nikad ne premješta."""
+    if izbor is None:
+        return redovi
+    skup = {str(x) for x in izbor}
+    return [r for r in redovi if str(r.get("id", "")) in skup]
+
+
+def filtriraj_odabir_poglavlja(redovi, odabir_poglavlja):
+    """Vraca SAMO retke koje plan pusta u skriptu (poglavlje ukljuceno + pojedinacno
+    oznaceni primjeri/zadaci). Koristi ga skripta_build prije skidanja slika da ne skida
+    slike zadataka koje Caki nije oznacio. REDOSLIJED ovdje nije vazan (XML se gradi iz
+    punog popisa) - vazan je samo skup redaka."""
+    odabir_poglavlja = odabir_poglavlja or {}
+    izlaz = []
+    po_poglavlju = {}
+    for row in redovi:
+        poglavlje = parsiraj_poglavlje_iz_izvora(row.get("izvor_naziv", ""))
+        po_poglavlju.setdefault(poglavlje, []).append(row)
+    for poglavlje, grupa in po_poglavlju.items():
+        odabir = odabir_poglavlja.get(poglavlje) or {}
+        if odabir.get("ukljuceno") is False:
+            continue
+        izlaz.extend(_filtriraj_po_odabiru([r for r in grupa if _je_primjer_na_satu(r)],
+                                           odabir.get("primjeri")))
+        izlaz.extend(_filtriraj_po_odabiru([r for r in grupa if not _je_primjer_na_satu(r)],
+                                           odabir.get("zadaci")))
+    return izlaz
+
+
 def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, slike_izvor_dir,
-                                     naslovi_poglavlja=None, redoslijed_poglavlja=None):
+                                     naslovi_poglavlja=None, redoslijed_poglavlja=None,
+                                     odabir_poglavlja=None, verzija_sadrzaja="ucenik",
+                                     primjeri_rjesenja=None):
     """KRONOLOSKA inacica _build_inner_content - grupira po 'poglavlju' izvucenom iz
     izvor_naziv (parsiraj_poglavlje_iz_izvora), poglavlja prirodnim brojcanim redom
     (_poglavlje_sort_key), OSIM gdje je Caki rucno postavio drugaciji poredak
     (redoslijed_poglavlja, v. _poglavlje_sort_key_s_redoslijedom - dodano 29.10.2026.), a
     UNUTAR poglavlja zadaci OSTAJU u redoslijedu kako su u Sheetu (BEZ _puni_sort_key
     sortiranja po tezini - to bi razbilo redoslijed materijala). Primjeri
-    (koristi_kao_primjer_na_satu='da') idu kao <example> PRIJE <exercises>, isto kao u
-    postojecem kodu. naslovi_poglavlja: v. get_naslovi_poglavlja - neobavezno, prazan dict
-    ili None = svako poglavlje prikazuje svoj sirovi kljuc kao naslov sekcije.
+    (koristi_kao_primjer_na_satu='da' ili izvor_naziv '..._primjeri') idu kao <example>
+    PRIJE <exercises>, isto kao u postojecem kodu. naslovi_poglavlja: v.
+    get_naslovi_poglavlja - neobavezno, prazan dict ili None = svako poglavlje prikazuje
+    svoj sirovi kljuc kao naslov sekcije.
     redoslijed_poglavlja: v. get_redoslijed_poglavlja - neobavezno, prazan dict ili None =
-    cisto prirodni poredak (staro ponasanje, bez promjene)."""
+    cisto prirodni poredak (staro ponasanje, bez promjene).
+
+    30.10.2026. (skripta iz knjige, PDF v1):
+    odabir_poglavlja: v. get_odabir_poglavlja - {kljuc: {"primjeri": None|[...], "zadaci":
+    None|[...], "ukljuceno": bool}}. None/prazno = svi redci (staro ponasanje). Poglavlje
+    s ukljuceno=False ili bez ijednog odabranog retka se PRESKACE (ne ispisuje praznu sekciju).
+    U svakom poglavlju sada postoje VIDLJIVI naslovi „Primjeri” i „Zadaci za vježbu”.
+    Primjeri su BEZ rjesenja u tekstu (profesor ih rjesava na satu); u verziji za profesora
+    njihovi konacni odgovori idu u primjeri_rjesenja (lista za backmatter, v.
+    _skripta_backmatter_lines). Rjesenja ZADATAKA su u obje verzije na kraju skripte
+    (PreTeXt ih tamo premjesta preko _skripta_backmatter_lines)."""
     naslovi_poglavlja = naslovi_poglavlja or {}
+    odabir_poglavlja = odabir_poglavlja or {}
+    je_profesor = str(verzija_sadrzaja or "").strip().lower() == "profesor"
+    prikupljaj_rjesenja = primjeri_rjesenja is not None and je_profesor
     lines = []
     broj_slika = 0
+    broj_poglavlja = 0
 
     po_poglavlju = {}
     for row in zadaci_redovi:
@@ -1557,23 +1851,43 @@ def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, 
 
     for poglavlje in sorted(po_poglavlju, key=lambda p: _poglavlje_sort_key_s_redoslijedom(p, redoslijed_poglavlja)):
         grupa = po_poglavlju[poglavlje]
+        odabir = odabir_poglavlja.get(poglavlje) or {}
+        if odabir.get("ukljuceno") is False:
+            continue
+        primjeri = _filtriraj_po_odabiru([r for r in grupa if _je_primjer_na_satu(r)], odabir.get("primjeri"))
+        vjezbe = _filtriraj_po_odabiru([r for r in grupa if not _je_primjer_na_satu(r)], odabir.get("zadaci"))
+        if not primjeri and not vjezbe:
+            continue  # prazna sekcija nema smisla u PDF-u
+        broj_poglavlja += 1
         naslov_sekcije = naslovi_poglavlja.get(poglavlje) or poglavlje
         sec_id = _sanitize_id(f"{xml_id_root}-{poglavlje}")
         lines.append(f'    <section xml:id="{sec_id}">')
         lines.append(f'      <title>{_xml_escape(naslov_sekcije)}</title>')
 
-        primjeri = [r for r in grupa if _je_primjer_na_satu(r)]
-        vjezbe = [r for r in grupa if not _je_primjer_na_satu(r)]
-        for row in primjeri:
-            ex_lines, slika_ok = _build_example_lines(row, images_dir_abs, slike_izvor_dir)
-            lines.extend(ex_lines)
-            broj_slika += 1 if slika_ok else 0
-        lines.append('      <exercises>')
-        for row in vjezbe:
-            ex_lines, slika_ok = _build_exercise_lines(row, images_dir_abs, slike_izvor_dir)
-            lines.extend(ex_lines)
-            broj_slika += 1 if slika_ok else 0
-        lines.append('      </exercises>')
+        if primjeri:
+            # 30.10.2026.: jasan naslov iznad primjera (PDF v1 ih je samo nizao).
+            lines.append('      <p><strong>Primjeri</strong></p>')
+            stavke_rjesenja = []
+            for redni, row in enumerate(primjeri, start=1):
+                ex_lines, slika_ok = _build_example_lines(
+                    row, images_dir_abs, slike_izvor_dir, ukljuci_rjesenje=False)
+                lines.extend(ex_lines)
+                broj_slika += 1 if slika_ok else 0
+                if prikupljaj_rjesenja:
+                    stavke_rjesenja.append(
+                        (f"{broj_poglavlja}.{redni}", _konacan_odgovor_za_prikaz(row) or "—"))
+            if prikupljaj_rjesenja and stavke_rjesenja:
+                primjeri_rjesenja.append({"naslov": naslov_sekcije, "stavke": stavke_rjesenja})
+
+        if vjezbe:
+            lines.append('      <p><strong>Zadaci za vježbu</strong></p>')
+            lines.append('      <exercises>')
+            for row in vjezbe:
+                ex_lines, slika_ok = _build_exercise_lines(
+                    row, images_dir_abs, slike_izvor_dir, ukljuci_rjesenje=True)
+                lines.extend(ex_lines)
+                broj_slika += 1 if slika_ok else 0
+            lines.append('      </exercises>')
 
         lines.append('    </section>')
 
@@ -1581,13 +1895,19 @@ def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, 
 
 
 def izgradi_skriptu_xml_kronoloski(rows, zahtjev, naslovi_poglavlja, images_dir_abs, slike_izvor_dir,
-                                   redoslijed_poglavlja=None):
+                                   redoslijed_poglavlja=None, odabir_poglavlja=None,
+                                   verzija_sadrzaja="ucenik"):
     """KRONOLOSKA sestra izgradi_skriptu_xml (iznad) - ISTA vanjska forma (docinfo/
     frontmatter/backmatter s rjesenjima na kraju preko PreTeXt-ove divizijske mehanike,
     isti filtriraj_zadatke za odabir redaka), ali unutarnji sadrzaj grupira
     _build_inner_content_kronoloski umjesto po cjelina/potpoglavlje/tezina. Poziva se kad
     zahtjev['filtri']['grupiraj_po_poglavlju'] je istinit (v. skripta_build.izgradi).
-    redoslijed_poglavlja: v. get_redoslijed_poglavlja - neobavezno (dodano 29.10.2026.)."""
+    redoslijed_poglavlja: v. get_redoslijed_poglavlja - neobavezno (dodano 29.10.2026.).
+    odabir_poglavlja/verzija_sadrzaja: v. _build_inner_content_kronoloski (dodano 30.10.2026.;
+    prazno = identicno staro ponasanje).
+
+    Vraca (xml, broj_slika, broj_zadataka, naslov); xml je None ako nakon svih odabira nema
+    nijednog retka (pozivatelj tada javlja gresku, ne salje prazan PDF)."""
     filtri = normaliziraj_filtre(zahtjev.get("filtri"))
     odabrani = filtriraj_zadatke(rows, filtri)
     naslov = " ".join((zahtjev.get("naslov") or "").split()) or ("Skripta - " + opis_filtara(filtri))
@@ -1601,11 +1921,16 @@ def izgradi_skriptu_xml_kronoloski(rows, zahtjev, naslovi_poglavlja, images_dir_
     if podnaslov:
         lines.append(f'    <subtitle>{_xml_escape(podnaslov)}</subtitle>')
     lines += _skripta_frontmatter_lines()
+    primjeri_rjesenja = []
     inner, broj_slika = _build_inner_content_kronoloski(
         odabrani, "skripta", images_dir_abs, slike_izvor_dir, naslovi_poglavlja=naslovi_poglavlja,
-        redoslijed_poglavlja=redoslijed_poglavlja)
+        redoslijed_poglavlja=redoslijed_poglavlja, odabir_poglavlja=odabir_poglavlja,
+        verzija_sadrzaja=verzija_sadrzaja, primjeri_rjesenja=primjeri_rjesenja)
+    if not inner:
+        return None, 0, 0, naslov
     lines.extend(inner)
-    lines += _skripta_backmatter_lines()
+    je_profesor = str(verzija_sadrzaja or "").strip().lower() == "profesor"
+    lines += _skripta_backmatter_lines(primjeri_rjesenja if je_profesor else None)
     lines += ['  </article>', '</pretext>']
     return "\n".join(lines), broj_slika, len(odabrani), naslov
 
