@@ -110,7 +110,7 @@ st.info(
 )
 
 if st.button("🔄 Osvježi popis cjelina"):
-    _ucitaj_cjeline.clear()
+    _ucitaj_cjeline_za.clear()  # 29.10.2026.: FIX - _ucitaj_cjeline (plain wrapper) nema .clear(), prava keš funkcija je _ucitaj_cjeline_za
 
 cjeline = _ucitaj_cjeline()
 if not cjeline:
