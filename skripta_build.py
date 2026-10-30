@@ -68,6 +68,7 @@ STIL_PREAMBULA = r"""
 \usepackage{xcolor}
 \definecolor{cakiplava}{HTML}{1F4E79}
 \definecolor{cakisiva}{HTML}{6B7280}
+\definecolor{cakizuta}{HTML}{F2C200}
 % 29.10.2026.: FIX - "\overparen{XY}" (luk XY, npr. obodni/sredisnji kut) nije
 % definiran ni u LaTeX kernelu ni u amsmath/amssymb - AI (Mathpix/Claude
 % strukturiranje) ga ipak proizvodi za zadatke o kruznici/kutovima, pa build
@@ -89,15 +90,25 @@ STIL_PREAMBULA = r"""
 \setlength{\medskipamount}{2pt plus 1pt minus 1pt}
 \hypersetup{linkcolor=cakiplava,urlcolor=cakiplava,citecolor=cakiplava}
 \renewcommand{\ptxtriangle}{}
-% 30.10.2026. (Caki, PDF v1): svako poglavlje pocinje na NOVOJ STRANICI, ali PRVO poglavlje
-% ostaje odmah ispod naslovnog bloka (bez prazne prve stranice). titlesec izvrsava
-% \sectionbreak prije svakog \section; zastavica preskace prvi, svaki sljedeci ide \clearpage.
-\newif\ifcakiprvasection
-\cakiprvasectiontrue
-\providecommand{\sectionbreak}{}
-\renewcommand{\sectionbreak}{\ifcakiprvasection\cakiprvasectionfalse\else\clearpage\fi}
+% 30.10.2026. (Caki): svako poglavlje (i svaka sekcija Rješenja) pocinje na NOVOJ STRANICI,
+% ali PRVO poglavlje ostaje odmah ispod naslovnog bloka (bez prazne prve stranice).
+% NAPOMENA: titlesecov \sectionbreak se NIJE izvrsavao u PreTeXtovom \section; \AddToHook s
+% \if... unutar hooka puca ("Incomplete \iffalse") jer LaTeXovi hookovi imaju vlastiti
+% \iffalse omotac. Zato BEZ uvjeta: prvi poziv samo prebaci \cakiprviput na \cakisljedeci.
+\newcommand{\cakisljedeci}{\clearpage}
+\newcommand{\cakiprviput}{\global\let\cakiprviput\cakisljedeci}
+\AddToHook{cmd/section/before}{\cakiprviput}
 % 30.10.2026.: malo veci razmak izmedju dva susjedna zadatka (v1 je bio zbijen, 1.1ex).
 \tcbset{exercisespacingstyle/.style={before skip={2.2ex plus 0.5ex}}}
+% NAPOMENA (30.10.2026., testirano lokalno): PreTeXtov "runintitlestyle" attacha naslov na
+% tijelo; \colorbox oko cijelog naslova (before/after title) guta pocetak teksta, a
+% attach title to upper=false + colbacktitle ne iscrtava traku pouzdano. Zato:
+%  - naziv "Primjer" boji pipeline preko <rename> (plava traka, bijeli tekst),
+%  - BROJ primjera boji se ovdje: before title samo predefinira \thetcbcounter u plavu
+%    traku s brojem (ne omotava naslov, pa ne guta tekst).
+\tcbset{examplestyle/.append style={
+  before title={\def\thetcbcounter{\colorbox{cakiplava}{\color{white}\bfseries\csname thetcb@cnt@block\endcsname.}}}
+}}
 \makeatletter
 \renewcommand{\thispagestyle}[1]{}% PreTeXt gasi podnozje 1. stranice; ovdje ga zelimo
 \newcommand{\cakipodnaslov}{\par\vspace{0.2ex}\normalfont\color{cakisiva}}
@@ -112,8 +123,16 @@ STIL_PREAMBULA = r"""
   {\color{cakiplava}\rule{\linewidth}{0.7pt}}\vspace{0.8ex}
   \ifnum%%STUPCI%%=2 }]\fi}
 \makeatother
-\titleformat{\section}[hang]{\normalfont\large\bfseries\color{cakiplava}}{\thesection}{0.5em}{#1}
-\titlespacing*{\section}{0pt}{1.4ex plus 0.4ex}{0.6ex}
+% 30.10.2026. (Caki): naslov poglavlja na novoj stranici mora se istaknuti - broj u plavoj
+% traci (bijeli tekst), naslov u plavoj boji i tanka plava crta ispod. Testirano lokalno:
+% titlesec ne dopusta "#1" u before-code, a colorbox oko cijelog naslova guta tekst; zato
+% se boji SAMO broj (label), naslov ostaje titlesecov.
+\setlength{\fboxsep}{3.5pt}
+\titleformat{\section}[block]
+  {\normalfont\Large\bfseries\color{cakiplava}}
+  {\colorbox{cakiplava}{\color{white}\thesection}}{0.6em}{}
+  [\vspace{0.2ex}{\color{cakiplava}\rule{\linewidth}{1pt}}]
+\titlespacing*{\section}{0pt}{0pt}{1.4ex}
 \titleformat{\subsection}[hang]{\normalfont\normalsize\bfseries\color{cakiplava}}{\thesubsection}{0.5em}{#1}
 \titlespacing*{\subsection}{0pt}{1.0ex plus 0.3ex}{0.2ex}
 %% naslov "Zadaci" ispod svakog potpoglavlja je suvisan (svaki zadatak ima svoj naslov) - ne ispisuje se
@@ -125,9 +144,15 @@ STIL_PREAMBULA = r"""
 {\renewcommand{\divisionnameptx}{#1}\renewcommand{\titleptx}{#2}\renewcommand{\subtitleptx}{#3}%
  \renewcommand{\shortitleptx}{#4}\renewcommand{\authorsptx}{#5}\renewcommand{\epigraphptx}{#6}%
  \section[{#4}]{#2}\label{#7}\footnotesize}{}
+% 30.10.2026. (Caki): "Zadaci rješenja" je unutarnja <solutions> divizija (subsection) -
+% osiguraj da i ona pocne na novoj stranici, ne samo vanjska "Rješenja" (section).
+\AtBeginEnvironment{solutions-subsection}{\clearpage}
+\AtBeginEnvironment{solutions-subsubsection}{\clearpage}
+% 30.10.2026. (Caki): broj zadatka u ZUTOJ traci, crni tekst. before title je dokazano
+% pouzdan (za razliku od tcolorbox title-bara uz PreTeXtov run-in stil).
 \tcbset{divisionexercisestyle/.style={bwminimalstyle, runintitlestyle, exercisespacingstyle, left=0pt, breakable, before upper app={\ptxsetparstyle}}}
 \renewtcolorbox{divisionexercise}[4]{divisionexercisestyle,
-  before title={\textbf{\color{cakiplava}Zadatak \ifnum\value{subsection}>0 \thesubsection\else\thesection\fi.#1.}\enspace},
+  before title={\colorbox{cakizuta}{\color{black}\bfseries Zadatak \ifnum\value{subsection}>0 \thesubsection\else\thesection\fi.#1.}\enspace},
   title={\notblank{#2}{#2}{}}, after title={\notblank{#2}{\space}{}},
   phantom={\hypertarget{#4}{}},
   after={\notblank{#3}{\par\rule{\ptxworkspacestrutwidth}{#3}\par\vfill}{\par}}}

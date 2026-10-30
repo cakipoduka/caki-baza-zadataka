@@ -1470,7 +1470,12 @@ def build_pretext_article(naslov, zadaci_redovi, xml_id_root, images_dir_abs, sl
 SKRIPTA_AUTOR = "Caki Centar"
 SKRIPTA_WEB = "cakipoduka.com"
 _SKRIPTA_RENAME = {
-    "exercises": "Zadaci", "exercise": "Zadatak", "example": "Primjer", "hint": "Uputa",
+    "exercises": "Zadaci", "exercise": "Zadatak",
+    # 30.10.2026. (Caki): naziv "Primjer" u tamnoplavoj traci, bijeli tekst. PreTeXtov
+    # tcolorbox "run-in" naslov ne da se pouzdano omotati colorboxom (guta pocetak teksta),
+    # pa se ovdje boji SAMO naziv tipa; BROJ 15. boji skripta_build.py preko \thetcbcounter.
+    "example": r"\colorbox{cakiplava}{\color{white}\bfseries Primjer}",
+    "hint": "Uputa",
     "solution": "Rješenje", "solutions": "Rješenja", "answer": "Odgovor",
     "toc": "Sadržaj", "figure": "Slika", "table": "Tablica",
 }
