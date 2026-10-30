@@ -1601,16 +1601,11 @@ def stranica_redoslijed_zadataka():
         st.warning("Šifrarnik potpoglavlja je prazan - popuni tab 'Sifrarnik_potpoglavlja' prvo.")
         return
 
-    cjelina = st.selectbox("Cjelina", sorted(potpoglavlja_po_cjelini.keys()), key="redoslijed_cjelina")
-    potpoglavlja = [p for p, _ in potpoglavlja_po_cjelini.get(cjelina, []) if p]
-    if not potpoglavlja:
-        st.info("Ova cjelina nema definirana potpoglavlja u šifrarniku.")
-        return
-    potpoglavlje = st.selectbox("Potpoglavlje", potpoglavlja, key="redoslijed_potpoglavlje")
-
-    # 30.10.2026. (Caki): dodatni filteri UNUTAR odabrane cjeline/potpoglavlja - kad zna
-    # izvor_naziv/biblioteku serije koju treba ispraviti (npr. "primjeri" uneseni kao
-    # "zadaci"), ne mora prelistavati sve zadatke tog potpoglavlja ručno.
+    # 30.10.2026. (Caki): "Cjelina i potpoglavlje bi trebali biti bez defaultnog izbora,
+    # nego da samo izaberemo biblioteku i pretrazivanje po ID" - filteri po biblioteci/
+    # nazivu NE smiju ovisiti o prethodnom odabiru cjeline/potpoglavlja. Cjelina/Potpoglavlje
+    # su OPCIONALNI ("(sve)" zadano, NEMA automatskog odabira prve stavke iz popisa).
+    SVE_REDOSLIJED = "(sve)"
     fbr1, fbr2 = st.columns(2)
     try:
         _biblioteke_redoslijed = get_biblioteke_izvora(sheet)
@@ -1625,18 +1620,58 @@ def stranica_redoslijed_zadataka():
     )
     _upit_naziv_redoslijed = f_naziv_redoslijed.strip().lower()
 
+    fc1, fc2 = st.columns(2)
+    cjelina = fc1.selectbox(
+        "Cjelina (neobavezno)", [SVE_REDOSLIJED] + sorted(potpoglavlja_po_cjelini.keys()),
+        key="redoslijed_cjelina",
+    )
+    if cjelina == SVE_REDOSLIJED:
+        potpoglavlje = SVE_REDOSLIJED
+        fc2.selectbox(
+            "Potpoglavlje (neobavezno)", [SVE_REDOSLIJED], key="redoslijed_potpoglavlje_prazno",
+            disabled=True, help="Odaberi Cjelinu prvo ako zelis suziti i na potpoglavlje.",
+        )
+    else:
+        potpoglavlja = [p for p, _ in potpoglavlja_po_cjelini.get(cjelina, []) if p]
+        if not potpoglavlja:
+            st.info("Ova cjelina nema definirana potpoglavlja u šifrarniku.")
+            return
+        potpoglavlje = fc2.selectbox(
+            "Potpoglavlje (neobavezno)", [SVE_REDOSLIJED] + potpoglavlja,
+            key="redoslijed_potpoglavlje",
+        )
+
+    _filtri_aktivni_redoslijed = bool(
+        cjelina != SVE_REDOSLIJED or potpoglavlje != SVE_REDOSLIJED
+        or f_biblioteka_redoslijed or _upit_naziv_redoslijed
+    )
+    if not _filtri_aktivni_redoslijed:
+        st.caption(
+            "Odaberi barem jedan filter (Cjelina, Biblioteka izvora, ili pretraga po ID-u/"
+            "nazivu) - lista se ne prikazuje dok nesto ne suzis (baza je prevelika za "
+            "prikaz svega odjednom)."
+        )
+        return
+
     stavke = [
-        (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
-        if _get_polje(row, idx, "cjelina").strip() == cjelina
-        and _get_polje(row, idx, "potpoglavlje").strip() == potpoglavlje
-        and (not f_biblioteka_redoslijed
-             or _get_polje(row, idx, "biblioteka_izvora") in f_biblioteka_redoslijed)
-        and (not _upit_naziv_redoslijed
-             or _upit_naziv_redoslijed in _get_polje(row, idx, "id").lower()
-             or _upit_naziv_redoslijed in _get_polje(row, idx, "izvor_naziv").lower())
+         (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
+        if  (cjelina == SVE_REDOSLIJED or _get_polje(row, idx, "cjelina").strip() == cjelina)
+        and  (potpoglavlje == SVE_REDOSLIJED
+              or _get_polje(row, idx, "potpoglavlje").strip() == potpoglavlje)
+        and  (not f_biblioteka_redoslijed
+              or _get_polje(row, idx, "biblioteka_izvora") in f_biblioteka_redoslijed)
+        and  (not _upit_naziv_redoslijed
+              or _upit_naziv_redoslijed in _get_polje(row, idx, "id").lower()
+              or _upit_naziv_redoslijed in _get_polje(row, idx, "izvor_naziv").lower())
     ]
     if not stavke:
         st.info("Nema zadataka u ovoj kombinaciji cjelina/potpoglavlje/filtera.")
+        return
+    if len(stavke) > 300:
+        st.warning(
+            f"⚠️ {len(stavke)} zadataka odgovara filteru - previse za prikaz odjednom. "
+            "Suzi filtere (dodaj Cjelinu/Potpoglavlje ili precizniji naziv/ID)."
+        )
         return
 
     # Isti poredak kao stvarni PreTeXt izlaz Koraka 3.1: težina, PA redoslijed_u_potpoglavlju.
