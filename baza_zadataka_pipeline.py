@@ -992,6 +992,28 @@ def _latex_tabular_u_pipe(tekst):
     return _TABULAR_BLOK_RE.sub(_zamijeni, tekst or "")
 
 
+_OPCIJE_ABCD_RE = re.compile(
+    r"(?is)\s+\(?A\)?[.)]\s+.*?\(?B\)?[.)]\s+.*?\(?C\)?[.)]\s+.*?\(?D\)?[.)]\s+")
+
+
+def _bez_opcija_u_tekstu(tekst):
+    """Ukloni blok ponuđenih odgovora A./B./C./D. iz teksta pitanja.
+
+    30.10.2026. (Caki, pravi PDF): tekst zadatka je često već sadržavao A-D, a pipeline je
+    ISTE opcije još jednom ispisivao iz stupca 'ponudjeni_odgovori' - u PDF-u su se pojavile
+    dvaput. Sada se iz teksta izbaci A-D blok, a opcije se ispišu jednom, u dva stupca.
+    """
+    if not tekst:
+        return tekst
+    m = _OPCIJE_ABCD_RE.search(tekst)
+    if m:
+        return tekst[:m.start()].rstrip()
+    # fallback: options as separate lines
+    linije = [ln for ln in tekst.splitlines()
+              if not re.match(r"(?i)^\s*\(?[A-D]\)?[.)]\s+", ln)]
+    return "\n".join(linije).strip()
+
+
 def _statement_tekst_lines(raw_tekst, oznaka, uvlaka="          "):
     """Niz <p>/<tabular> blokova za pocetak <statement> - zamjena za stari jedan
     <p>{oznaka}{tekst}</p>.
@@ -1153,12 +1175,18 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir, u
     uputa = (row.get('uputa') or '').strip()
 
     lines = []
-    lines.append(f'        <statement>')
-    lines.extend(_statement_tekst_lines(raw_tekst, oznaka))
-
     opcije = []
     if tip_zadatka == "visestruki_izbor" and ponudjeni_odgovori_raw:
         opcije = [o.strip() for o in ponudjeni_odgovori_raw.split("||") if o.strip()]
+    if opcije:
+        # 30.10.2026.: opcije se ispisuju JEDNOM (ispod), pa ih ukloni iz teksta pitanja.
+        raw_tekst = _bez_opcija_u_tekstu(raw_tekst)
+    lines.append(f'        <statement>')
+    if raw_tekst.strip():
+        lines.extend(_statement_tekst_lines(raw_tekst, oznaka))
+    elif oznaka:
+        # tekst je bio SAMO popis opcija (A-D) - ne ostavljaj prazan <p> (shema ga odbija)
+        lines.append(f'          <p>{oznaka}</p>')
 
     # 28.10.2026.: OPCIJE VIŠESTRUKOG IZBORA koje su same slike/crteži/grafovi (ne tekst) - v. D6
     # u sistemskom promptu uvoz_foldera.py ("Ako su same opcije slike..."). AI tad sprema
@@ -1209,7 +1237,10 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir, u
                 lines.append(f'          {tag}')
 
     if opcije:
-        lines.append('          <ol marker="A.">')
+        # 30.10.2026. (Caki): opcije idu jedna do druge, u dva stupca (2 reda za A-D), da se
+        # ustedi papir. Samo tekstualne opcije - slike ostaju u jednom stupcu.
+        cols_atr = ' cols="2"' if (not opcije_su_slike and len(opcije) >= 2) else ''
+        lines.append(f'          <ol marker="A."{cols_atr}>')
         for i, opcija in enumerate(opcije):
             sadrzaj = None
             if opcije_su_slike:
@@ -1219,7 +1250,9 @@ def _build_statement_hint_solution_video(row, images_dir_abs, slike_izvor_dir, u
                     slika_ok = True
                     sadrzaj = tag
             if sadrzaj is None:
-                sadrzaj = _pretext_math_or_text(opcija)  # tekst, ili fallback kad slika opcije nedostaje na disku
+                # oznaka A./B. je već u <ol marker="A."> - skini je iz teksta opcije ako postoji
+                opcija_cista = re.sub(r"(?i)^\s*\(?[A-E]\)?[.)]\s+", "", opcija).strip()
+                sadrzaj = _pretext_math_or_text(opcija_cista or opcija)  # tekst, ili fallback kad slika opcije nedostaje na disku
             lines.append(f'            <li><p>{sadrzaj}</p></li>')
         lines.append('          </ol>')
 
@@ -1471,10 +1504,10 @@ SKRIPTA_AUTOR = "Caki Centar"
 SKRIPTA_WEB = "cakipoduka.com"
 _SKRIPTA_RENAME = {
     "exercises": "Zadaci", "exercise": "Zadatak",
-    # 30.10.2026. (Caki): naziv "Primjer" u tamnoplavoj traci, bijeli tekst. PreTeXtov
-    # tcolorbox "run-in" naslov ne da se pouzdano omotati colorboxom (guta pocetak teksta),
-    # pa se ovdje boji SAMO naziv tipa; BROJ 15. boji skripta_build.py preko \thetcbcounter.
-    "example": r"\colorbox{cakiplava}{\color{white}\bfseries Primjer}",
+    # 30.10.2026.: NAMJERNO običan tekst. <rename> se u LaTeXu escapea, pa je
+    # "\colorbox{...}{Primjer}" ispao kao sirovi tekst u PDF-u. Stil "Primjer" se sada
+    # rješava u skripta_build.STIL_PREAMBULA (plava naslovna traka primjera).
+    "example": "Primjer",
     "hint": "Uputa",
     "solution": "Rješenje", "solutions": "Rješenja", "answer": "Odgovor",
     "toc": "Sadržaj", "figure": "Slika", "table": "Tablica",
@@ -1979,7 +2012,9 @@ def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, 
                 primjeri_rjesenja.append({"naslov": naslov_sekcije, "stavke": stavke_rjesenja})
 
         if vjezbe:
-            lines.append('      <p><strong>Zadaci za vježbu</strong></p>')
+            # 30.10.2026. (Caki): "Zadaci za vježbu" -> "Primjeri za rad na satu" (jasnije da
+            # su to primjeri koje učenik rješava na satu, nakon izloženih primjera).
+            lines.append('      <p><strong>Primjeri za rad na satu</strong></p>')
             lines.append('      <exercises>')
             for row in vjezbe:
                 ex_lines, slika_ok = _build_exercise_lines(

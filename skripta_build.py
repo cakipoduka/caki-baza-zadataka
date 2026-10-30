@@ -37,7 +37,7 @@ import baza_zadataka_pipeline as bp
 # - rjesenja na kraju (backmatter/solutions), tezina slovima L/S/T
 # Stil se dodaje kroz vlastiti XSL (STIL_XSL) koji nadograduje standardni PreTeXt LaTeX XSL
 # i samo upisuje dodatnu LaTeX preambulu (parametar latex.preamble.late).
-STUPCI = 2     # 1 = jedan stupac, 2 = dva stupca (ako slike prave probleme, vrati na 1)
+STUPCI = 1     # 1 = jedan stupac (Caki 30.10.2026.), 2 = dva stupca (ako slike prave probleme, vrati na 1)
 FONT_PT = 9    # velicina slova: 8, 9, 10, 11 ili 12 (10 = ugodnije za citanje, ~15% vise papira)
 MARGINE = "a4paper,inner=1.9cm,outer=1.0cm,top=1.1cm,bottom=1.5cm,footskip=0.65cm,columnsep=0.5cm"
 
@@ -100,14 +100,15 @@ STIL_PREAMBULA = r"""
 \AddToHook{cmd/section/before}{\cakiprviput}
 % 30.10.2026.: malo veci razmak izmedju dva susjedna zadatka (v1 je bio zbijen, 1.1ex).
 \tcbset{exercisespacingstyle/.style={before skip={2.2ex plus 0.5ex}}}
-% NAPOMENA (30.10.2026., testirano lokalno): PreTeXtov "runintitlestyle" attacha naslov na
-% tijelo; \colorbox oko cijelog naslova (before/after title) guta pocetak teksta, a
-% attach title to upper=false + colbacktitle ne iscrtava traku pouzdano. Zato:
-%  - naziv "Primjer" boji pipeline preko <rename> (plava traka, bijeli tekst),
-%  - BROJ primjera boji se ovdje: before title samo predefinira \thetcbcounter u plavu
-%    traku s brojem (ne omotava naslov, pa ne guta tekst).
+% NAPOMENA (30.10.2026., pravi PDF): <rename> se u LaTeXu NE izvrsava - "\colorbox..." je
+% ispisan kao sirovi tekst. Zato "Primjer" ostaje obican tekst, a boji se BROJ primjera:
+% before title samo predefinira \thetcbcounter u plavu traku (ne omotava naslov, pa ne guta
+% tekst). POKUSAJ s cijelom plavom naslovnom trakom (attach title to upper=false) u testu je
+% dao "false" umjesto naslova - ne vracati taj pristup bez provjere na pravom PDF-u.
 \tcbset{examplestyle/.append style={
-  before title={\def\thetcbcounter{\colorbox{cakiplava}{\color{white}\bfseries\csname thetcb@cnt@block\endcsname.}}}
+  before title={\def\thetcbcounter{\colorbox{cakiplava}{\color{white}\bfseries\csname thetcb@cnt@block\endcsname.}}},
+  fonttitle=\bfseries,
+  coltitle=cakiplava
 }}
 \makeatletter
 \renewcommand{\thispagestyle}[1]{}% PreTeXt gasi podnozje 1. stranice; ovdje ga zelimo
@@ -124,13 +125,15 @@ STIL_PREAMBULA = r"""
   \ifnum%%STUPCI%%=2 }]\fi}
 \makeatother
 % 30.10.2026. (Caki): naslov poglavlja na novoj stranici mora se istaknuti - broj u plavoj
-% traci (bijeli tekst), naslov u plavoj boji i tanka plava crta ispod. Testirano lokalno:
-% titlesec ne dopusta "#1" u before-code, a colorbox oko cijelog naslova guta tekst; zato
-% se boji SAMO broj (label), naslov ostaje titlesecov.
+% traci (bijeli tekst), naslov u plavoj boji i tanka plava crta ispod. "[block]" s praznim
+% before-codeom u pravom PreTeXt PDF-u NIJE ispisao naslov (samo broj). Vraceno na "[hang]"
+% + "#1" - tocno onaj oblik koji je u PDF v1 ispisivao naslove na GitHub TeX Liveu.
+% (Lokalni TinyTeX 2026 "#1" odbija s "Illegal parameter number"; ciljni GitHub build je
+% TeX Live 2023, na kojem je v1 s "#1" radio - ne mijenjati zbog lokalnog testa.)
 \setlength{\fboxsep}{3.5pt}
-\titleformat{\section}[block]
+\titleformat{\section}[hang]
   {\normalfont\Large\bfseries\color{cakiplava}}
-  {\colorbox{cakiplava}{\color{white}\thesection}}{0.6em}{}
+  {\colorbox{cakiplava}{\color{white}\thesection}}{0.6em}{#1}
   [\vspace{0.2ex}{\color{cakiplava}\rule{\linewidth}{1pt}}]
 \titlespacing*{\section}{0pt}{0pt}{1.4ex}
 \titleformat{\subsection}[hang]{\normalfont\normalsize\bfseries\color{cakiplava}}{\thesubsection}{0.5em}{#1}
