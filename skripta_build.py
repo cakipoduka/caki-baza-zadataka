@@ -30,7 +30,7 @@ import baza_zadataka_pipeline as bp
 
 # --- Izgled PDF-a (12.10.2026.) ---
 # Namjena: OBOSTRANI ispis na A4, ZICANI uvez po DULJEM rubu, sto manje papira.
-# - dva stupca, malo slovo (FONT_PT), uske margine osim UNUTARNJE (za uvez): inner veci od outer,
+# - jedan stupac, veca slova (FONT_PT), uske margine osim UNUTARNJE (za uvez): inner veci od outer,
 #   pa je uvez uvijek na pravoj strani i na prednjoj i na straznjoj strani lista
 # - kompaktan naslovni blok (naslov + podnaslov lijevo, autor/datum/legenda desno), bez posebne
 #   naslovnice; bez zaglavlja; podnozje s brojem stranice na VANJSKOM rubu
@@ -38,7 +38,7 @@ import baza_zadataka_pipeline as bp
 # Stil se dodaje kroz vlastiti XSL (STIL_XSL) koji nadograduje standardni PreTeXt LaTeX XSL
 # i samo upisuje dodatnu LaTeX preambulu (parametar latex.preamble.late).
 STUPCI = 1     # 1 = jedan stupac (Caki 30.10.2026.), 2 = dva stupca (ako slike prave probleme, vrati na 1)
-FONT_PT = 9    # velicina slova: 8, 9, 10, 11 ili 12 (10 = ugodnije za citanje, ~15% vise papira)
+FONT_PT = 11   # velicina slova: 8, 9, 10, 11 ili 12 (Caki 30.10.2026.: 11 zbog citljivosti; 12 = jos vece)
 MARGINE = "a4paper,inner=1.9cm,outer=1.0cm,top=1.1cm,bottom=1.5cm,footskip=0.65cm,columnsep=0.5cm"
 
 PUBLICATION_PTX = (
