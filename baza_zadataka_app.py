@@ -1608,13 +1608,35 @@ def stranica_redoslijed_zadataka():
         return
     potpoglavlje = st.selectbox("Potpoglavlje", potpoglavlja, key="redoslijed_potpoglavlje")
 
+    # 30.10.2026. (Caki): dodatni filteri UNUTAR odabrane cjeline/potpoglavlja - kad zna
+    # izvor_naziv/biblioteku serije koju treba ispraviti (npr. "primjeri" uneseni kao
+    # "zadaci"), ne mora prelistavati sve zadatke tog potpoglavlja ručno.
+    fbr1, fbr2 = st.columns(2)
+    try:
+        _biblioteke_redoslijed = get_biblioteke_izvora(sheet)
+    except Exception:
+        _biblioteke_redoslijed = []
+    f_biblioteka_redoslijed = fbr1.multiselect(
+        "Biblioteka izvora", _biblioteke_redoslijed, key="redoslijed_f_biblioteka",
+    )
+    f_naziv_redoslijed = fbr2.text_input(
+        "Pretraži po ID-u ili nazivu izvora", "", key="redoslijed_f_naziv",
+        help="Traži podniz u 'id' ILI u 'izvor_naziv' (npr. dio naziva PDF-a kojeg si uvezao).",
+    )
+    _upit_naziv_redoslijed = f_naziv_redoslijed.strip().lower()
+
     stavke = [
         (broj_retka, row) for broj_retka, row in enumerate(redovi, start=2)
         if _get_polje(row, idx, "cjelina").strip() == cjelina
         and _get_polje(row, idx, "potpoglavlje").strip() == potpoglavlje
+        and (not f_biblioteka_redoslijed
+             or _get_polje(row, idx, "biblioteka_izvora") in f_biblioteka_redoslijed)
+        and (not _upit_naziv_redoslijed
+             or _upit_naziv_redoslijed in _get_polje(row, idx, "id").lower()
+             or _upit_naziv_redoslijed in _get_polje(row, idx, "izvor_naziv").lower())
     ]
     if not stavke:
-        st.info("Nema zadataka u ovoj kombinaciji cjelina/potpoglavlje.")
+        st.info("Nema zadataka u ovoj kombinaciji cjelina/potpoglavlje/filtera.")
         return
 
     # Isti poredak kao stvarni PreTeXt izlaz Koraka 3.1: težina, PA redoslijed_u_potpoglavlju.
