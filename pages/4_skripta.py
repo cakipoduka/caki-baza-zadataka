@@ -5,8 +5,9 @@ DVA NAČINA RADA (radio na vrhu stranice):
 
 1. 📗 Iz knjige (jednostavno) - za skriptu iz JEDNE knjige/zbirke (npr. "ŠK-Matematika na
    maturi"). Popis poglavlja se sam pronađe u bazi (izvor_naziv "PoglavljeX.Y_primjeri" /
-   "PoglavljeX.Y_zadaci"), Caki poreda poglavlja, upiše nazive i pojedinačno označi koje
-   primjere/zadatke želi. Generiraju se DVIJE verzije PDF-a:
+   "PoglavljeX.Y_zadaci"), Caki poreda poglavlja, upiše nazive, pojedinačno označi koje
+   primjere/zadatke želi i po potrebi promijeni tip (Primjer / Zadatak - upisuje se u bazu,
+   vrijedi i za buduće skripte). Generiraju se DVIJE verzije PDF-a:
      - za učenike: primjeri BEZ rješenja, zadaci BEZ rješenja + rješenja zadataka na kraju
      - za profesora: isto + konačni odgovori primjera na kraju („Primjeri rješenja”)
    Gradnja ide preko GitHub Actions (PreTeXt -> XeLaTeX), isto kao dosad.
@@ -30,6 +31,7 @@ import streamlit as st
 import predmet_config
 from baza_zadataka_pipeline import (
     _je_primjer_na_satu,          # isti kriterij kao build (kvačica ILI naziv serije)
+    _je_primjer_za_skriptu,       # isto + lokalna promjena tipa iz plana (primjer <-> zadatak)
     _poglavlje_sort_key,          # prirodni poredak 2.9 < 2.10 (Claude, 28.10.)
     get_drive_service,
     get_gspread_client,
@@ -42,6 +44,7 @@ from baza_zadataka_pipeline import (
     popis_zahtjeva_skripte,
     preuzmi_datoteku_iz_drivea,
     spremi_naslove_poglavlja,
+    spremi_tipove_zadataka,
     spremi_zahtjev_skripte,
     ucitaj_zadnji_zahtjev_skripte,
 )
@@ -195,6 +198,20 @@ def _odabrani_broj(redovi, izbor) -> int:
     return sum(1 for r in redovi if str(r.get("id", "")) in skup)
 
 
+def _tip_efektivni(red, tipovi) -> str:
+    """'primjer' ili 'zadatak' za OVU skriptu (lokalna promjena ima prednost nad bazom)."""
+    return "primjer" if _je_primjer_za_skriptu(red, tipovi) else "zadatak"
+
+
+def _podijeli_po_tipu(grupa, tipovi):
+    """(primjeri, zadaci) poglavlja prema EFEKTIVNOM tipu (uz lokalne promjene).
+    Redoslijed unutar svake skupine ostaje redoslijed iz baze."""
+    primjeri, zadaci = [], []
+    for red in (grupa.get("primjeri") or []) + (grupa.get("zadaci") or []):
+        (primjeri if _tip_efektivni(red, tipovi) == "primjer" else zadaci).append(red)
+    return primjeri, zadaci
+
+
 def _lista_odabranih(redovi, izbor):
     if izbor is None:
         return [str(r.get("id", "")) for r in redovi]
@@ -220,6 +237,8 @@ def _pocetni_plan(grupe, spremljeno):
             "ukljuceno": o.get("ukljuceno", True),
             "primjeri": o.get("primjeri", None),
             "zadaci": o.get("zadaci", None),
+            # 30.10.2026.: {id: "primjer"|"zadatak"} - lokalna promjena tipa za ovu skriptu.
+            "tipovi": dict(o.get("tipovi") or {}),
         })
     return plan
 
@@ -242,6 +261,8 @@ def _zapisi_za_spremanje(plan, spremljeno):
             "redoslijed": p["redoslijed"],
             "odabir_json": json.dumps(odabir, ensure_ascii=False) if odabir else "",
             "ukljuceno": "da" if p["ukljuceno"] else "ne",
+            # 30.10.2026.: lokalna promjena tipa (primjer <-> zadatak) samo za ovu skriptu.
+            "tipovi_json": json.dumps(p["tipovi"], ensure_ascii=False) if p.get("tipovi") else "",
         })
     for kljuc in sorted(set(spremljeno["naslovi"]) | set(spremljeno["redoslijed"])
                         | set(spremljeno["odabir"])):
@@ -259,6 +280,7 @@ def _zapisi_za_spremanje(plan, spremljeno):
             "redoslijed": spremljeno["redoslijed"].get(kljuc, ""),
             "odabir_json": json.dumps(odabir, ensure_ascii=False) if odabir else "",
             "ukljuceno": "da" if o.get("ukljuceno", True) else "ne",
+            "tipovi_json": json.dumps(o.get("tipovi") or {}, ensure_ascii=False) if o.get("tipovi") else "",
         })
     return izlaz
 
@@ -271,6 +293,43 @@ def _spremi_plan(plan, spremljeno) -> bool:
     except Exception as e:  # noqa: BLE001
         st.error(f"Ne mogu spremiti plan poglavlja: {e}")
         return False
+
+
+def _spremi_sve(plan, spremljeno) -> bool:
+    """Spremi plan + promjene tipa trajno u bazu (koristi_kao_primjer_na_satu).
+
+    Promjena tipa iz plana ('tipovi') upisuje se u tab 'Zadaci': "da" = primjer, "ne" =
+    zadatak. Time vrijedi i za SVE buduće skripte, ne samo za ovu. Ako upis u bazu ne uspije,
+    lokalni 'tipovi' ostaju pa se ova skripta i dalje gradi ispravno, ali se prikazuje greška
+    (buduće skripte neće imati promjenu dok se ne upiše)."""
+    if not _spremi_plan(plan, spremljeno):
+        return False
+    promjene = {}
+    for p in plan:
+        for zadatak_id, tip in (p.get("tipovi") or {}).items():
+            promjene[str(zadatak_id)] = tip
+    if not promjene:
+        return True
+    try:
+        broj = spremi_tipove_zadataka(init_sheet(), promjene)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Tipovi nisu upisani u bazu: {e}. Za ovu skriptu i dalje vrijede lokalno, "
+                 f"ali buduće skripte neće imati promjenu dok se ne upiše.")
+        return True
+    if not broj:
+        st.warning("Nijedan zadatak nije pronađen u tabu 'Zadaci' — tip nije upisan u bazu.")
+        return True
+    if broj < len(promjene):
+        st.warning(f"U bazu je upisano {broj} od {len(promjene)} promjena — ostali id-evi nisu "
+                   f"pronađeni u tabu 'Zadaci'; za njih promjena ostaje samo lokalna.")
+        return True
+    # Uspješno upisano u bazu -> lokalni override više ne treba (baza je sada izvor istine).
+    for p in plan:
+        p["tipovi"] = {}
+    _spremi_plan(plan, spremljeno)
+    _ucitaj_zadatke_za.clear()
+    st.info(f"✅ Tip upisan u bazu za {broj} zadataka — vrijedi i za buduće skripte.")
+    return True
 
 
 # ---------------------------------------------------------------
@@ -330,11 +389,14 @@ def _skripta_iz_knjige():
         for k in sorted(novi, key=lambda x: _kljuc_za_poredak(x, spremljeno["redoslijed"])):
             plan.append({"kljuc": k, "naslov": spremljeno["naslovi"].get(k, ""),
                          "redoslijed": float((len(plan) + 1) * 10), "ukljuceno": True,
-                         "primjeri": None, "zadaci": None})
+                         "primjeri": None, "zadaci": None, "tipovi": {}})
         st.info(f"Novo u bazi: {len(novi)} poglavlje(a) dodano na kraj popisa.")
 
-    ukupno_p = sum(len(g["primjeri"]) for g in grupe.values())
-    ukupno_z = sum(len(g["zadaci"]) for g in grupe.values())
+    # 30.10.2026.: brojevi idu po EFEKTIVNOM tipu (lokalna promjena primjer <-> zadatak).
+    _po_tipu = {p["kljuc"]: _podijeli_po_tipu(grupe.get(p["kljuc"], {}), p["tipovi"])
+                for p in plan}
+    ukupno_p = sum(len(v[0]) for v in _po_tipu.values())
+    ukupno_z = sum(len(v[1]) for v in _po_tipu.values())
     m1, m2, m3 = st.columns(3)
     m1.metric("Poglavlja", len(grupe))
     m2.metric("Primjera", ukupno_p)
@@ -352,10 +414,10 @@ def _skripta_iz_knjige():
         "Uključi": bool(p["ukljuceno"]),
         "Poglavlje": p["kljuc"],
         "Naziv u PDF-u": p["naslov"],
-        "Primjeri": f"{_odabrani_broj(grupe.get(p['kljuc'], {}).get('primjeri', []), p['primjeri'])}"
-                    f" / {len(grupe.get(p['kljuc'], {}).get('primjeri', []))}",
-        "Zadaci": f"{_odabrani_broj(grupe.get(p['kljuc'], {}).get('zadaci', []), p['zadaci'])}"
-                  f" / {len(grupe.get(p['kljuc'], {}).get('zadaci', []))}",
+        "Primjeri": f"{_odabrani_broj(_po_tipu[p['kljuc']][0], p['primjeri'])}"
+                    f" / {len(_po_tipu[p['kljuc']][0])}",
+        "Zadaci": f"{_odabrani_broj(_po_tipu[p['kljuc']][1], p['zadaci'])}"
+                  f" / {len(_po_tipu[p['kljuc']][1])}",
         "Redoslijed": float(p["redoslijed"]),
     } for p in plan])
 
@@ -393,9 +455,9 @@ def _skripta_iz_knjige():
             st.session_state[f"{stanje_kljuc}_v"] = verzija_tablice + 1
             st.rerun()
     with k2:
-        if st.button("💾 Spremi nazive, redoslijed i odabir", use_container_width=True):
-            if _spremi_plan(plan, spremljeno):
-                st.success("✅ Spremljeno u tab 'Sifrarnik_poglavlja_knjige'.")
+        if st.button("💾 Spremi plan i tipove u bazu", use_container_width=True):
+            if _spremi_sve(plan, spremljeno):
+                st.success("✅ Spremljeno (plan u 'Sifrarnik_poglavlja_knjige', tipovi u 'Zadaci').")
 
     # ---------------- 2. pojedinačni odabir primjera/zadataka ----------------
     st.markdown("###### 2. Označi što ide u skriptu (pojedinačno)")
@@ -403,45 +465,67 @@ def _skripta_iz_knjige():
                                                                 _poglavlje_sort_key(p["kljuc"])))]
     if not kljucevi:
         return
+
+    def _po_tipu_za(k):
+        p = next((x for x in plan if x["kljuc"] == k), None)
+        return _podijeli_po_tipu(grupe.get(k, {}), (p or {}).get("tipovi") or {})
+
     odabrano = st.selectbox(
         "Poglavlje", kljucevi, key=f"skripta_knjiga_detalj_{PREDMET}_{knjiga}",
         format_func=lambda k: (
             f"{(next((p['naslov'] for p in plan if p['kljuc'] == k), '') or k)} "
-            f"— {len(grupe.get(k, {}).get('primjeri', []))} primjera, "
-            f"{len(grupe.get(k, {}).get('zadaci', []))} zadataka"))
+            f"— {len(_po_tipu_za(k)[0])} primjera, {len(_po_tipu_za(k)[1])} zadataka"))
     pogl = next(p for p in plan if p["kljuc"] == odabrano)
     grupa = grupe.get(odabrano, {"primjeri": [], "zadaci": []})
-
-    stavke = []
-    for tip, redovi, izbor in (("Primjer", grupa["primjeri"], pogl["primjeri"]),
-                                ("Zadatak", grupa["zadaci"], pogl["zadaci"])):
-        odabrani_id = set(_lista_odabranih(redovi, izbor))
-        for i, r in enumerate(redovi, start=1):
-            rid = str(r.get("id", ""))
-            ima_rjesenje = bool(str(r.get("rjesenje") or r.get("konacan_odgovor") or "").strip())
-            stavke.append({
-                "Uključi": rid in odabrani_id,
-                "Tip": tip,
-                "#": _serija_broj(rid) or i,
-                "Tekst": _preview(r.get("tekst_zadatka_latex")),
-                "Rješenje": "da" if ima_rjesenje else "—",
-                "_id": rid,
-                "_tip": tip,
-            })
-    if not stavke:
+    svi_redovi = (grupa.get("primjeri") or []) + (grupa.get("zadaci") or [])
+    if not svi_redovi:
         st.info("Ovo poglavlje nema nijedan redak u bazi.")
         return
 
-    st.caption("Označeno ulazi u PDF. Redoslijed u PDF-u je uvijek isti kao u bazi - "
-               "primjeri pa zadaci, kako su unešeni.")
+    # 30.10.2026.: redak ima EFEKTIVNI tip (plan može promijeniti primjer <-> zadatak).
+    # Tablica je poredana po efektivnom tipu (prvo primjeri, pa zadaci), a unutar skupine
+    # ostaje redoslijed iz baze; kad Caki promijeni Tip, redak se premjesti na sljedećem
+    # rerunu. "_tip_baza" pamti tip iz baze da se zna je li promjena uopće potrebna.
+    opisani = []
+    for idx, r in enumerate(svi_redovi):
+        tip_ef = _tip_efektivni(r, pogl["tipovi"])
+        tip_baza = "primjer" if _je_primjer_na_satu(r) else "zadatak"
+        opisani.append((0 if tip_ef == "primjer" else 1, idx, r, tip_ef, tip_baza))
+    opisani.sort(key=lambda x: (x[0], x[1]))
+
+    izbor_p = set(_lista_odabranih([x[2] for x in opisani if x[3] == "primjer"], pogl["primjeri"]))
+    izbor_z = set(_lista_odabranih([x[2] for x in opisani if x[3] == "zadatak"], pogl["zadaci"]))
+
+    stavke = []
+    for poz, (_, _, r, tip_ef, tip_baza) in enumerate(opisani, start=1):
+        rid = str(r.get("id", ""))
+        ima_rjesenje = bool(str(r.get("rjesenje") or r.get("konacan_odgovor") or "").strip())
+        stavke.append({
+            "Uključi": rid in (izbor_p if tip_ef == "primjer" else izbor_z),
+            "Tip": "Primjer" if tip_ef == "primjer" else "Zadatak",
+            "#": _serija_broj(rid) or poz,
+            "Tekst": _preview(r.get("tekst_zadatka_latex")),
+            "Rješenje": "da" if ima_rjesenje else "—",
+            "_id": rid,
+            "_tip_ef": tip_ef,
+            "_tip_baza": tip_baza,
+        })
+
+    st.caption("Označeno ulazi u PDF. **Tip** mijenjaš padajućim izborom (Primjer / Zadatak); "
+               "**Spremi** ili **Generiraj** upisuje promjenu u bazu (`koristi_kao_primjer_na_"
+               "satu`) pa vrijedi i za buduće skripte. Redoslijed u PDF-u je primjeri pa "
+               "zadaci, kako su unešeni.")
     df_stavke = pd.DataFrame(stavke)
     verzija_stavke = st.session_state.get(f"{stanje_kljuc}_stavke_v_{odabrano}", 0)
     uredeno_stavke = st.data_editor(
-        df_stavke.drop(columns=["_id", "_tip"]), hide_index=True, use_container_width=True,
+        df_stavke.drop(columns=["_id", "_tip_ef", "_tip_baza"]), hide_index=True,
+        use_container_width=True,
         key=f"skripta_knjiga_stavke_{PREDMET}_{knjiga}_{odabrano}_{verzija_stavke}",
         column_config={
             "Uključi": st.column_config.CheckboxColumn("Uključi", width="small"),
-            "Tip": st.column_config.TextColumn("Tip", disabled=True, width="small"),
+            "Tip": st.column_config.SelectboxColumn(
+                "Tip", options=["Primjer", "Zadatak"], required=True, width="small",
+                help="Sprema se u bazu (koristi_kao_primjer_na_satu) i vrijedi za buduće skripte."),
             "#": st.column_config.NumberColumn("#", disabled=True, width="small"),
             "Tekst": st.column_config.TextColumn("Zadatak (početak)", disabled=True, width="large"),
             "Rješenje": st.column_config.TextColumn("Rješenje", disabled=True, width="small"),
@@ -449,13 +533,28 @@ def _skripta_iz_knjige():
     )
     if isinstance(uredeno_stavke, pd.DataFrame) and len(uredeno_stavke) == len(stavke):
         oznaceno_p, oznaceno_z = [], []
+        ukupno_p = ukupno_z = 0
+        promijenjen_tip = False
         for osnovni, (_, redak) in zip(stavke, uredeno_stavke.iterrows()):
+            novi_tip = ("primjer" if str(redak.get("Tip", "")).strip().lower().startswith("primjer")
+                        else "zadatak")
+            ukupno_p += 1 if novi_tip == "primjer" else 0
+            ukupno_z += 1 if novi_tip == "zadatak" else 0
+            rid = osnovni["_id"]
+            if novi_tip != osnovni["_tip_ef"]:
+                promijenjen_tip = True
+            if novi_tip != osnovni["_tip_baza"]:
+                pogl["tipovi"][rid] = novi_tip
+            else:
+                pogl["tipovi"].pop(rid, None)
             if bool(redak.get("Uključi", False)):
-                (oznaceno_p if osnovni["_tip"] == "Primjer" else oznaceno_z).append(osnovni["_id"])
-        pogl["primjeri"] = (None if len(oznaceno_p) == len(grupa["primjeri"])
-                            else oznaceno_p)
-        pogl["zadaci"] = (None if len(oznaceno_z) == len(grupa["zadaci"])
-                          else oznaceno_z)
+                (oznaceno_p if novi_tip == "primjer" else oznaceno_z).append(rid)
+        pogl["primjeri"] = (None if len(oznaceno_p) == ukupno_p else oznaceno_p)
+        pogl["zadaci"] = (None if len(oznaceno_z) == ukupno_z else oznaceno_z)
+        if promijenjen_tip:
+            # redak se mora premjestiti u drugu skupinu -> svjez editor s novim poretkom
+            st.session_state[f"{stanje_kljuc}_stavke_v_{odabrano}"] = verzija_stavke + 1
+            st.rerun()
 
     b1, b2, b3, b4 = st.columns(4)
     with b1:
@@ -517,7 +616,7 @@ def _skripta_iz_knjige():
                "Samo s rješenjima": ["profesor"]}[sto]
 
     if st.button("📄 Generiraj PDF", type="primary", disabled=not ima_tokena or not broj_stavki):
-        if not _spremi_plan(plan, spremljeno):
+        if not _spremi_sve(plan, spremljeno):
             return
         poslano, greske = [], []
         for verzija in verzije:

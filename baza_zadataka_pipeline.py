@@ -1100,10 +1100,33 @@ def _je_primjer_na_satu(row):
     30.10.2026.: osim kvačice, priznaje i NAZIV SERIJE ('..._primjeri', '..._Primjeri_016') -
     materijal uvezen preko 'Uvoz iz foldera' nosi to u izvor_naziv, pa primjer ostaje primjer
     i ako kvačica na pojedinom retku iz nekog razloga nije upisana. Redak iz serije '_zadaci'
-    time NIKAD ne postaje primjer."""
-    if (row.get("koristi_kao_primjer_na_satu") or "").strip().lower() == "da":
+    time NIKAD ne postaje primjer.
+
+    30.10.2026. (Caki, promjena tipa u pripremi skripte): "ne" je SADA EKSPLICITNA odluka
+    "nije primjer" i ima prednost pred nazivom serije. Bez toga se primjer iz serije
+    '..._primjeri' NIKAD nije mogao pretvoriti u zadatak (prazna kvačica bi i dalje pala na
+    naziv serije). Stranica Skripta pri promjeni tipa upisuje "da" (primjer) ili "ne"
+    (zadatak), pa promjena vrijedi i za buduće skripte."""
+    vrijednost = (row.get("koristi_kao_primjer_na_satu") or "").strip().lower()
+    if vrijednost == "da":
         return True
+    if vrijednost in ("ne", "no", "false", "0"):
+        return False
     return bool(_PRIMJERI_SERIJA_RE.search(str(row.get("izvor_naziv") or "")))
+
+
+def _je_primjer_za_skriptu(row, tipovi=None):
+    """Tip retka za OVU skriptu, s lokalnom promjenom iz plana.
+
+    tipovi: {id: "primjer"|"zadatak"} iz 'tipovi_json' (v. get_odabir_poglavlja). Lokalna
+    promjena ima PREDNOST nad bazom - tako Caki može ispraviti pogrešan tip iz uvoza bez
+    diranja taba 'Zadaci'. Bez zapisa za taj id ponašanje je identično _je_primjer_na_satu."""
+    override = (tipovi or {}).get(str(row.get("id", "")))
+    if override == "primjer":
+        return True
+    if override == "zadatak":
+        return False
+    return _je_primjer_na_satu(row)
 
 
 _SLIKA_OPCIJA_RE = re.compile(r"(?i)^slika\s*[A-H]$")
@@ -1629,7 +1652,10 @@ NASLOVI_POGLAVLJA_HEADERS = ["poglavlje_kljuc", "naslov_prikaz", "redoslijed",
                               # prazno = svi. Vidi get_odabir_poglavlja.
                               "odabir_json",
                               # "da"/"ne" - je li poglavlje uopće u skripti; prazno = da.
-                              "ukljuceno"]
+                              "ukljuceno",
+                              # 30.10.2026.: {"id": "primjer"|"zadatak"} - LOKALNA promjena
+                              # tipa za ovu skriptu (ne dira bazu). Prazno = tip iz baze.
+                              "tipovi_json"]
 
 def get_naslovi_poglavlja(sheet) -> dict:
     """Vraca {poglavlje_kljuc: naslov_prikaz} iz tab 'Sifrarnik_poglavlja_knjige' (isti
@@ -1675,12 +1701,14 @@ def get_redoslijed_poglavlja(sheet) -> dict:
 
 def get_odabir_poglavlja(sheet) -> dict:
     """Vraca {poglavlje_kljuc: {"primjeri": None|[...], "zadaci": None|[...],
-    "ukljuceno": bool}} iz 4./5. stupca taba 'Sifrarnik_poglavlja_knjige' (dodano 30.10.2026.).
+    "ukljuceno": bool, "tipovi": {id: "primjer"|"zadatak"}}} iz taba
+    'Sifrarnik_poglavlja_knjige' (dodano 30.10.2026.).
 
     None = SVI redci tog poglavlja (uključujući kasnije dodane), [] = nijedan, lista id-eva =
     točno ti. Prazan/neispravan JSON, tab koji ne postoji ili stari tab bez tih stupaca ->
     poglavlje se NE nalazi u rezultatu, a build ga tada tretira kao "svi" (staro ponašanje,
-    nista ne puca)."""
+    nista ne puca). "tipovi" je LOKALNA promjena tipa (primjer <-> zadatak) samo za ovu
+    skriptu; prazno = tip iz baze (koristi_kao_primjer_na_satu / naziv serije)."""
     try:
         ws = sheet.worksheet("Sifrarnik_poglavlja_knjige")
     except gspread.exceptions.WorksheetNotFound:
@@ -1691,6 +1719,7 @@ def get_odabir_poglavlja(sheet) -> dict:
     zaglavlje = [str(h).strip() for h in redovi[0]]
     i_odabir = zaglavlje.index("odabir_json") if "odabir_json" in zaglavlje else None
     i_uklj = zaglavlje.index("ukljuceno") if "ukljuceno" in zaglavlje else None
+    i_tipovi = zaglavlje.index("tipovi_json") if "tipovi_json" in zaglavlje else None
     izlaz = {}
     for r in redovi[1:]:
         kljuc = str(r[0]).strip() if r else ""
@@ -1713,7 +1742,18 @@ def get_odabir_poglavlja(sheet) -> dict:
         ukljuceno = True
         if i_uklj is not None and i_uklj < len(r):
             ukljuceno = str(r[i_uklj]).strip().lower() not in ("ne", "no", "false", "0")
-        izlaz[kljuc] = {"primjeri": primjeri, "zadaci": zadaci, "ukljuceno": ukljuceno}
+        tipovi = {}
+        if i_tipovi is not None and i_tipovi < len(r) and str(r[i_tipovi]).strip():
+            try:
+                vrijednost = json.loads(r[i_tipovi])
+            except (ValueError, TypeError):
+                vrijednost = None
+            if isinstance(vrijednost, dict):
+                for zadatak_id, tip in vrijednost.items():
+                    if str(tip).strip().lower() in ("primjer", "zadatak"):
+                        tipovi[str(zadatak_id)] = str(tip).strip().lower()
+        izlaz[kljuc] = {"primjeri": primjeri, "zadaci": zadaci, "ukljuceno": ukljuceno,
+                        "tipovi": tipovi}
     return izlaz
 
 
@@ -1721,14 +1761,15 @@ def spremi_naslove_poglavlja(sheet, zapisi: list):
     """Prepisuje CIJELI tab 'Sifrarnik_poglavlja_knjige' (mali tab, desetci redaka - sigurnije
     prepisati u cijelosti nego upsert po retku, isto nacelo kao get_biblioteke_izvora/
     Sifrarnik_biblioteka_izvora). zapisi: lista rjecnika
-    {"poglavlje_kljuc", "naslov_prikaz", "redoslijed", "odabir_json", "ukljuceno"} (npr.
-    izravno iz st.data_editor-a u pages/4_skripta.py). Redci bez poglavlje_kljuc se preskacaju;
-    redoslijed se pise kao tekst (dozvoljava i decimalne vrijednosti radi umetanja izmedju dva
-    postojeca cijela broja bez pretipkavanja svih ostalih).
+    {"poglavlje_kljuc", "naslov_prikaz", "redoslijed", "odabir_json", "ukljuceno",
+    "tipovi_json"} (npr. izravno iz st.data_editor-a u pages/4_skripta.py). Redci bez
+    poglavlje_kljuc se preskacaju; redoslijed se pise kao tekst (dozvoljava i decimalne
+    vrijednosti radi umetanja izmedju dva postojeca cijela broja bez pretipkavanja svih
+    ostalih).
 
-    30.10.2026.: odabir_json/ukljuceno su NEOBAVEZNI u zapisu. Ako ih pozivatelj ne posalje,
-    za taj kljuc se PREUZIMA postojeća vrijednost iz taba - staro sucelje (i stari testovi)
-    tako ne moze slucajno obrisati Cakijev odabir zadataka."""
+    30.10.2026.: odabir_json/ukljuceno/tipovi_json su NEOBAVEZNI u zapisu. Ako ih pozivatelj
+    ne posalje, za taj kljuc se PREUZIMA postojeća vrijednost iz taba - staro sucelje (i stari
+    testovi) tako ne moze slucajno obrisati Cakijev odabir zadataka."""
     ws = get_or_create_worksheet(sheet, "Sifrarnik_poglavlja_knjige", NASLOVI_POGLAVLJA_HEADERS,
                                  rows=200)
     postojeci = {}
@@ -1738,6 +1779,7 @@ def spremi_naslove_poglavlja(sheet, zapisi: list):
                 postojeci[str(r[0]).strip()] = {
                     "odabir_json": r[3] if len(r) > 3 else "",
                     "ukljuceno": r[4] if len(r) > 4 else "",
+                    "tipovi_json": r[5] if len(r) > 5 else "",
                 }
     except Exception:  # noqa: BLE001 - prazan/neocekivan tab ne smije srusiti spremanje
         postojeci = {}
@@ -1757,15 +1799,59 @@ def spremi_naslove_poglavlja(sheet, zapisi: list):
             ukljuceno = postojeci.get(kljuc, {}).get("ukljuceno", "")
         elif isinstance(ukljuceno, bool):
             ukljuceno = "da" if ukljuceno else "ne"
+        tipovi = z.get("tipovi_json", None)
+        if tipovi is None:
+            tipovi = postojeci.get(kljuc, {}).get("tipovi_json", "")
+        if isinstance(tipovi, (dict, list)):
+            tipovi = json.dumps(tipovi, ensure_ascii=False)
         redovi.append([
             kljuc,
             str(z.get("naslov_prikaz", "") or "").strip(),
             "" if redoslijed in (None, "") else str(redoslijed),
             str(odabir or ""),
             str(ukljuceno or ""),
+            str(tipovi or ""),
         ])
     ws.clear()
     ws.update(range_name="A1", values=[NASLOVI_POGLAVLJA_HEADERS] + redovi)
+
+
+def spremi_tipove_zadataka(sheet, promjene: dict) -> int:
+    """Upisuje promjenu tipa u BAZU: koristi_kao_primjer_na_satu = "da" / "ne".
+
+    promjene: {id_zadatka: "primjer"|"zadatak"}. "da" = primjer, "ne" = zadatak
+    (v. _je_primjer_na_satu - "ne" je EKSPLICITNA odluka i pobjeđuje naziv serije
+    '..._primjeri'). Vraća broj stvarno upisanih redaka; nepoznat id se preskače.
+
+    Ovo je razlika od 'tipovi_json' u planu: plan je samo privremeni odabir za JEDNU
+    skriptu, a ovaj upis vrijedi za SVE buduće skripte (i Test Builder/ostale buildove koji
+    čitaju isti stupac)."""
+    if not promjene:
+        return 0
+    from gspread.utils import rowcol_to_a1
+    ws = sheet.worksheet("Zadaci")
+    zaglavlje = ws.row_values(1)
+    if "id" not in zaglavlje or "koristi_kao_primjer_na_satu" not in zaglavlje:
+        raise ValueError("U tabu 'Zadaci' nedostaje stupac 'id' ili "
+                         "'koristi_kao_primjer_na_satu'.")
+    i_id = zaglavlje.index("id")
+    i_kol = zaglavlje.index("koristi_kao_primjer_na_satu")
+    vrijednosti = ws.get_all_values()
+    red_po_id = {str(r[i_id]).strip(): n + 2 for n, r in enumerate(vrijednosti[1:])
+                 if i_id < len(r) and str(r[i_id]).strip()}
+    data = []
+    for zadatak_id, tip in (promjene or {}).items():
+        tip_norm = str(tip).strip().lower()
+        if tip_norm not in ("primjer", "zadatak"):
+            continue
+        redak = red_po_id.get(str(zadatak_id).strip())
+        if not redak:
+            continue
+        data.append({"range": rowcol_to_a1(redak, i_kol + 1),
+                     "values": [["da" if tip_norm == "primjer" else "ne"]]})
+    if data:
+        ws.batch_update(data)
+    return len(data)
 
 
 def _poglavlje_sort_key_s_redoslijedom(naziv, redoslijed_poglavlja):
@@ -1803,10 +1889,13 @@ def filtriraj_odabir_poglavlja(redovi, odabir_poglavlja):
         odabir = odabir_poglavlja.get(poglavlje) or {}
         if odabir.get("ukljuceno") is False:
             continue
-        izlaz.extend(_filtriraj_po_odabiru([r for r in grupa if _je_primjer_na_satu(r)],
-                                           odabir.get("primjeri")))
-        izlaz.extend(_filtriraj_po_odabiru([r for r in grupa if not _je_primjer_na_satu(r)],
-                                           odabir.get("zadaci")))
+        # 30.10.2026.: lokalna promjena tipa (primjer <-> zadatak) iz plana vrijedi i ovdje,
+        # inace bi slike ispravljeno označenog retka ostale neskinute.
+        tipovi = odabir.get("tipovi") or {}
+        izlaz.extend(_filtriraj_po_odabiru(
+            [r for r in grupa if _je_primjer_za_skriptu(r, tipovi)], odabir.get("primjeri")))
+        izlaz.extend(_filtriraj_po_odabiru(
+            [r for r in grupa if not _je_primjer_za_skriptu(r, tipovi)], odabir.get("zadaci")))
     return izlaz
 
 
@@ -1854,8 +1943,13 @@ def _build_inner_content_kronoloski(zadaci_redovi, xml_id_root, images_dir_abs, 
         odabir = odabir_poglavlja.get(poglavlje) or {}
         if odabir.get("ukljuceno") is False:
             continue
-        primjeri = _filtriraj_po_odabiru([r for r in grupa if _je_primjer_na_satu(r)], odabir.get("primjeri"))
-        vjezbe = _filtriraj_po_odabiru([r for r in grupa if not _je_primjer_na_satu(r)], odabir.get("zadaci"))
+        # 30.10.2026.: tip za OVU skriptu - lokalna promjena iz plana ima prednost nad
+        # bazom (Caki ispravlja pogrešan tip iz uvoza bez diranja taba 'Zadaci').
+        tipovi = odabir.get("tipovi") or {}
+        primjeri = _filtriraj_po_odabiru(
+            [r for r in grupa if _je_primjer_za_skriptu(r, tipovi)], odabir.get("primjeri"))
+        vjezbe = _filtriraj_po_odabiru(
+            [r for r in grupa if not _je_primjer_za_skriptu(r, tipovi)], odabir.get("zadaci"))
         if not primjeri and not vjezbe:
             continue  # prazna sekcija nema smisla u PDF-u
         broj_poglavlja += 1
