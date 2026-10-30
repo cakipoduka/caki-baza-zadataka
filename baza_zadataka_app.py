@@ -6,16 +6,21 @@ duplikata). Zamišljeno za suradnike koji ne trebaju koristiti Colab.
 
 Stranice (navigacija u sidebaru):
 - 📄 Obradi novi ispit  - originalni pipeline (PDF -> baza)
-- 🔍✏️ Provjera i uređivanje zadataka - dvokolonski izbornik (11.9.2026., spojene bivše
-  zasebne stranice "Uredi zadatak" i "Zadaci za provjeru"): lijevo pretraga/popis za
-  provjeru, desno formular za uređivanje trenutno odabranog zadatka - da profesor ne
-  mora skakati između dvije stranice za tekst/rješenje/kategorizaciju/sliku i pregled
-  zadataka koje je Claude označio za ručnu provjeru.
+- 🔍✏️ Provjera i uređivanje zadataka - dvije faze u istom izborniku (30.10.2026.):
+  dok nijedan zadatak nije odabran, stranica je PRETRAGA po kriterijima (cjelina /
+  potpoglavlje / biblioteka / tip / tekst) s najviše 10 rezultata po stranici te
+  paginirani popis "⚠️ Zadaci za provjeru" (20 po stranici); kad se zadatak odabere,
+  cijela stranica postaje UREĐIVAČ tog zadatka (tekst, odgovori, tip, težina,
+  razvrstavanje iz šifrarnika) s jednim gumbom "💾 Spremi sve izmjene", a "🔙 Natrag na
+  popis" vraća na pretragu. Prije toga su popis za provjeru i uređivač bili u dvije
+  kolone jedna uz drugu (11.9.2026., spojene bivše stranice "Uredi zadatak" i "Zadaci
+  za provjeru").
 - 📑 Redoslijed zadataka po potpoglavlju - ručno određivanje redoslijeda kojim se zadaci
   prikazuju unutar jednog potpoglavlja u generiranom PreTeXt skriptu (polje
   redoslijed_u_potpoglavlju, sekundarni ključ nakon težine iz Koraka 3.1)
 """
 import json
+import math
 import mimetypes
 import os
 import traceback
@@ -356,7 +361,7 @@ def stranica_obradi_ispit():
 
 
 # ============================================================
-# Stranica 3 (desna kolona): Uredi zadatak (tekst/rješenje/uputa, kategorizacija, slika)
+# Uređivač zadatka (fokus-mod stranice "Provjera i uređivanje zadataka")
 # ============================================================
 
 @st.cache_data(ttl=300)
@@ -394,6 +399,23 @@ def _ucitaj_sifrarnik():
 
 
 _ucitaj_sifrarnik.clear = _ucitaj_sifrarnik_za.clear
+
+
+@st.cache_data(ttl=600)
+def _ucitaj_biblioteke_izvora_za(predmet):
+    """Popis biblioteka iz šifrarnika (`Sifrarnik_biblioteka_izvora`) - keširano 10 min.
+
+    30.10.2026.: `get_biblioteke_izvora()` je MREŽNI poziv (čita Sheet), a stranica ga je zvala
+    na SVAKI rerun - dakle i na svaki otkucaj u polju pretrage. Uz blokadu renderiranja (vidi
+    _PO_STRANICI_PROVJERA) i to je doprinosilo osjećaju "stranica ne reagira"."""
+    return get_biblioteke_izvora(sheet)
+
+
+def _ucitaj_biblioteke_izvora():
+    return _ucitaj_biblioteke_izvora_za(PREDMET)
+
+
+_ucitaj_biblioteke_izvora.clear = _ucitaj_biblioteke_izvora_za.clear
 
 
 def _pretrazi_zadatke(headers, redovi, upit, max_rezultata=30):
@@ -548,6 +570,157 @@ def _blok_skupine(row, broj_retka, idx, redovi):
     st.divider()
 
 
+# ============================================================
+# Pomoćnici za UI (paginacija, ćelijska ažuriranja, oznake izbornika)
+# ============================================================
+#
+# 30.10.2026. — uvedeno uz redizajn stranice "🔍✏️ Provjera i uređivanje zadataka".
+#
+# UZROK BLOKADE (izmjereno, ne procijenjeno): popis "⚠️ Zadaci za provjeru" renderirao je
+# SVE retke odjednom - po jedan expander + dva gumba za svaki. Baza ima 9.556 zadataka s
+# postavljenim `status_provjere`, dakle 9.556 expandera + 19.113 gumba ≈ 28.700 Streamlit
+# elemenata u JEDNOM rerunu. Rerun se događa na svaki otkucaj u polju pretrage, pa je
+# stranica izgledala kao da "ne otvara zadatke" i blokira cijeli preglednik.
+# Mjerenje kroz streamlit.testing (isti kod, bez preglednika): 500 redaka = 0,55 s,
+# 9.556 redaka = 5,94 s po rerunu - a u pregledniku se uz to još i crta 28.700 elemenata.
+# Rješenje: prikaz najviše `_PO_STRANICI_PROVJERA` redaka i "Prikaži još" paginacija.
+
+_PO_STRANICI_PROVJERA = 20   # popis "⚠️ Zadaci za provjeru" - blokovi po 20
+_PO_STRANICI_PRETRAGA = 10   # rezultati pretrage - najviše 10 zadataka koji zadovoljavaju kriterij
+
+# Tipovi zadatka - isti popis kao u Test Builderu (pages/2_test_builder.py: TIP_ZADATKA_OPCIJE)
+# i u uvozu (uvoz_foldera.py: TIPOVI). Ovdje se dodaje prazna opcija "nije određeno" jer je
+# prazno polje stvarno stanje u bazi (stariji zadaci).
+_TIPOVI_ZADATKA_UI = ["visestruki_izbor", "kratki_odgovor", "prosireni_odgovor"]
+_TIP_ZADATKA_OZNAKA = {
+    "": "— (nije određeno)",
+    "visestruki_izbor": "višestruki izbor (A/B/C/D)",
+    "kratki_odgovor": "kratki odgovor",
+    "prosireni_odgovor": "prošireni odgovor",
+}
+# Težina: baza povijesno sadrži i "teško" (s dijakritikom) i "tesko" - oba se prikazuju
+# isto, a postojeća vrijednost se NIKAD ne prepisuje sama od sebe (vidi _opcije_sa_zatecenim).
+_TEZINE_UI = ["lako", "srednje", "tesko"]
+_TEZINA_OZNAKA = {
+    "": "— (nije određeno)",
+    "lako": "🟢 lako",
+    "srednje": "🟠 srednje",
+    "tesko": "🔴 teško",
+    "teško": "🔴 teško",
+}
+
+BEZ_POTPOGLAVLJA_UI = "— (bez potpoglavlja)"
+BEZ_BIBLIOTEKE_UI = "— (bez izvora)"
+NOVA_BIBLIOTEKA_UI = "➕ Nova..."
+
+
+def _opcije_sa_zatecenim(opcije, zateceno):
+    """Popis opcija za padajući izbornik u koji se UVIJEK ubaci i vrijednost koja je već
+    upisana u bazi, čak i ako je nema u šifrarniku (stariji/ručni unos). Bez toga bi
+    otvaranje takvog zadatka tiho prikazalo krivi odabir i prvo spremanje bi prepisalo
+    stvarnu vrijednost. Vraća (opcije, index_zatecenog)."""
+    zateceno = (zateceno or "").strip()
+    opcije = list(opcije)
+    if zateceno and zateceno not in opcije:
+        opcije.append(zateceno)
+    index = opcije.index(zateceno) if zateceno in opcije else 0
+    return opcije, index
+
+
+def _dodaj_azuriranje(azuriranja, idx, polje, vrijednost, broj_retka):
+    """Dodaje jedno ćelijsko ažuriranje u `azuriranja` - ali SAMO ako stupac stvarno postoji
+    u zaglavlju Sheeta (`idx` je napravljen iz STVARNOG zaglavlja, ne iz ZADACI_HEADERS).
+    Tako se ne piše u krivi stupac ako Sheet nema neko novije polje."""
+    if polje not in idx:
+        return False
+    azuriranja.append({"range": f"{_col_letter(polje)}{broj_retka}", "values": [[vrijednost]]})
+    return True
+
+
+def _paginacija(kljuc, ukupno, po_stranici):
+    """(prvi, zadnji, stranica, broj_stranica) za popis od `ukupno` stavki. Trenutna stranica
+    se pamti u st.session_state[kljuc] i uvijek svodi u valjani raspon - npr. nakon što se
+    popis skrati jer je zadatak označen provjerenim, ili nakon promjene filtera."""
+    po_stranici = max(1, int(po_stranici))
+    broj_stranica = max(1, math.ceil(ukupno / po_stranici))
+    try:
+        stranica = int(st.session_state.get(kljuc, 1))
+    except (TypeError, ValueError):
+        stranica = 1
+    stranica = min(max(1, stranica), broj_stranica)
+    st.session_state[kljuc] = stranica
+    prvi = (stranica - 1) * po_stranici
+    return prvi, min(prvi + po_stranici, ukupno), stranica, broj_stranica
+
+
+def _gumbi_paginacije(kljuc, prvi, zadnji, stranica, broj_stranica, ukupno, opis="zadataka", sufiks=""):
+    """⬅️/➡️ + 'Stranica X od Y · prikazano A–B od N'. Bez ovoga korisnik ne zna gdje je
+    (UX pravilo 3: odabir/položaj mora biti vidljiv cijelo vrijeme).
+
+    `sufiks` razlikuje gornju i donju kopiju istih gumba na istoj stranici (Streamlit traži
+    jedinstvene key-eve)."""
+    c_lijevo, c_desno, c_info = st.columns([1, 1, 4])
+    with c_lijevo:
+        if st.button("⬅️ Prethodna", key=f"{kljuc}{sufiks}_prethodna", disabled=stranica <= 1):
+            st.session_state[kljuc] = stranica - 1
+            st.rerun()
+    with c_desno:
+        if st.button("➡️ Sljedeća", key=f"{kljuc}{sufiks}_sljedeca", disabled=stranica >= broj_stranica):
+            st.session_state[kljuc] = stranica + 1
+            st.rerun()
+    with c_info:
+        if ukupno:
+            st.caption(
+                f"Stranica **{stranica}** od **{broj_stranica}** · "
+                f"prikazano {prvi + 1}–{zadnji} od {ukupno} {opis}"
+            )
+        else:
+            st.caption(f"Stranica **{stranica}** od **{broj_stranica}**")
+
+
+# --- Pamćenje filtera pretrage preko fokus-moda -------------------------------------------
+#
+# Streamlit BRIŠE state widgeta koji se u nekom rerunu ne renderiraju. Kako fokus-mod (kad je
+# zadatak otvoren) ne renderira polja pretrage, "🔙 Natrag na popis" bi vratio PRAZAN upit i
+# prazne filtere - a Cakijev tok je upravo "pretraži po kriterijima, pa otvaraj zadatak po
+# zadatak". Zato se vrijednosti zrcale u obični session_state ključ (koji nije widget-key i
+# zato se ne briše) i vraćaju prije ponovnog stvaranja widgeta.
+
+_FILTER_KLJUCEVI_PRETRAGE = (
+    "filter_cjelina_uredi", "filter_potpoglavlje_uredi", "filter_biblioteka_uredi",
+    "filter_tip_uredi", "filter_samo_provjera_uredi", "filter_samo_ai_uredi",
+    "filter_sakrij_stavke_uredi", "upit_uredi",
+)
+_KLJUC_POHRANE_PRETRAGE = "_pretraga_pohranjena"
+
+
+def _zapamti_pretragu():
+    """Zapamti trenutne vrijednosti filtera pretrage (zove se NAKON stvaranja widgeta)."""
+    st.session_state[_KLJUC_POHRANE_PRETRAGE] = {
+        k: st.session_state[k] for k in _FILTER_KLJUCEVI_PRETRAGE if k in st.session_state
+    }
+
+
+def _vrati_multiselect(kljuc, opcije):
+    """Vrati zapamćeni odabir multiselecta PRIJE stvaranja widgeta - samo vrijednosti koje još
+    postoje među opcijama (Streamlit baca grešku ako odabir nije u ponuđenom popisu)."""
+    if kljuc in st.session_state:
+        return
+    zapamcen = (st.session_state.get(_KLJUC_POHRANE_PRETRAGE) or {}).get(kljuc) or []
+    ostalo = [v for v in zapamcen if v in opcije]
+    if ostalo:
+        st.session_state[kljuc] = ostalo
+
+
+def _vrati_widget(kljuc):
+    """Vrati zapamćenu vrijednost text_inputa/checkboxa PRIJE stvaranja widgeta."""
+    if kljuc in st.session_state:
+        return
+    pohrana = st.session_state.get(_KLJUC_POHRANE_PRETRAGE) or {}
+    if kljuc in pohrana:
+        st.session_state[kljuc] = pohrana[kljuc]
+
+
 def _odaberi_zadatak_pretragom(headers, redovi, kljuc_sufiks):
     """Pretraga + selectbox s jedinstvenim key-jevima (kljuc_sufiks) - koristi se kad na istoj
     stranici trebamo DVA neovisna birača zadatka (npr. usporedba A/B)."""
@@ -665,6 +838,332 @@ def _prikazi_usporedbu(headers, redovi):
             st.rerun()
 
 
+def _brzo_uredjivanje_zadatka(row, broj_retka, idx):
+    """Sekcija "⚡ Brzo uređivanje zadatka" - sve najčešće izmjene na JEDNOM mjestu s JEDNIM
+    gumbom za spremanje (30.10.2026., Cakijev zahtjev: "sadržaj teksta i odgovori te
+    dodjeljivanje biblioteke, cjeline i podcjeline - padajući izbornik za brzi izbor i
+    promjenu prema šifrarniku").
+
+    Zašto: dosad su tekst/rješenje/uputa, ponuđeni odgovori, kategorizacija i biblioteka bile
+    ČETIRI odvojene sekcije s četiri gumba "Spremi". Za jednu tipičnu ispravku (promijeni tekst
+    + prebaci u drugu cjelinu + dodijeli biblioteku) trebalo je tri spremanja i tri puta čekati
+    upis u Google Sheet. Sada je to jedan `batch_update` - i jedan gumb.
+    """
+    def get(row, col):
+        return _get_polje(row, idx, col)
+
+    st.divider()
+    st.subheader("⚡ Brzo uređivanje zadatka")
+    st.caption(
+        "Najčešće izmjene na jednom mjestu: **sadržaj i odgovori** te **razvrstavanje** "
+        "(cjelina · potpoglavlje · biblioteka). Padajući izbornici dolaze izravno iz šifrarnika, "
+        "pa ispravak ostaje usklađen s ostatkom baze. Sve se sprema JEDNIM klikom na "
+        "'💾 Spremi sve izmjene' na kraju sekcije."
+    )
+
+    # ------------------------------------------------------------------
+    # 1. Tekst i rješenje
+    # ------------------------------------------------------------------
+    # key=f"..._{broj_retka}" - kad se promijeni odabrani zadatak, Streamlit tretira polja kao
+    # NOVA (drugi key), pa se ispravno ponovno pune trenutnim vrijednostima iz Sheeta umjesto
+    # da zadrže tekst ostavljen u polju za PRETHODNO odabrani zadatak.
+    novi_tekst = st.text_area(
+        "Tekst zadatka (tekst_zadatka_latex)", value=get(row, "tekst_zadatka_latex"),
+        height=180, key=f"tekst_{broj_retka}",
+    )
+    st.caption(
+        "✏️ Za uređivanje/provjeru LaTeX matematike: "
+        "[CodeCogs Equation Editor](https://editor.codecogs.com/) — "
+        "formula mora biti unutar `$...$` (npr. `$x^2-5x+6=0$`), inače se neće prikazati kao matematika."
+    )
+    novo_rjesenje = st.text_area(
+        "Rješenje - puni postupak (rjesenje)", value=get(row, "rjesenje"),
+        height=140, key=f"rjesenje_{broj_retka}",
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Tip i težina
+    # ------------------------------------------------------------------
+    st.markdown("**Tip i težina zadatka**")
+    tip_trenutni = get(row, "tip_zadatka").strip()
+    _tip_opcije, _tip_index = _opcije_sa_zatecenim([""] + _TIPOVI_ZADATKA_UI, tip_trenutni)
+    tezina_trenutna = get(row, "tezina").strip()
+    _tezina_opcije, _tezina_index = _opcije_sa_zatecenim([""] + _TEZINE_UI, tezina_trenutna)
+
+    c_tip, c_tez = st.columns(2)
+    novi_tip = c_tip.selectbox(
+        "Tip zadatka", _tip_opcije, index=_tip_index, key=f"tip_{broj_retka}",
+        format_func=lambda v: _TIP_ZADATKA_OZNAKA.get(v, v),
+        help="Određuje kako se zadatak prikazuje i ocjenjuje. 'Višestruki izbor' dobiva "
+             "uređivanje ponuđenih odgovora A/B/C/D ispod.",
+    )
+    nova_tezina = c_tez.selectbox(
+        "Težina", _tezina_opcije, index=_tezina_index, key=f"tezina_{broj_retka}",
+        format_func=lambda v: _TEZINA_OZNAKA.get(v, v),
+        help="Težina se koristi za redoslijed zadataka u skripti (lako → srednje → teško).",
+    )
+
+    # ------------------------------------------------------------------
+    # 3. Odgovori
+    # ------------------------------------------------------------------
+    st.markdown("**Odgovori**")
+    novi_konacan = get(row, "konacan_odgovor")
+    ponudjeni_za_spremanje = None
+
+    if novi_tip == "visestruki_izbor":
+        st.caption(
+            "Popis opcija i oznaka koja je točna - isti podaci koje vidiš u pregledu iznad i "
+            "koje Test Builder koristi za ispis A/B/C/D... u testu. Opcije koje su SLIKA baza "
+            "još ne podržava zasebno (upiši tekstualnu oznaku, npr. 'vidi sliku X')."
+        )
+        _mc_kljuc = f"mc_opcije_{broj_retka}"
+        if _mc_kljuc not in st.session_state:
+            _pocetne_opcije = [
+                o.strip() for o in get(row, "ponudjeni_odgovori").split("||") if o.strip()
+            ] or [""]
+            st.session_state[_mc_kljuc] = [
+                {"uid": i, "tekst": t} for i, t in enumerate(_pocetne_opcije)
+            ]
+            st.session_state[f"{_mc_kljuc}_sljedeci_uid"] = len(_pocetne_opcije)
+
+        mc_opcije = st.session_state[_mc_kljuc]
+
+        for _i, _stavka in enumerate(mc_opcije):
+            _slovo = SLOVA_PONUDJENIH_ODGOVORA[_i] if _i < len(SLOVA_PONUDJENIH_ODGOVORA) else str(_i + 1)
+            c1, c2 = st.columns([8, 1])
+            with c1:
+                _stavka["tekst"] = st.text_input(
+                    f"Opcija {_slovo}", value=_stavka["tekst"], key=f"{_mc_kljuc}_{_stavka['uid']}",
+                )
+            with c2:
+                st.write("")
+                if st.button(
+                    "🗑️", key=f"{_mc_kljuc}_ukloni_{_stavka['uid']}",
+                    disabled=len(mc_opcije) <= 1, help="Ukloni ovu opciju",
+                ):
+                    mc_opcije.pop(_i)
+                    st.rerun()
+
+        if st.button("➕ Dodaj opciju", key=f"{_mc_kljuc}_dodaj"):
+            _novi_uid = st.session_state[f"{_mc_kljuc}_sljedeci_uid"]
+            mc_opcije.append({"uid": _novi_uid, "tekst": ""})
+            st.session_state[f"{_mc_kljuc}_sljedeci_uid"] = _novi_uid + 1
+            st.rerun()
+
+        ponudjeni_za_spremanje = [_stavka["tekst"].strip() for _stavka in mc_opcije if _stavka["tekst"].strip()]
+        if ponudjeni_za_spremanje:
+            st.caption("Pregled:")
+            st.markdown(prikazi_opcije_markdown(ponudjeni_za_spremanje))
+
+        slova_opcije = SLOVA_PONUDJENIH_ODGOVORA[: len(ponudjeni_za_spremanje)]
+        konacan_trenutni = get(row, "konacan_odgovor").strip().upper()
+        tocan_index = slova_opcije.index(konacan_trenutni) if konacan_trenutni in slova_opcije else 0
+
+        if slova_opcije:
+            novi_konacan = st.selectbox(
+                "Točan odgovor", slova_opcije, index=tocan_index, key=f"tocan_mc_{broj_retka}",
+            )
+            if konacan_trenutni and konacan_trenutni not in slova_opcije:
+                st.warning(
+                    f"⚠️ Trenutno spremljen konačan odgovor '{get(row, 'konacan_odgovor')}' ne "
+                    f"odgovara nijednoj od {len(slova_opcije)} opcije/a (A–{slova_opcije[-1]}) - "
+                    "odaberi točan odgovor iznad i spremi."
+                )
+        else:
+            st.info("Unesi barem jednu opciju da odabereš točan odgovor.")
+    else:
+        novi_konacan = st.text_input(
+            "Konačan odgovor - kratka vrijednost (konacan_odgovor)", value=get(row, "konacan_odgovor"),
+            key=f"konacan_{broj_retka}",
+        )
+        if get(row, "ponudjeni_odgovori").strip():
+            st.warning(
+                f"⚠️ Ovaj zadatak ima upisane ponuđene odgovore, ali tip nije 'višestruki izbor' "
+                f"(nego '{novi_tip or '—'}'). Ako je trebao biti višestruki izbor, promijeni tip "
+                "iznad - tada će se pojaviti uređivanje opcija A/B/C/D."
+            )
+
+    # ------------------------------------------------------------------
+    # 4. Uputa (neobavezno - sklopljeno da ne zauzima prostor)
+    # ------------------------------------------------------------------
+    with st.expander("💡 Uputa / naznaka za rješavanje (neobavezno)"):
+        st.caption(
+            "Prikazuje se kao poseban 'hint' blok u PreTeXt izlazu, odvojeno od punog rješenja."
+        )
+        nova_uputa = st.text_area(
+            "Uputa (uputa - PreTeXt <hint>)", value=get(row, "uputa"),
+            height=90, key=f"uputa_{broj_retka}",
+        )
+
+    # ------------------------------------------------------------------
+    # 5. Razvrstavanje iz šifrarnika (cjelina / potpoglavlje / biblioteka)
+    # ------------------------------------------------------------------
+    st.markdown("**🗂️ Razvrstavanje po šifrarniku**")
+    st.caption(
+        "Za slučaj kad je zadatak kod unosa svrstan u krivu cjelinu ili potpoglavlje - popisi "
+        "ispod dolaze izravno iz šifrarnika (isti onaj kojim se Claude vodi kod klasifikacije "
+        "novih zadataka)."
+    )
+    sifrarnik_kategorija_po_cjelini, sifrarnik_potpoglavlja_po_cjelini = _ucitaj_sifrarnik()
+
+    c_cj, c_pot = st.columns(2)
+    with c_cj:
+        cjelina_trenutna = get(row, "cjelina").strip()
+        _cjelina_opcije, _cjelina_index = _opcije_sa_zatecenim(
+            list(sifrarnik_kategorija_po_cjelini.keys()), cjelina_trenutna,
+        )
+        nova_cjelina = st.selectbox(
+            "Cjelina", _cjelina_opcije, index=_cjelina_index, key=f"cjelina_{broj_retka}",
+        )
+        if nova_cjelina and nova_cjelina not in sifrarnik_kategorija_po_cjelini:
+            st.warning(
+                f"⚠️ Cjelina '{nova_cjelina}' nije u šifrarniku (tab Sifrarnik_cjelina) - "
+                "vjerojatno stariji/ručni unos. Odaberi ispravnu cjelinu iz popisa ako je ovo "
+                "greška, ili je prvo dodaj u šifrarnik."
+            )
+        nova_kategorija = sifrarnik_kategorija_po_cjelini.get(nova_cjelina, get(row, "kategorija"))
+        st.caption(f"Kategorija (automatski prema šifrarniku): **{nova_kategorija or '—'}**")
+
+    with c_pot:
+        potpoglavlje_trenutno = get(row, "potpoglavlje").strip()
+        promijenjena_cjelina = nova_cjelina != cjelina_trenutna
+        potpoglavlja_lista = [p for p, _ in sifrarnik_potpoglavlja_po_cjelini.get(nova_cjelina, [])]
+        _potpoglavlje_opcije = [BEZ_POTPOGLAVLJA_UI] + potpoglavlja_lista
+        if not promijenjena_cjelina and potpoglavlje_trenutno and potpoglavlje_trenutno not in potpoglavlja_lista:
+            # Postojeća vrijednost se ne smije izgubiti tiho - vidi _opcije_sa_zatecenim.
+            _potpoglavlje_opcije = [BEZ_POTPOGLAVLJA_UI, potpoglavlje_trenutno] + potpoglavlja_lista
+
+        if promijenjena_cjelina:
+            potpoglavlje_index = 0
+        elif potpoglavlje_trenutno and potpoglavlje_trenutno in _potpoglavlje_opcije:
+            potpoglavlje_index = _potpoglavlje_opcije.index(potpoglavlje_trenutno)
+        else:
+            potpoglavlje_index = 0
+
+        # key uključuje nova_cjelina - kod promjene cjeline Streamlit tretira ovaj selectbox kao
+        # nov widget, pa se ne zadrži prijašnji odabir potpoglavlja koji možda ne pripada novoj cjelini.
+        novo_potpoglavlje_odabir = st.selectbox(
+            "Potpoglavlje", _potpoglavlje_opcije, index=potpoglavlje_index,
+            key=f"potpoglavlje_{broj_retka}_{nova_cjelina}",
+        )
+        if novo_potpoglavlje_odabir != BEZ_POTPOGLAVLJA_UI and novo_potpoglavlje_odabir not in potpoglavlja_lista:
+            st.warning(
+                f"⚠️ Potpoglavlje '{novo_potpoglavlje_odabir}' nije u šifrarniku za cjelinu "
+                f"'{nova_cjelina}' - vjerojatno stariji/ručni unos."
+            )
+        if not potpoglavlja_lista:
+            st.caption("Napomena: ova cjelina trenutno nema definirana potpoglavlja u šifrarniku.")
+    novo_potpoglavlje = (
+        "" if novo_potpoglavlje_odabir == BEZ_POTPOGLAVLJA_UI else novo_potpoglavlje_odabir
+    )
+
+    biblioteka_trenutna = get(row, "biblioteka_izvora").strip()
+    try:
+        _biblioteke_postojece = get_biblioteke_izvora(sheet)
+    except Exception:
+        _biblioteke_postojece = []
+    _biblioteka_opcije = [BEZ_BIBLIOTEKE_UI] + _biblioteke_postojece + [NOVA_BIBLIOTEKA_UI]
+    if biblioteka_trenutna and biblioteka_trenutna not in _biblioteka_opcije:
+        # Vrijednost postoji na zadatku ali je netko u međuvremenu obrisao iz šifrarnika.
+        _biblioteka_opcije = (
+            [BEZ_BIBLIOTEKE_UI, biblioteka_trenutna] + _biblioteke_postojece + [NOVA_BIBLIOTEKA_UI]
+        )
+    _biblioteka_index = (
+        _biblioteka_opcije.index(biblioteka_trenutna) if biblioteka_trenutna in _biblioteka_opcije else 0
+    )
+    c_bib, c_bib_info = st.columns(2)
+    with c_bib:
+        _biblioteka_odabir = st.selectbox(
+            "Biblioteka izvora", _biblioteka_opcije, index=_biblioteka_index,
+            key=f"biblioteka_izvora_{broj_retka}",
+            help="Konkretna zbirka/udžbenik iz kojeg zadatak dolazi (npr. 'zbirka-Dakić-pismeni'). "
+                 "Nikad se ne ispisuje u PreTeXt/PDF materijalima - služi za filtriranje.",
+        )
+        if _biblioteka_odabir == NOVA_BIBLIOTEKA_UI:
+            nova_biblioteka_izvora = st.text_input(
+                "Upiši naziv nove biblioteke/zbirke", key=f"biblioteka_izvora_novi_{broj_retka}",
+            ).strip()
+        elif _biblioteka_odabir == BEZ_BIBLIOTEKE_UI:
+            nova_biblioteka_izvora = ""
+        else:
+            nova_biblioteka_izvora = _biblioteka_odabir
+    with c_bib_info:
+        st.caption(
+            "Biblioteka se pamti u šifrarnik (`Sifrarnik_biblioteka_izvora`) čim je spremiš - "
+            "tada se pojavljuje u popisu na svim stranicama (Test Builder, uvoz)."
+        )
+
+    # ------------------------------------------------------------------
+    # 6. JEDAN gumb za sve
+    # ------------------------------------------------------------------
+    st.divider()
+    c_save, c_save_info = st.columns([2, 3])
+    with c_save:
+        spremi = st.button(
+            "💾 Spremi sve izmjene", type="primary", key=f"spremi_sve_{broj_retka}",
+            help="Upisuje sve gore odjednom: tekst, rješenje, uputu, odgovore, tip, težinu, "
+                 "razvrstavanje i biblioteku.",
+        )
+    with c_save_info:
+        st.caption(
+            "Jedan upis u bazu. Ako ništa nisi promijenio, upisuje se ista vrijednost - ništa se ne kvari."
+        )
+
+    if not spremi:
+        return
+
+    if novi_tip == "visestruki_izbor" and not ponudjeni_za_spremanje:
+        st.error(
+            "Ne mogu spremiti: tip je 'višestruki izbor', a nema nijedne neprazne ponuđene opcije. "
+            "Upiši barem opciju A (ili promijeni tip zadatka iznad)."
+        )
+        return
+
+    azuriranja = []
+    _dodaj_azuriranje(azuriranja, idx, "tekst_zadatka_latex", novi_tekst, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "tekst_zadatka_mathjax", novi_tekst.replace("\\\\", "<br>"), broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "rjesenje", novo_rjesenje, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "konacan_odgovor", novi_konacan, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "uputa", nova_uputa, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "kategorija", nova_kategorija, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "cjelina", nova_cjelina, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "potpoglavlje", novo_potpoglavlje, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "tip_zadatka", novi_tip, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "tezina", nova_tezina, broj_retka)
+    _dodaj_azuriranje(azuriranja, idx, "biblioteka_izvora", nova_biblioteka_izvora, broj_retka)
+    if novi_tip == "visestruki_izbor" and ponudjeni_za_spremanje:
+        _dodaj_azuriranje(
+            azuriranja, idx, "ponudjeni_odgovori", " || ".join(ponudjeni_za_spremanje), broj_retka,
+        )
+    if novo_rjesenje.strip() and get(row, "rjesenje_status") != "sluzbeno":
+        _dodaj_azuriranje(azuriranja, idx, "rjesenje_status", "sluzbeno", broj_retka)
+
+    if not azuriranja:
+        st.error(
+            "Nema što spremiti - ni jedan stupac iz ovog obrasca ne postoji u tabu 'Zadaci'. "
+            "Provjeri zaglavlje taba."
+        )
+        return
+
+    with st.spinner("Spremam izmjene..."):
+        try:
+            ws_zadaci.batch_update(azuriranja)
+            if nova_biblioteka_izvora and nova_biblioteka_izvora not in _biblioteke_postojece:
+                dodaj_biblioteku_izvora(sheet, nova_biblioteka_izvora)
+        except Exception as e:
+            st.error(f"Greška: {e}")
+            st.stop()
+
+    st.success(
+        f"✅ Spremljeno za zadatak **{get(row, 'id') or broj_retka}** "
+        f"({len(azuriranja)} polja): {nova_kategorija or '—'} › {nova_cjelina or '—'}"
+        f"{' › ' + novo_potpoglavlje if novo_potpoglavlje else ''}"
+        f"{' · 📚 ' + nova_biblioteka_izvora if nova_biblioteka_izvora else ''}."
+    )
+    _ucitaj_zadatke_za_pretragu.clear()
+    st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
+
+
 def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
     """Desna kolona spojene stranice '🔍✏️ Provjera i uređivanje zadataka' (11.9.2026.) -
     formular za uređivanje JEDNOG već odabranog zadatka: tekst/rješenje/uputa, ponuđeni
@@ -739,332 +1238,11 @@ def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
             st.write(get(row, "uputa"))
 
     # ------------------------------------------------------------------
-    # Sekcija 1: Tekst / rješenje / uputa
+    # Sadržaj, odgovori i razvrstavanje - JEDNA sekcija s JEDNIM gumbom za spremanje
+    # (30.10.2026.: prije su to bile ČETIRI odvojene sekcije sa četiri gumba 'Spremi' -
+    # vidi _brzo_uredjivanje_zadatka iznad).
     # ------------------------------------------------------------------
-    st.divider()
-    st.subheader("📝 Tekst / rješenje / uputa")
-
-    # key=f"..._{broj_retka}" - kad se promijeni odabrani zadatak, Streamlit tretira polja kao
-    # NOVA (drugi key), pa se ispravno ponovno pune trenutnim vrijednostima iz Sheeta umjesto
-    # da zadrže tekst ostavljen u polju za PRETHODNO odabrani zadatak.
-    novi_tekst = st.text_area(
-        "Tekst zadatka (tekst_zadatka_latex)", value=get(row, "tekst_zadatka_latex"),
-        height=150, key=f"tekst_{broj_retka}",
-    )
-    st.caption(
-        "✏️ Za uređivanje/provjeru LaTeX matematike: "
-        "[CodeCogs Equation Editor](https://editor.codecogs.com/) — "
-        "formula mora biti unutar `$...$` (npr. `$x^2-5x+6=0$`), inače se neće prikazati kao matematika."
-    )
-    novo_rjesenje = st.text_area(
-        "Rješenje - puni postupak (rjesenje)", value=get(row, "rjesenje"),
-        height=150, key=f"rjesenje_{broj_retka}",
-    )
-    if get(row, "tip_zadatka") == "visestruki_izbor":
-        # Za višestruki izbor je konacan_odgovor ZAPRAVO slovo točne opcije, ne slobodan tekst -
-        # uređuje se u sekciji "🔤 Ponuđeni odgovori" niže, zajedno s popisom opcija (da su uvijek
-        # usklađeni). Ovdje samo proslijedimo trenutnu vrijednost nepromijenjenu.
-        st.caption(
-            "ℹ️ Ovo je zadatak s višestrukim izborom - konačan odgovor (točno slovo) uređuje se "
-            "niže, u sekciji '🔤 Ponuđeni odgovori', zajedno s popisom opcija."
-        )
-        novi_konacan_odgovor = get(row, "konacan_odgovor")
-    else:
-        novi_konacan_odgovor = st.text_input(
-            "Konačan odgovor - kratka vrijednost (konacan_odgovor)", value=get(row, "konacan_odgovor"),
-            key=f"konacan_{broj_retka}",
-        )
-    nova_uputa = st.text_area(
-        "Uputa / naznaka za rješavanje (uputa - PreTeXt <hint>)", value=get(row, "uputa"),
-        height=100, key=f"uputa_{broj_retka}",
-        help="Prikazuje se kao poseban 'hint' blok u PreTeXt izlazu, odvojeno od punog rješenja.",
-    )
-
-    if st.button("💾 Spremi tekst/rješenje/uputu", type="primary", key=f"spremi_tekst_{broj_retka}"):
-        novi_mathjax = novi_tekst.replace("\\\\", "<br>")
-        c_tekst = _col_letter("tekst_zadatka_latex")
-        c_mathjax = _col_letter("tekst_zadatka_mathjax")
-        c_rjesenje = _col_letter("rjesenje")
-        c_konacan = _col_letter("konacan_odgovor")
-        c_uputa = _col_letter("uputa")
-        c_status = _col_letter("rjesenje_status")
-
-        azuriranja = [
-            {"range": f"{c_tekst}{broj_retka}", "values": [[novi_tekst]]},
-            {"range": f"{c_mathjax}{broj_retka}", "values": [[novi_mathjax]]},
-            {"range": f"{c_rjesenje}{broj_retka}", "values": [[novo_rjesenje]]},
-            {"range": f"{c_konacan}{broj_retka}", "values": [[novi_konacan_odgovor]]},
-            {"range": f"{c_uputa}{broj_retka}", "values": [[nova_uputa]]},
-        ]
-        if novo_rjesenje.strip() and get(row, "rjesenje_status") != "sluzbeno":
-            azuriranja.append({"range": f"{c_status}{broj_retka}", "values": [["sluzbeno"]]})
-
-        with st.spinner("Spremam izmjene..."):
-            try:
-                ws_zadaci.batch_update(azuriranja)
-            except Exception as e:
-                st.error(f"Greška: {e}")
-                st.stop()
-
-        st.success(f"✅ Tekst/rješenje/uputa spremljeni za zadatak #{get(row, 'id')}.")
-        _ucitaj_zadatke_za_pretragu.clear()
-        st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
-
-    # ------------------------------------------------------------------
-    # Sekcija 1b: Ponuđeni odgovori (samo za tip_zadatka = visestruki_izbor)
-    # ------------------------------------------------------------------
-    tip_zadatka_trenutni = get(row, "tip_zadatka")
-
-    if tip_zadatka_trenutni != "visestruki_izbor" and get(row, "ponudjeni_odgovori").strip():
-        st.divider()
-        st.warning(
-            f"⚠️ Ovaj zadatak ima upisane ponuđene odgovore, ali tip_zadatka nije "
-            f"'visestruki_izbor' (nego '{tip_zadatka_trenutni or '—'}') - vjerojatno greška iz "
-            "OCR/Claude obrade. tip_zadatka trenutno nije uređiv iz ove aplikacije - ispravi "
-            "izravno u Google Sheetu ako treba."
-        )
-
-    if tip_zadatka_trenutni == "visestruki_izbor":
-        st.divider()
-        st.subheader("🔤 Ponuđeni odgovori")
-        st.caption(
-            "Popis opcija i oznaka koja je točna - isti podaci koje vidiš u pregledu iznad i "
-            "koje Test Builder koristi za ispis A/B/C/D... u testu. Trenutno podržava samo "
-            "tekst/LaTeX opcije; opcije koje su slika baza još ne podržava zasebno (vidi napomenu)."
-        )
-
-        _mc_kljuc = f"mc_opcije_{broj_retka}"
-        if _mc_kljuc not in st.session_state:
-            _pocetne_opcije = [
-                o.strip() for o in get(row, "ponudjeni_odgovori").split("||") if o.strip()
-            ] or [""]
-            st.session_state[_mc_kljuc] = [
-                {"uid": i, "tekst": t} for i, t in enumerate(_pocetne_opcije)
-            ]
-            st.session_state[f"{_mc_kljuc}_sljedeci_uid"] = len(_pocetne_opcije)
-
-        mc_opcije = st.session_state[_mc_kljuc]
-
-        for _i, _stavka in enumerate(mc_opcije):
-            _slovo = SLOVA_PONUDJENIH_ODGOVORA[_i] if _i < len(SLOVA_PONUDJENIH_ODGOVORA) else str(_i + 1)
-            c1, c2 = st.columns([8, 1])
-            with c1:
-                _stavka["tekst"] = st.text_input(
-                    f"Opcija {_slovo}", value=_stavka["tekst"], key=f"{_mc_kljuc}_{_stavka['uid']}",
-                )
-            with c2:
-                st.write("")
-                if st.button(
-                    "🗑️", key=f"{_mc_kljuc}_ukloni_{_stavka['uid']}",
-                    disabled=len(mc_opcije) <= 1, help="Ukloni ovu opciju",
-                ):
-                    mc_opcije.pop(_i)
-                    st.rerun()
-
-        if st.button("➕ Dodaj opciju", key=f"{_mc_kljuc}_dodaj"):
-            _novi_uid = st.session_state[f"{_mc_kljuc}_sljedeci_uid"]
-            mc_opcije.append({"uid": _novi_uid, "tekst": ""})
-            st.session_state[f"{_mc_kljuc}_sljedeci_uid"] = _novi_uid + 1
-            st.rerun()
-
-        opcije_za_spremanje = [_stavka["tekst"].strip() for _stavka in mc_opcije if _stavka["tekst"].strip()]
-        if opcije_za_spremanje:
-            st.caption("Pregled:")
-            st.markdown(prikazi_opcije_markdown(opcije_za_spremanje))
-
-        slova_opcije = SLOVA_PONUDJENIH_ODGOVORA[: len(opcije_za_spremanje)]
-        konacan_trenutni = get(row, "konacan_odgovor").strip().upper()
-        tocan_index = slova_opcije.index(konacan_trenutni) if konacan_trenutni in slova_opcije else 0
-
-        if slova_opcije:
-            novi_konacan_mc = st.selectbox(
-                "Točan odgovor", slova_opcije, index=tocan_index, key=f"tocan_mc_{broj_retka}",
-            )
-            if konacan_trenutni and konacan_trenutni not in slova_opcije:
-                st.warning(
-                    f"⚠️ Trenutno spremljen konačan odgovor '{get(row, 'konacan_odgovor')}' ne "
-                    f"odgovara nijednoj od {len(slova_opcije)} opcije/a (A–{slova_opcije[-1]}) - "
-                    "odaberi točan odgovor iznad i spremi."
-                )
-        else:
-            novi_konacan_mc = None
-            st.info("Unesi barem jednu opciju da odabereš točan odgovor.")
-
-        st.caption(
-            "📷 Ako opcija treba biti SLIKA umjesto teksta (npr. graf/dijagram kao jedan od "
-            "ponuđenih odgovora) - baza to trenutno ne podržava kao zaseban tip podatka. "
-            "Privremeno rješenje dok se ne dogovori shema: upiši u opciju tekstualnu oznaku "
-            "(npr. 'vidi sliku X') i javi da se ovo doda kao novo polje."
-        )
-
-        if st.button("💾 Spremi ponuđene odgovore", type="primary", key=f"spremi_mc_{broj_retka}"):
-            if not opcije_za_spremanje:
-                st.error("Unesi barem jednu neprazna opciju prije spremanja.")
-                st.stop()
-            c_odgovori = _col_letter("ponudjeni_odgovori")
-            c_konacan = _col_letter("konacan_odgovor")
-            azuriranja = [
-                {"range": f"{c_odgovori}{broj_retka}", "values": [[" || ".join(opcije_za_spremanje)]]},
-            ]
-            if novi_konacan_mc:
-                azuriranja.append({"range": f"{c_konacan}{broj_retka}", "values": [[novi_konacan_mc]]})
-
-            with st.spinner("Spremam ponuđene odgovore..."):
-                try:
-                    ws_zadaci.batch_update(azuriranja)
-                except Exception as e:
-                    st.error(f"Greška: {e}")
-                    st.stop()
-
-            st.success(f"✅ Ponuđeni odgovori spremljeni za zadatak #{get(row, 'id')}.")
-            _ucitaj_zadatke_za_pretragu.clear()
-            st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
-
-    # ------------------------------------------------------------------
-    # Sekcija 2: Kategorija / cjelina / potpoglavlje (šifrarnik)
-    # ------------------------------------------------------------------
-    st.divider()
-    st.subheader("🗂️ Kategorija / cjelina / potpoglavlje")
-    st.caption(
-        "Za slučaj kad je zadatak kod unosa svrstan u krivu cjelinu ili potpoglavlje - popisi "
-        "ispod dolaze izravno iz šifrarnika (isti onaj kojim se Claude vodi kod klasifikacije "
-        "novih zadataka), pa ispravak ostaje usklađen s ostatkom baze."
-    )
-
-    sifrarnik_kategorija_po_cjelini, sifrarnik_potpoglavlja_po_cjelini = _ucitaj_sifrarnik()
-
-    cjelina_trenutna = get(row, "cjelina")
-    cjelina_opcije = list(sifrarnik_kategorija_po_cjelini.keys())
-    if cjelina_trenutna and cjelina_trenutna not in cjelina_opcije:
-        # Stariji/ručni unos koji ne postoji (više) u šifrarniku - ubaci ga kao opciju da se ne
-        # izgubi tiho, ali ga jasno označi upozorenjem ispod.
-        cjelina_opcije = [cjelina_trenutna] + cjelina_opcije
-
-    nova_cjelina = st.selectbox(
-        "Cjelina", cjelina_opcije,
-        index=cjelina_opcije.index(cjelina_trenutna) if cjelina_trenutna in cjelina_opcije else 0,
-        key=f"cjelina_{broj_retka}",
-    )
-    if nova_cjelina not in sifrarnik_kategorija_po_cjelini:
-        st.warning(
-            f"⚠️ Cjelina '{nova_cjelina}' nije pronađena u šifrarniku (tab Sifrarnik_cjelina) - "
-            "vjerojatno stariji/ručni unos. Odaberi ispravnu cjelinu iz popisa ako je ovo greška, "
-            "ili je po potrebi prvo dodaj u šifrarnik."
-        )
-
-    nova_kategorija = sifrarnik_kategorija_po_cjelini.get(nova_cjelina, get(row, "kategorija"))
-    st.caption(f"Kategorija (automatski prema šifrarniku): **{nova_kategorija or '—'}**")
-
-    potpoglavlje_trenutno = get(row, "potpoglavlje")
-    promijenjena_cjelina = nova_cjelina != cjelina_trenutna
-    potpoglavlja_lista = [p for p, _ in sifrarnik_potpoglavlja_po_cjelini.get(nova_cjelina, [])]
-    BEZ_POTPOGLAVLJA = "— (bez potpoglavlja)"
-    potpoglavlje_opcije = [BEZ_POTPOGLAVLJA] + potpoglavlja_lista
-    if not promijenjena_cjelina and potpoglavlje_trenutno and potpoglavlje_trenutno not in potpoglavlja_lista:
-        potpoglavlje_opcije = [BEZ_POTPOGLAVLJA, potpoglavlje_trenutno] + potpoglavlja_lista
-
-    if promijenjena_cjelina:
-        potpoglavlje_index = 0
-    elif potpoglavlje_trenutno and potpoglavlje_trenutno in potpoglavlje_opcije:
-        potpoglavlje_index = potpoglavlje_opcije.index(potpoglavlje_trenutno)
-    else:
-        potpoglavlje_index = 0
-
-    # key uključuje nova_cjelina - kod promjene cjeline Streamlit tretira ovaj selectbox kao
-    # nov widget, pa se ne zadrži prijašnji odabir potpoglavlja koji možda ne pripada novoj cjelini.
-    novo_potpoglavlje_odabir = st.selectbox(
-        "Potpoglavlje", potpoglavlje_opcije, index=potpoglavlje_index,
-        key=f"potpoglavlje_{broj_retka}_{nova_cjelina}",
-    )
-    if novo_potpoglavlje_odabir != BEZ_POTPOGLAVLJA and novo_potpoglavlje_odabir not in potpoglavlja_lista:
-        st.warning(
-            f"⚠️ Potpoglavlje '{novo_potpoglavlje_odabir}' nije u šifrarniku za cjelinu "
-            f"'{nova_cjelina}' - vjerojatno stariji/ručni unos."
-        )
-    if not potpoglavlja_lista:
-        st.caption("Napomena: ova cjelina trenutno nema definirana potpoglavlja u šifrarniku.")
-
-    if st.button(
-        "💾 Spremi kategoriju/cjelinu/potpoglavlje", type="primary", key=f"spremi_kategorizaciju_{broj_retka}"
-    ):
-        novo_potpoglavlje = "" if novo_potpoglavlje_odabir == BEZ_POTPOGLAVLJA else novo_potpoglavlje_odabir
-        c_kategorija = _col_letter("kategorija")
-        c_cjelina = _col_letter("cjelina")
-        c_potpoglavlje = _col_letter("potpoglavlje")
-
-        azuriranja = [
-            {"range": f"{c_kategorija}{broj_retka}", "values": [[nova_kategorija]]},
-            {"range": f"{c_cjelina}{broj_retka}", "values": [[nova_cjelina]]},
-            {"range": f"{c_potpoglavlje}{broj_retka}", "values": [[novo_potpoglavlje]]},
-        ]
-
-        with st.spinner("Spremam kategorizaciju..."):
-            try:
-                ws_zadaci.batch_update(azuriranja)
-            except Exception as e:
-                st.error(f"Greška: {e}")
-                st.stop()
-
-        st.success(
-            f"✅ Zadatak #{get(row, 'id')} sada je: {nova_kategorija} › {nova_cjelina}"
-            f"{' › ' + novo_potpoglavlje if novo_potpoglavlje else ''}."
-        )
-        _ucitaj_zadatke_za_pretragu.clear()
-        st.markdown(f"[🔗 Otvori bazu u Google Sheets]({sheet.url})")
-
-    # ------------------------------------------------------------------
-    # Sekcija 2a: Biblioteka izvora (prijedlog, 8.10.2026.)
-    # ------------------------------------------------------------------
-    st.divider()
-    st.markdown("**📚 Biblioteka izvora** *(prijedlog)*")
-    st.caption(
-        "Konkretna zbirka/udžbenik iz kojeg zadatak dolazi (npr. 'zbirka-Dakić-pismeni') - za "
-        "naknadno označavanje starih zadataka. Nikad se ne ispisuje u PreTeXt/PDF materijalima."
-    )
-    try:
-        _biblioteke_postojece_uredi = get_biblioteke_izvora(sheet)
-    except Exception:
-        _biblioteke_postojece_uredi = []
-    _BEZ_BIBLIOTEKE_UREDI = "— (bez izvora)"
-    _NOVA_BIBLIOTEKA_UREDI = "➕ Nova..."
-    biblioteka_trenutna = get(row, "biblioteka_izvora")
-    _biblioteka_opcije_uredi = (
-        [_BEZ_BIBLIOTEKE_UREDI] + _biblioteke_postojece_uredi + [_NOVA_BIBLIOTEKA_UREDI]
-    )
-    if biblioteka_trenutna and biblioteka_trenutna not in _biblioteka_opcije_uredi:
-        # Vrijednost postoji na zadatku ali je netko u međuvremenu obrisao iz šifrarnika -
-        # ubaci je kao opciju da se ne izgubi tiho (isti obrazac kao cjelina/potpoglavlje gore).
-        _biblioteka_opcije_uredi = (
-            [_BEZ_BIBLIOTEKE_UREDI, biblioteka_trenutna] + _biblioteke_postojece_uredi + [_NOVA_BIBLIOTEKA_UREDI]
-        )
-    _biblioteka_index_uredi = (
-        _biblioteka_opcije_uredi.index(biblioteka_trenutna) if biblioteka_trenutna in _biblioteka_opcije_uredi else 0
-    )
-    _biblioteka_odabir_uredi = st.selectbox(
-        "Biblioteka izvora", _biblioteka_opcije_uredi, index=_biblioteka_index_uredi,
-        key=f"biblioteka_izvora_{broj_retka}",
-    )
-    if _biblioteka_odabir_uredi == _NOVA_BIBLIOTEKA_UREDI:
-        nova_biblioteka_izvora = st.text_input(
-            "Upiši naziv nove biblioteke/zbirke", key=f"biblioteka_izvora_novi_{broj_retka}",
-        ).strip()
-    elif _biblioteka_odabir_uredi == _BEZ_BIBLIOTEKE_UREDI:
-        nova_biblioteka_izvora = ""
-    else:
-        nova_biblioteka_izvora = _biblioteka_odabir_uredi
-
-    if st.button("💾 Spremi biblioteku izvora", key=f"spremi_biblioteku_{broj_retka}"):
-        if nova_biblioteka_izvora and nova_biblioteka_izvora not in _biblioteke_postojece_uredi:
-            dodaj_biblioteku_izvora(sheet, nova_biblioteka_izvora)
-        c_biblioteka = _col_letter("biblioteka_izvora")
-        with st.spinner("Spremam..."):
-            try:
-                ws_zadaci.update(range_name=f"{c_biblioteka}{broj_retka}", values=[[nova_biblioteka_izvora]])
-            except Exception as e:
-                st.error(f"Greška: {e}")
-                st.stop()
-        st.success(f"✅ Biblioteka izvora spremljena: {nova_biblioteka_izvora or '—'}.")
-        _ucitaj_zadatke_za_pretragu.clear()
+    _brzo_uredjivanje_zadatka(row, broj_retka, idx)
 
     # ------------------------------------------------------------------
     # Sekcija 2b: Brisanje zadatka (dodano 15.9.2026. na korisnikov zahtjev)
@@ -1203,33 +1381,103 @@ def _forma_uredi_zadatak(row, broj_retka, idx, redovi=None):
 
 
 # ============================================================
-# Stranica 3: 🔍✏️ Provjera i uređivanje zadataka (spojeno 11.9.2026.)
+# Stranica 3: 🔍✏️ Provjera i uređivanje zadataka
 # ============================================================
 #
-# Spaja bivše dvije zasebne stranice ("✏️ Uredi zadatak" i "🔍 Zadaci za provjeru") u JEDAN
-# izbornik s dvije kolone jedna do druge - lijevo pretraga/popis za provjeru, desno formular
-# za uređivanje trenutno odabranog zadatka - da profesor ne mora skakati između dvije stranice
-# (kopirati ID iz jedne pa ga lijepiti u pretragu druge). Formular u desnoj koloni je
-# NEIZMIJENJEN kod (vidi _forma_uredi_zadatak iznad) - ova funkcija samo bira KOJI zadatak mu
-# se proslijedi, preko dijeljenog st.session_state["provjera_uredi_broj_retka"] koji postavljaju
-# ILI selectbox pretrage ILI gumb "✏️ Uredi →" u popisu za provjeru.
+# POVIJEST
+# 11.9.2026. - spojene bivše zasebne stranice ("✏️ Uredi zadatak" i "🔍 Zadaci za provjeru") u
+#   JEDAN izbornik s dvije kolone jedna do druge (lijevo pretraga/popis, desno formular).
+# 14.9.2026. - lijeva kolona: filteri cjelina/potpoglavlje/tip, renderirani pretpregled
+#   odabranog zadatka, kvačica "samo za provjeru", "Prikaži još" umjesto capa na 30 rezultata.
 #
-# 14.9.2026. (UX prijedlozi, stavke 1/3/4/5) - lijeva kolona nadograđena: (1) filteri
-# cjelina/potpoglavlje/tip prije pretrage teksta, (3) renderirani pretpregled odabranog
-# zadatka ispod selectboxa (selectbox label ne može prikazati LaTeX/markdown - Streamlit
-# ograničenje), (4) checkbox "samo za provjeru" unutar iste pretrage, plus poznata
-# 30-rezultata-cap zamijenjena punom "Prikaži još" paginacijom (isti obrazac kao §25.10 u
-# Test Builderu). Stavka (5) - gumb "Uredi →" i selectbox pretrage sad pune i
-# st.session_state["provjera_lista_redoslijeda"] (popis brojeva redaka trenutno prikazanog
-# skupa), a desna kolona ispod čita taj popis za ⬅️/➡️ navigaciju bez povratka lijevo.
+# 30.10.2026. - REDIZAJN. Cakijev nalog: "Stranica ne otvara zadatke kad unesem tekst za
+# pretragu. Usporena i blokira." + "fokus na pretragu po kriterijima ... pri odabiru zadatka
+# na cijeloj stranici omogući uređivanje svih elemenata zadatka".
+#
+#   (1) UZROK BLOKADE (izmjeren, vidi _PO_STRANICI_PROVJERA): popis "⚠️ Zadaci za provjeru"
+#       renderirao je SVE retke odjednom. Na 9.556 zadataka s postavljenim status_provjere to
+#       je 9.556 expandera + 19.113 gumba, dakle ~28.700 Streamlit elemenata u svakom rerunu -
+#       a rerun se dogodi na svaki otkucaj u pretrazi. Sada je popis paginiran (20 po stranici),
+#       a rezultati pretrage ograničeni na 10 po stranici.
+#   (2) DVIJE FAZE umjesto dvije kolone: dok nijedan zadatak nije odabran, cijela stranica je
+#       PRETRAGA po kriterijima; kad se zadatak odabere, cijela stranica je njegov UREĐIVAČ.
+#       Na vrhu fokus-moda je traka s ID-om, ⬅️/➡️ kroz trenutni popis, "✅ Označi provjerenim"
+#       i "🔙 Natrag na popis" (vidi _traka_odabranog_zadatka).
+#   (3) Mehanizam odabira je NEPROMIJENJEN: st.session_state["provjera_uredi_broj_retka"] -
+#       postavljaju ga gumb "✏️ Otvori za uređivanje →" ispod pretrage, gumb "✏️ Uredi →" u
+#       popisu za provjeru, i AI kontrola (skok s pages/7_ai_kontrola.py), pa se ništa izvan
+#       ove stranice ne dira.
+#   (4) Izmijenjen je i obrazac uređivanja: četiri odvojene sekcije s četiri gumba "Spremi"
+#       zamijenjene su jednom sekcijom "⚡ Brzo uređivanje zadatka" s jednim gumbom
+#       (vidi _brzo_uredjivanje_zadatka).
+
+def _traka_odabranog_zadatka(row, broj_retka, idx):
+    """Gornja traka u fokus-modu: koji se zadatak uređuje, ⬅️/➡️ kroz trenutni popis,
+    "✅ Označi provjerenim" i povratak na pretragu.
+
+    Namjerno NIJE u sklopivom bloku - UX pravilo 3: odabir i položaj u popisu moraju biti
+    vidljivi cijelo vrijeme, a korisnik se ne smije "izgubiti" u fokus-modu."""
+    _id = _get_polje(row, idx, "id") or f"redak {broj_retka}"
+    _cjelina = _get_polje(row, idx, "cjelina") or "—"
+    _potpoglavlje = _get_polje(row, idx, "potpoglavlje") or "—"
+    _status = _get_polje(row, idx, "status_provjere").strip()
+
+    _lista_nav = st.session_state.get("provjera_lista_redoslijeda") or []
+    _idx_nav = _lista_nav.index(broj_retka) if broj_retka in _lista_nav else -1
+
+    c_info, c_prev, c_slj, c_natrag = st.columns([4, 1, 1, 1])
+    with c_info:
+        st.markdown(f"### ✏️ Uređuješ zadatak `{_id}`")
+        _red = f"{_cjelina} › {_potpoglavlje}"
+        if _status:
+            _red += f" · ⚠️ za provjeru: {_status}"
+        else:
+            _red += " · ✅ nije označen za provjeru"
+        if _idx_nav >= 0:
+            _red += f" · zadatak {_idx_nav + 1} od {len(_lista_nav)} u popisu"
+        st.caption(_red)
+    with c_prev:
+        if st.button("⬅️ Prethodni", key="nav_prethodni", disabled=(_idx_nav <= 0)):
+            st.session_state["provjera_uredi_broj_retka"] = _lista_nav[_idx_nav - 1]
+            st.rerun()
+    with c_slj:
+        if st.button(
+            "➡️ Sljedeći", key="nav_sljedeci",
+            disabled=(_idx_nav < 0 or _idx_nav >= len(_lista_nav) - 1),
+        ):
+            st.session_state["provjera_uredi_broj_retka"] = _lista_nav[_idx_nav + 1]
+            st.rerun()
+    with c_natrag:
+        if st.button("🔙 Natrag na popis", key="natrag_na_popis"):
+            st.session_state["provjera_uredi_broj_retka"] = None
+            st.rerun()
+
+    if _status:
+        if st.button("✅ Označi provjerenim (skini oznaku ⚠️)", key=f"provjereno_fokus_{broj_retka}"):
+            _uspjeh = True
+            if "status_provjere" not in idx:
+                st.error("Stupac 'status_provjere' ne postoji u tabu 'Zadaci'.")
+                _uspjeh = False
+            else:
+                try:
+                    ws_zadaci.update(
+                        range_name=f"{_col_letter('status_provjere')}{broj_retka}", values=[[""]],
+                    )
+                except Exception as e:
+                    st.error(f"Greška: {e}")
+                    _uspjeh = False
+            if _uspjeh:
+                st.success(f"✅ Označeno kao provjereno: {_id}")
+                _ucitaj_zadatke_za_pretragu.clear()
+                st.rerun()
+
 
 def stranica_provjera_i_uredi():
     st.title("🔍✏️ Provjera i uređivanje zadataka")
     st.caption(
-        "Lijevo: pretraži bilo koji zadatak (uz filtere cjelina/potpoglavlje/tip), ili pregledaj "
-        "popis zadataka koje je Claude označio za ručnu provjeru tijekom OCR-a/strukturiranja. "
-        "Desno: formular za uređivanje trenutno odabranog zadatka - klikni zadatak lijevo da ga "
-        "ovdje otvoriš."
+        "Pretraži po kriterijima (cjelina · potpoglavlje · biblioteka · tip · tekst) ili otvori "
+        "zadatak s popisa za provjeru. Kad zadatak otvoriš, cijela stranica služi njegovu "
+        "uređivanju, a '🔙 Natrag na popis' vraća te na pretragu."
     )
 
     if st.button("🔄 Osvježi popis zadataka", key="osvjezi_uredi_provjera"):
@@ -1256,7 +1504,7 @@ def stranica_provjera_i_uredi():
             _ai_ids = set()
 
     # Skok sa stranice AI kontrole (gumb "Otvori u 'Provjera i uređivanje'") - otvori taj
-    # zadatak desno, a ⬅️/➡️ ide kroz sve zadatke te serije koji imaju AI prijedloge.
+    # zadatak, a ⬅️/➡️ ide kroz sve zadatke te serije koji imaju AI prijedloge.
     _skok_id = st.session_state.pop("ai_otvori_id", None)
     if _skok_id:
         _lista_ids = st.session_state.pop("ai_otvori_lista", None) or [_skok_id]
@@ -1268,261 +1516,277 @@ def stranica_provjera_i_uredi():
     if "provjera_uredi_broj_retka" not in st.session_state:
         st.session_state["provjera_uredi_broj_retka"] = None
 
-    col_lijevo, col_desno = st.columns([1, 1], gap="large")
-
-    with col_lijevo:
-        st.subheader("🔍 Pretraga")
-
-        # (14.9.2026., stavka 1) - filteri cjelina/potpoglavlje/tip iz šifrarnika, isti izvor
-        # kao sekcija kategorizacije u _forma_uredi_zadatak, da opcije budu usklađene s bazom.
-        _, sifrarnik_potpoglavlja_po_cjelini = _ucitaj_sifrarnik()
-
-        sve_cjeline_baza = sorted({get(r, "cjelina") for r in redovi if get(r, "cjelina")})
-        svi_tipovi_baza = sorted({get(r, "tip_zadatka") for r in redovi if get(r, "tip_zadatka")})
-
-        fc1, fc2 = st.columns(2)
-        f_cjelina = fc1.multiselect("Cjelina", sve_cjeline_baza, key="filter_cjelina_uredi")
-        if f_cjelina:
-            _opcije_potpog = []
-            for _c in f_cjelina:
-                for _p, _ in sifrarnik_potpoglavlja_po_cjelini.get(_c, []):
-                    if _p and _p not in _opcije_potpog:
-                        _opcije_potpog.append(_p)
-            if not _opcije_potpog:
-                # Šifrarnik nema unosa za odabranu cjelinu - fallback na stvarna potpoglavlja
-                # koja se pojavljuju u bazi (isti obrazac kao filter u Test Builderu, §25.3).
-                _opcije_potpog = sorted({
-                    get(r, "potpoglavlje") for r in redovi
-                    if get(r, "cjelina") in f_cjelina and get(r, "potpoglavlje")
-                })
+    odabrani_broj_retka = st.session_state.get("provjera_uredi_broj_retka")
+    odabrani_row = None
+    if odabrani_broj_retka:
+        _pozicija = odabrani_broj_retka - 2
+        if 0 <= _pozicija < len(redovi):
+            odabrani_row = redovi[_pozicija]
         else:
-            _opcije_potpog = sorted({get(r, "potpoglavlje") for r in redovi if get(r, "potpoglavlje")})
-        f_potpoglavlje = fc2.multiselect("Potpoglavlje", _opcije_potpog, key="filter_potpoglavlje_uredi")
-
-        try:
-            _biblioteke_za_filter_uredi = get_biblioteke_izvora(sheet)
-        except Exception:
-            _biblioteke_za_filter_uredi = []
-        f_biblioteka = st.multiselect(
-            "Biblioteka izvora", _biblioteke_za_filter_uredi, key="filter_biblioteka_uredi",
-        )
-
-        fc3, fc4 = st.columns(2)
-        f_tip = fc3.multiselect("Tip zadatka", svi_tipovi_baza, key="filter_tip_uredi")
-        f_samo_provjera = fc4.checkbox(
-            "⚠️ Samo za provjeru", key="filter_samo_provjera_uredi",
-            help="Prikaži samo zadatke koje je Claude označio za ručnu provjeru (isti kriterij "
-            "kao popis '⚠️ Zadaci za provjeru' ispod, ali unutar ove pretrage/filtera).",
-        )
-
-        f_samo_ai = st.checkbox(
-            f"🤖 Samo s otvorenim AI prijedlozima ({len(_ai_ids)})", key="filter_samo_ai_uredi",
-            disabled=not _ai_ids,
-            help="Zadaci za koje AI kontrola (DeepSeek) ima prijedloge ispravaka koji još čekaju odluku.",
-        )
-
-        f_sakrij_stavke = False
-        if _SKUPINE_OK and "uloga" in idx:
-            f_sakrij_stavke = st.checkbox(
-                "📦 Sakrij stavke skupina (vidi ih unutar skupine)", value=True, key="filter_sakrij_stavke_uredi",
-                help="Skupina zadataka (uvod + a), b), c)) prikazuje se kao jedan redak, a njezine stavke se "
-                "otvaraju iz desne kolone. Kad upišeš tekst u pretragu, stavke se prikazuju uvijek.",
+            st.warning(
+                "Odabrani zadatak trenutno nije dostupan (popis je u međuvremenu osvježen ili "
+                "promijenjen) - odaberi ga ponovno. Vraćam te na pretragu."
             )
+            st.session_state["provjera_uredi_broj_retka"] = None
+            odabrani_broj_retka = None
 
-        upit = st.text_input("Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
-
-        _filtri_aktivni = bool(
-            f_cjelina or f_potpoglavlje or f_tip or f_biblioteka or f_samo_provjera or f_samo_ai or upit.strip()
-        )
-        if _SKUPINE_OK and "uloga" in idx and not _filtri_aktivni:
-            _br_skupina = sum(1 for _r in redovi if get(_r, "uloga").strip().lower() == "skupina")
-            if _br_skupina:
-                st.caption(f"📦 U bazi je {_br_skupina} skupina zadataka (uvod + stavke) - odaberi filter da ih vidiš.")
-
-        if not _filtri_aktivni:
-            st.caption(
-                "Upiši dio ID-a/teksta, odaberi filter, ili odaberi zadatak iz popisa za provjeru ispod."
+    # ============================================================
+    # FAZA 2: Fokus-mod - CIJELA stranica je uređivač odabranog zadatka
+    # ============================================================
+    if odabrani_row is not None:
+        _traka_odabranog_zadatka(odabrani_row, odabrani_broj_retka, idx)
+        if _AI_OK and get(odabrani_row, "id") in _ai_ids:
+            def _nakon_ai_izmjene(_br=odabrani_broj_retka):
+                _ucitaj_zadatke_za_pretragu.clear()
+                # Polja formulara imaju key="..._{broj_retka}" - obriši ih da se ponovno
+                # popune iz baze; inače bi ostala stara vrijednost, a "Spremi" bi je vratio.
+                for _k in [k for k in list(st.session_state.keys())
+                           if isinstance(k, str) and k.endswith(f"_{_br}")]:
+                    del st.session_state[_k]
+            prikazi_ai_prijedloge_za_zadatak(
+                sheet, ws_zadaci, get(odabrani_row, "id"), nakon_izmjene=_nakon_ai_izmjene,
             )
+        _forma_uredi_zadatak(odabrani_row, odabrani_broj_retka, idx, redovi=redovi)
+        return
+
+    # ============================================================
+    # FAZA 1: Pretraga po kriterijima + paginirani popis za provjeru
+    # ============================================================
+    st.subheader("🔍 Pretraga po kriterijima")
+
+    # Filteri cjelina/potpoglavlje/tip iz šifrarnika, isti izvor kao padajući izbornici u
+    # uređivaču, da opcije budu usklađene s bazom.
+    _, sifrarnik_potpoglavlja_po_cjelini = _ucitaj_sifrarnik()
+
+    sve_cjeline_baza = sorted({get(r, "cjelina") for r in redovi if get(r, "cjelina")})
+    svi_tipovi_baza = sorted({get(r, "tip_zadatka") for r in redovi if get(r, "tip_zadatka")})
+
+    fc1, fc2, fc3 = st.columns(3)
+    _vrati_multiselect("filter_cjelina_uredi", sve_cjeline_baza)
+    f_cjelina = fc1.multiselect("Cjelina", sve_cjeline_baza, key="filter_cjelina_uredi")
+    if f_cjelina:
+        _opcije_potpog = []
+        for _c in f_cjelina:
+            for _p, _ in sifrarnik_potpoglavlja_po_cjelini.get(_c, []):
+                if _p and _p not in _opcije_potpog:
+                    _opcije_potpog.append(_p)
+        if not _opcije_potpog:
+            # Šifrarnik nema unosa za odabranu cjelinu - fallback na stvarna potpoglavlja
+            # koja se pojavljuju u bazi (isti obrazac kao filter u Test Builderu, §25.3).
+            _opcije_potpog = sorted({
+                get(r, "potpoglavlje") for r in redovi
+                if get(r, "cjelina") in f_cjelina and get(r, "potpoglavlje")
+            })
+    else:
+        _opcije_potpog = sorted({get(r, "potpoglavlje") for r in redovi if get(r, "potpoglavlje")})
+    _vrati_multiselect("filter_potpoglavlje_uredi", _opcije_potpog)
+    f_potpoglavlje = fc2.multiselect("Potpoglavlje", _opcije_potpog, key="filter_potpoglavlje_uredi")
+
+    try:
+        _biblioteke_za_filter_uredi = _ucitaj_biblioteke_izvora()
+    except Exception:
+        _biblioteke_za_filter_uredi = []
+    _vrati_multiselect("filter_biblioteka_uredi", _biblioteke_za_filter_uredi)
+    f_biblioteka = fc3.multiselect(
+        "Biblioteka izvora", _biblioteke_za_filter_uredi, key="filter_biblioteka_uredi",
+    )
+
+    fc4, fc5, fc6 = st.columns(3)
+    _vrati_multiselect("filter_tip_uredi", svi_tipovi_baza)
+    f_tip = fc4.multiselect("Tip zadatka", svi_tipovi_baza, key="filter_tip_uredi")
+    _vrati_widget("filter_samo_provjera_uredi")
+    f_samo_provjera = fc5.checkbox(
+        "⚠️ Samo za provjeru", key="filter_samo_provjera_uredi",
+        help="Prikaži samo zadatke koje je Claude označio za ručnu provjeru (isti kriterij "
+        "kao popis '⚠️ Zadaci za provjeru' ispod, ali unutar ove pretrage/filtera).",
+    )
+    _vrati_widget("filter_samo_ai_uredi")
+    f_samo_ai = fc6.checkbox(
+        f"🤖 Samo s otvorenim AI prijedlozima ({len(_ai_ids)})", key="filter_samo_ai_uredi",
+        disabled=not _ai_ids,
+        help="Zadaci za koje AI kontrola (DeepSeek) ima prijedloge ispravaka koji još čekaju odluku.",
+    )
+
+    f_sakrij_stavke = False
+    if _SKUPINE_OK and "uloga" in idx:
+        _vrati_widget("filter_sakrij_stavke_uredi")
+        f_sakrij_stavke = st.checkbox(
+            "📦 Sakrij stavke skupina (vidi ih unutar skupine)", value=True, key="filter_sakrij_stavke_uredi",
+            help="Skupina zadataka (uvod + a), b), c)) prikazuje se kao jedan redak, a njezine stavke se "
+            "otvaraju iz uređivača. Kad upišeš tekst u pretragu, stavke se prikazuju uvijek.",
+        )
+
+    _vrati_widget("upit_uredi")
+    upit = st.text_input("Pretraži po ID-u ili tekstu zadatka", "", key="upit_uredi")
+    # Sve gore (filteri + upit) vrijedi i nakon povratka iz fokus-moda - vidi _zapamti_pretragu.
+    _zapamti_pretragu()
+
+    _filtri_aktivni = bool(
+        f_cjelina or f_potpoglavlje or f_tip or f_biblioteka or f_samo_provjera or f_samo_ai or upit.strip()
+    )
+    if _SKUPINE_OK and "uloga" in idx and not _filtri_aktivni:
+        _br_skupina = sum(1 for _r in redovi if get(_r, "uloga").strip().lower() == "skupina")
+        if _br_skupina:
+            st.caption(f"📦 U bazi je {_br_skupina} skupina zadataka (uvod + stavke) - odaberi filter da ih vidiš.")
+
+    if not _filtri_aktivni:
+        st.info(
+            "Odaberi barem jedan kriterij (cjelina, potpoglavlje, biblioteka, tip, 'samo za "
+            "provjeru') ili upiši dio ID-a/teksta - prikazuje se najviše "
+            f"**{_PO_STRANICI_PRETRAGA}** zadataka koji zadovoljavaju kriterij."
+        )
+    else:
+        _upit_lower = upit.strip().lower()
+        _rezultati = []
+        for _broj_retka, _row in enumerate(redovi, start=2):
+            if f_cjelina and get(_row, "cjelina") not in f_cjelina:
+                continue
+            if f_potpoglavlje and get(_row, "potpoglavlje") not in f_potpoglavlje:
+                continue
+            if f_tip and get(_row, "tip_zadatka") not in f_tip:
+                continue
+            if f_biblioteka and get(_row, "biblioteka_izvora") not in f_biblioteka:
+                continue
+            if f_samo_provjera and not get(_row, "status_provjere").strip():
+                continue
+            if f_samo_ai and get(_row, "id") not in _ai_ids:
+                continue
+            if f_sakrij_stavke and not _upit_lower and get(_row, "uloga").strip().lower() == "stavka":
+                continue
+            if _upit_lower and _upit_lower not in get(_row, "id").lower() \
+                    and _upit_lower not in get(_row, "tekst_zadatka_latex").lower():
+                continue
+            _rezultati.append((_broj_retka, _row))
+
+        if not _rezultati:
+            st.warning("Nema podudaranja. Pokušaj drugi pojam ili suzi/proširi filtere.")
         else:
-            _upit_lower = upit.strip().lower()
-            _rezultati = []
-            for _broj_retka, _row in enumerate(redovi, start=2):
-                if f_cjelina and get(_row, "cjelina") not in f_cjelina:
-                    continue
-                if f_potpoglavlje and get(_row, "potpoglavlje") not in f_potpoglavlje:
-                    continue
-                if f_tip and get(_row, "tip_zadatka") not in f_tip:
-                    continue
-                if f_biblioteka and get(_row, "biblioteka_izvora") not in f_biblioteka:
-                    continue
-                if f_samo_provjera and not get(_row, "status_provjere").strip():
-                    continue
-                if f_samo_ai and get(_row, "id") not in _ai_ids:
-                    continue
-                if f_sakrij_stavke and not _upit_lower and get(_row, "uloga").strip().lower() == "stavka":
-                    continue
-                if _upit_lower and _upit_lower not in get(_row, "id").lower() \
-                        and _upit_lower not in get(_row, "tekst_zadatka_latex").lower():
-                    continue
-                _rezultati.append((_broj_retka, _row))
+            # Signatura filtera/upita se uspoređuje svaki rerun; promjena resetira brojač da
+            # nova pretraga uvijek počne od početka (isti obrazac kao prije, samo 10 umjesto 30).
+            _filter_potpis = (
+                tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tip)),
+                tuple(sorted(f_biblioteka)), f_samo_provjera, f_samo_ai, _upit_lower, f_sakrij_stavke,
+            )
+            if st.session_state.get("uredi_filter_potpis") != _filter_potpis:
+                st.session_state["uredi_filter_potpis"] = _filter_potpis
+                st.session_state["uredi_broj_prikaza"] = _PO_STRANICI_PRETRAGA
+            _broj_prikaza = st.session_state.get("uredi_broj_prikaza", _PO_STRANICI_PRETRAGA)
 
-            if not _rezultati:
-                st.warning("Nema podudaranja. Pokušaj drugi pojam ili suzi/proširi filtere.")
+            if len(_rezultati) > _broj_prikaza:
+                st.caption(
+                    f"{len(_rezultati)} zadataka pronađeno (prikazano prvih {_broj_prikaza}) - "
+                    "suzi kriterij ako tražiš nešto konkretno."
+                )
             else:
-                # (14.9.2026.) - puna paginacija umjesto tvrdog capa na 30 rezultata, isti
-                # obrazac kao §25.10 u Test Builderu: signatura filtera/upita se uspoređuje
-                # svaki rerun, promjena resetira brojač na 30 da nova pretraga uvijek počne
-                # od početka.
-                _filter_potpis = (
-                    tuple(sorted(f_cjelina)), tuple(sorted(f_potpoglavlje)), tuple(sorted(f_tip)),
-                    tuple(sorted(f_biblioteka)), f_samo_provjera, f_samo_ai, _upit_lower, f_sakrij_stavke,
+                st.caption(f"{len(_rezultati)} zadataka pronađeno (prikazani svi)")
+
+            _prikazani = _rezultati[:_broj_prikaza]
+            broj_odabran, _ = st.selectbox(
+                "Odaberi zadatak", _prikazani, format_func=lambda par: _oznaci_zadatak(par, idx),
+                key="odabir_uredi",
+            )
+            # (stavka 5) - dijeljeni popis za ⬅️/➡️ navigaciju u fokus-modu.
+            st.session_state["provjera_lista_redoslijeda"] = [br for br, _ in _prikazani]
+
+            if len(_rezultati) > _broj_prikaza:
+                if st.button(
+                    f"⬇️ Prikaži još ({min(_PO_STRANICI_PRETRAGA, len(_rezultati) - _broj_prikaza)})",
+                    key="uredi_prikazi_jos",
+                ):
+                    st.session_state["uredi_broj_prikaza"] = _broj_prikaza + _PO_STRANICI_PRETRAGA
+                    st.rerun()
+
+            # Renderirani pretpregled odabranog zadatka: st.selectbox label je čist tekst
+            # (Streamlit ne renderira markdown/LaTeX unutar opcija dropdowna), pa se puni tekst
+            # zadatka (koji JE markdown/LaTeX preko $...$) prikazuje ovdje preko st.markdown.
+            _odabrani_par = next((par for par in _prikazani if par[0] == broj_odabran), None)
+            if _odabrani_par:
+                with st.container(border=True):
+                    st.caption("Pretpregled odabranog zadatka:")
+                    _tekst_pregled = get(_odabrani_par[1], "tekst_zadatka_latex")
+                    st.markdown(
+                        (_tekst_pregled[:300] + "…") if len(_tekst_pregled) > 300 else _tekst_pregled
+                    )
+                    if _SKUPINE_OK and get(_odabrani_par[1], "uloga").strip().lower() == "skupina":
+                        _svi_p = [_redak_u_rjecnik(_x, idx) for _x in redovi]
+                        for _i_p, _s_p in enumerate(stavke_skupine(_svi_p, get(_odabrani_par[1], "id"))):
+                            st.markdown(f"**{slovo_stavke(_i_p)}** {_s_p.get('tekst_zadatka_latex', '')}")
+                if st.button(
+                    "✏️ Otvori za uređivanje →", type="primary", key="otvori_odabrani_uredi",
+                    help="Otvara zadatak preko cijele stranice - uređuješ tekst, odgovore, tip, "
+                         "težinu, razvrstavanje i biblioteku.",
+                ):
+                    st.session_state["provjera_uredi_broj_retka"] = broj_odabran
+                    st.rerun()
+
+    # ------------------------------------------------------------------
+    # Popis za provjeru - PAGINIRANO (20 po stranici)
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("⚠️ Zadaci za provjeru")
+    st.caption(
+        "Zadaci koje je Claude označio za ručnu provjeru tijekom OCR-a/strukturiranja "
+        "(npr. nesiguran simbol, nečitko napisan broj). Klikni '✏️ Uredi →' da zadatak "
+        "otvoriš preko cijele stranice, ili '✅ Provjereno' da skineš oznaku bez uređivanja."
+    )
+
+    za_provjeru = [
+        (broj_retka_p, row_p) for broj_retka_p, row_p in enumerate(redovi, start=2)
+        if get(row_p, "status_provjere").strip()
+    ]
+
+    if not za_provjeru:
+        st.success("🎉 Trenutno nema zadataka za provjeru.")
+    else:
+        st.info(
+            f"Pronađeno **{len(za_provjeru)}** zadataka za provjeru. Prikazujem "
+            f"**{_PO_STRANICI_PROVJERA}** po stranici (prije se pokušavalo učitati sve odjednom, "
+            "što je blokiralo stranicu)."
+        )
+        _p_prvi, _p_zadnji, _p_str, _p_br_str = _paginacija(
+            "provjera_stranica", len(za_provjeru), _PO_STRANICI_PROVJERA,
+        )
+        _gumbi_paginacije(
+            "provjera_stranica", _p_prvi, _p_zadnji, _p_str, _p_br_str, len(za_provjeru),
+        )
+        for broj_retka_p, row_p in za_provjeru[_p_prvi:_p_zadnji]:
+            naslov = f"⚠️ {get(row_p, 'id') or f'redak {broj_retka_p}'} — {get(row_p, 'status_provjere')}"
+            with st.expander(naslov):
+                st.caption(
+                    f"Cjelina: {get(row_p, 'cjelina') or '—'} · Potpoglavlje: {get(row_p, 'potpoglavlje') or '—'} · "
+                    f"Tip: {get(row_p, 'tip_zadatka') or '—'}"
                 )
-                if st.session_state.get("uredi_filter_potpis") != _filter_potpis:
-                    st.session_state["uredi_filter_potpis"] = _filter_potpis
-                    st.session_state["uredi_broj_prikaza"] = 30
-                _broj_prikaza = st.session_state.get("uredi_broj_prikaza", 30)
+                st.write(get(row_p, "tekst_zadatka_latex") or "*(prazno)*")
+                if get(row_p, "rjesenje"):
+                    st.markdown("**Rješenje:**")
+                    st.write(get(row_p, "rjesenje"))
+                if get(row_p, "konacan_odgovor"):
+                    st.markdown(f"**Konačan odgovor:** {get(row_p, 'konacan_odgovor')}")
 
-                if len(_rezultati) > _broj_prikaza:
-                    st.caption(f"{len(_rezultati)} zadataka pronađeno (prikazano prvih {_broj_prikaza})")
-                else:
-                    st.caption(f"{len(_rezultati)} zadataka pronađeno (prikazani svi)")
-
-                _prikazani = _rezultati[:_broj_prikaza]
-                broj_odabran, _ = st.selectbox(
-                    "Odaberi zadatak", _prikazani, format_func=lambda par: _oznaci_zadatak(par, idx),
-                    key="odabir_uredi",
-                )
-                st.session_state["provjera_uredi_broj_retka"] = broj_odabran
-                # (stavka 5) - dijeljeni popis za ⬅️/➡️ navigaciju u desnoj koloni.
-                st.session_state["provjera_lista_redoslijeda"] = [br for br, _ in _prikazani]
-
-                if len(_rezultati) > _broj_prikaza:
-                    if st.button(
-                        f"⬇️ Prikaži još ({min(30, len(_rezultati) - _broj_prikaza)})",
-                        key="uredi_prikazi_jos",
-                    ):
-                        st.session_state["uredi_broj_prikaza"] = _broj_prikaza + 30
+                cp1, cp2 = st.columns(2)
+                with cp1:
+                    if st.button("✏️ Uredi →", key=f"otvori_uredi_{broj_retka_p}"):
+                        st.session_state["provjera_uredi_broj_retka"] = broj_retka_p
+                        # (stavka 5) - navigacija ⬅️/➡️ u fokus-modu kreće se kroz CIJELI
+                        # popis "za provjeru", ne samo kroz ovaj jedan blok/stranicu.
+                        st.session_state["provjera_lista_redoslijeda"] = [br for br, _ in za_provjeru]
                         st.rerun()
-
-                # (14.9.2026., stavka 3) - renderirani pretpregled odabranog zadatka ispod
-                # selectboxa: st.selectbox label je čist tekst (Streamlit ne renderira
-                # markdown/LaTeX unutar opcija dropdowna), pa se puni tekst zadatka (koji JE
-                # markdown/LaTeX preko $...$) prikazuje ovdje preko st.markdown - vidljivo je
-                # točno koji je zadatak odabran prije nego se otvori cijeli formular desno.
-                _odabrani_par = next((par for par in _prikazani if par[0] == broj_odabran), None)
-                if _odabrani_par:
-                    with st.container(border=True):
-                        st.caption("Pretpregled odabranog zadatka:")
-                        _tekst_pregled = get(_odabrani_par[1], "tekst_zadatka_latex")
-                        st.markdown(
-                            (_tekst_pregled[:300] + "…") if len(_tekst_pregled) > 300 else _tekst_pregled
-                        )
-                        if _SKUPINE_OK and get(_odabrani_par[1], "uloga").strip().lower() == "skupina":
-                            _svi_p = [_redak_u_rjecnik(_x, idx) for _x in redovi]
-                            for _i_p, _s_p in enumerate(stavke_skupine(_svi_p, get(_odabrani_par[1], "id"))):
-                                st.markdown(f"**{slovo_stavke(_i_p)}** {_s_p.get('tekst_zadatka_latex', '')}")
-
-        st.divider()
-        st.subheader("⚠️ Zadaci za provjeru")
-        st.caption(
-            "Zadaci koje je Claude označio za ručnu provjeru tijekom OCR-a/strukturiranja "
-            "(npr. nesiguran simbol, nečitko napisan broj). Klikni '✏️ Uredi →' da zadatak "
-            "otvoriš u desnoj koloni, ili '✅ Provjereno' da skineš oznaku bez uređivanja."
-        )
-
-        za_provjeru = [
-            (broj_retka_p, row_p) for broj_retka_p, row_p in enumerate(redovi, start=2)
-            if get(row_p, "status_provjere").strip()
-        ]
-
-        if not za_provjeru:
-            st.success("🎉 Trenutno nema zadataka za provjeru.")
-        else:
-            st.info(f"Pronađeno **{len(za_provjeru)}** zadataka za provjeru.")
-
-            for broj_retka_p, row_p in za_provjeru:
-                naslov = f"⚠️ {get(row_p, 'id') or f'redak {broj_retka_p}'} — {get(row_p, 'status_provjere')}"
-                with st.expander(naslov):
-                    st.caption(
-                        f"Cjelina: {get(row_p, 'cjelina') or '—'} · Potpoglavlje: {get(row_p, 'potpoglavlje') or '—'} · "
-                        f"Tip: {get(row_p, 'tip_zadatka') or '—'}"
-                    )
-                    st.write(get(row_p, "tekst_zadatka_latex") or "*(prazno)*")
-                    if get(row_p, "rjesenje"):
-                        st.markdown("**Rješenje:**")
-                        st.write(get(row_p, "rjesenje"))
-                    if get(row_p, "konacan_odgovor"):
-                        st.markdown(f"**Konačan odgovor:** {get(row_p, 'konacan_odgovor')}")
-
-                    cp1, cp2 = st.columns(2)
-                    with cp1:
-                        if st.button("✏️ Uredi →", key=f"otvori_uredi_{broj_retka_p}"):
-                            st.session_state["provjera_uredi_broj_retka"] = broj_retka_p
-                            # (stavka 5) - navigacija ⬅️/➡️ u desnoj koloni kreće se kroz
-                            # CIJELI popis "za provjeru", ne samo kroz ovaj jedan redak.
-                            st.session_state["provjera_lista_redoslijeda"] = [br for br, _ in za_provjeru]
-                            st.rerun()
-                    with cp2:
-                        if st.button("✅ Provjereno", type="primary", key=f"provjereno_{broj_retka_p}"):
-                            c_status = _col_letter("status_provjere")
-                            with st.spinner("Ažuriram..."):
-                                try:
-                                    ws_zadaci.update(range_name=f"{c_status}{broj_retka_p}", values=[[""]])
-                                except Exception as e:
-                                    st.error(f"Greška: {e}")
-                                    st.stop()
-                            st.success(f"✅ Označeno kao provjereno: {get(row_p, 'id')}")
-                            _ucitaj_zadatke_za_pretragu.clear()
-                            st.rerun()
-
-    with col_desno:
-        st.subheader("✏️ Uredi zadatak")
-        odabrani_broj_retka = st.session_state.get("provjera_uredi_broj_retka")
-        if not odabrani_broj_retka:
-            st.info("Odaberi zadatak lijevo (pretragom ili iz popisa za provjeru) da ga urediš ovdje.")
-        else:
-            _pozicija = odabrani_broj_retka - 2
-            if _pozicija < 0 or _pozicija >= len(redovi):
-                st.warning(
-                    "Odabrani zadatak trenutno nije dostupan (popis je u međuvremenu osvježen "
-                    "ili promijenjen) - odaberi ga ponovno lijevo."
-                )
-                st.session_state["provjera_uredi_broj_retka"] = None
-            else:
-                # (14.9.2026., stavka 5) - ⬅️/➡️ navigacija kroz trenutni popis (rezultati
-                # pretrage ili "Zadaci za provjeru", ovisno odakle je zadatak odabran) bez
-                # povratka u lijevu kolonu za svaki sljedeći zadatak - ubrzava QA prolazak
-                # kroz duži popis (npr. sve zadatke za provjeru redom).
-                _lista_nav = st.session_state.get("provjera_lista_redoslijeda") or []
-                if odabrani_broj_retka in _lista_nav:
-                    _idx_nav = _lista_nav.index(odabrani_broj_retka)
-                    _navcol1, _navcol2, _navcol3 = st.columns([1, 1, 3])
-                    with _navcol1:
-                        if st.button("⬅️ Prethodni", key="nav_prethodni", disabled=(_idx_nav == 0)):
-                            st.session_state["provjera_uredi_broj_retka"] = _lista_nav[_idx_nav - 1]
-                            st.rerun()
-                    with _navcol2:
-                        if st.button(
-                            "➡️ Sljedeći", key="nav_sljedeci", disabled=(_idx_nav >= len(_lista_nav) - 1)
-                        ):
-                            st.session_state["provjera_uredi_broj_retka"] = _lista_nav[_idx_nav + 1]
-                            st.rerun()
-                    with _navcol3:
-                        st.caption(f"Zadatak {_idx_nav + 1} od {len(_lista_nav)} u trenutnom popisu.")
-
-                odabrani_row = redovi[_pozicija]
-                if _AI_OK and get(odabrani_row, "id") in _ai_ids:
-                    def _nakon_ai_izmjene(_br=odabrani_broj_retka):
+                with cp2:
+                    if st.button("✅ Provjereno", type="primary", key=f"provjereno_{broj_retka_p}"):
+                        c_status = _col_letter("status_provjere")
+                        with st.spinner("Ažuriram..."):
+                            try:
+                                ws_zadaci.update(range_name=f"{c_status}{broj_retka_p}", values=[[""]])
+                            except Exception as e:
+                                st.error(f"Greška: {e}")
+                                st.stop()
+                        st.success(f"✅ Označeno kao provjereno: {get(row_p, 'id')}")
                         _ucitaj_zadatke_za_pretragu.clear()
-                        # Polja formulara imaju key="..._{broj_retka}" - obriši ih da se ponovno
-                        # popune iz baze; inače bi ostala stara vrijednost, a "Spremi" bi je vratio.
-                        for _k in [k for k in list(st.session_state.keys())
-                                   if isinstance(k, str) and k.endswith(f"_{_br}")]:
-                            del st.session_state[_k]
-                    prikazi_ai_prijedloge_za_zadatak(
-                        sheet, ws_zadaci, get(odabrani_row, "id"), nakon_izmjene=_nakon_ai_izmjene,
-                    )
-                _forma_uredi_zadatak(odabrani_row, odabrani_broj_retka, idx, redovi=redovi)
+                        st.rerun()
+        _gumbi_paginacije(
+            "provjera_stranica", _p_prvi, _p_zadnji, _p_str, _p_br_str, len(za_provjeru),
+            sufiks="_dolje",
+        )
 
 
 # ============================================================
