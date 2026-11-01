@@ -22,6 +22,8 @@ from baza_zadataka_pipeline import get_gspread_client
 from secrets_json import ucitaj as _ucitaj_json
 
 st.set_page_config(page_title="CAKI — Potpoglavlja i težine", page_icon="🧩", layout="wide")
+import caki_stil as stil  # noqa: E402  (31.10.2026.: CAKI tema)
+stil.primijeni()  # 31.10.2026.: CAKI tema
 
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 MODELI = ["deepseek-v4-pro", "deepseek-flash"]

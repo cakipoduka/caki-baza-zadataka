@@ -63,6 +63,8 @@ from ai_prijedlozi import (
 
 import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 st.set_page_config(page_title="CAKI — AI kontrola zadataka", page_icon="🔎", layout="wide")
+import caki_stil as stil  # noqa: E402  (31.10.2026.: CAKI tema)
+stil.primijeni()  # 31.10.2026.: CAKI tema
 
 TZ = ZoneInfo("Europe/Zagreb")
 ZADANI_FOLDER_ID = "0B5HA0YxLCZWPejRYX0o1Z2xWZTA"  # MATEMATIKA A razina (00_INBOX_PDF/matura)

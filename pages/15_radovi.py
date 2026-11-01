@@ -17,6 +17,8 @@ from secrets_json import ucitaj as _ucitaj_json
 from testovi_online import sa_info_za_testove
 
 st.set_page_config(page_title="CAKI — Radovi", page_icon="📸", layout="wide")
+import caki_stil as stil  # noqa: E402  (31.10.2026.: CAKI tema)
+stil.primijeni()  # 31.10.2026.: CAKI tema
 
 
 def provjeri_lozinku() -> bool:

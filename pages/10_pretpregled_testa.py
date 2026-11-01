@@ -28,6 +28,8 @@ from baza_zadataka_pipeline import get_gspread_client
 from ocjenjivanje_pretpregled import ocjeni, opcije_zadatka
 
 st.set_page_config(page_title="CAKI -- Pretpregled testa", page_icon="\U0001f441", layout="wide")
+import caki_stil as stil  # noqa: E402  (31.10.2026.: CAKI tema)
+stil.primijeni()  # 31.10.2026.: CAKI tema
 
 
 def provjeri_lozinku() -> bool:

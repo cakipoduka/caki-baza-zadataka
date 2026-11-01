@@ -1,0 +1,18 @@
+# ============================================================================
+# CAKI tema — kopirati kao:  caki-baza-zadataka/.streamlit/config.toml
+# OVO JE NOVA DATOTEKA — taj repo je do sada NIJE imao (nije bilo nikakve teme).
+# ============================================================================
+# Mijenja SAMO izgled. Ne dira podatke ni logiku.
+# Povratak na staro: obriši datoteku .streamlit/config.toml.
+
+[theme]
+primaryColor = "#227AFF"
+backgroundColor = "#F5F7FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#273044"
+font = "sans serif"
+
+# ⚠️ NEMA [client] SEKCIJE — NAMJERNO.
+# Ova aplikacija ima 16 stranica u mapi pages/ i bočni izbornik je JEDINI način
+# da se do njih dođe. Streamlitov zadani izbornik (showSidebarNavigation = true)
+# zato MORA ostati uključen. Ne dodavati ovdje showSidebarNavigation = false.

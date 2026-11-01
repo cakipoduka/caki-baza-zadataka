@@ -53,6 +53,8 @@ from filtriraj_zadatke_za_skriptu import filtriraj_zadatke, opis_filtara
 import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
 
 st.set_page_config(page_title="CAKI Skripta", page_icon="📘", layout="wide")
+import caki_stil as stil  # noqa: E402  (31.10.2026.: CAKI tema)
+stil.primijeni()  # 31.10.2026.: CAKI tema
 
 ZADANA_KNJIGA = "ŠK-Matematika na maturi"
 _STATUS_OZNAKA = {"cekanje": "⏳ čeka", "u_radu": "🛠️ u izradi", "gotovo": "✅ gotovo",

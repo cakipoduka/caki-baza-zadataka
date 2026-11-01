@@ -63,6 +63,8 @@ from baza_zadataka_pipeline import (
 )
 
 st.set_page_config(page_title="CAKI Test Builder", page_icon="📝", layout="wide")
+import caki_stil as stil  # noqa: E402  (31.10.2026.: CAKI tema)
+stil.primijeni()  # 31.10.2026.: CAKI tema
 
 TEMPLATE_DIR = os.path.dirname(os.path.abspath(__file__))
 

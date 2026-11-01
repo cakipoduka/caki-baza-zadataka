@@ -29,6 +29,8 @@ import testovi_online as _online_testovi
 from baza_zadataka_pipeline import ZADACI_HEADERS, get_gspread_client, get_or_create_worksheet
 
 st.set_page_config(page_title="CAKI — Testovi", page_icon="📝", layout="wide")
+import caki_stil as stil  # noqa: E402  (31.10.2026.: CAKI tema)
+stil.primijeni()  # 31.10.2026.: CAKI tema
 
 
 def provjeri_lozinku() -> bool:
