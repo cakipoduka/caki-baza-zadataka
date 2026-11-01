@@ -1860,6 +1860,56 @@ def objavi_za_grupu(sheet, *, izvorni_test, ucenici, naziv: str = "", trajanje_m
     return {"serija": oznaka, "redci": redci}
 
 
+def zadaj_uceniku(sheet, *, izvorni_test, ucenik_id: str, ime_djeteta: str = "", naziv: str = "",
+                  trajanje_min=None, otvara_od: str = "", zatvara_do: str = "", serija: str = "",
+                  autor: str = "") -> dict:
+    """Zadaje POSTOJEĆI (već objavljen) test JEDNOM učeniku — po šifri (`ucenik_id`).
+
+    31.10.2026. (Cakijev zahtjev: „u v1 ne mogu već objavljen test dodijeliti pojedinačnom
+    učeniku po kodu — nema te opcije"): portalu se ne dira ništa. `Moj CAKI`
+    (`caki-booking-termina/testovi_online.py`, funkcija `_smije_vidjeti`) prikazuje test onome
+    čiji je `ucenik_id` upisan u retku `Testovi_zakazani` — dovoljan je JEDAN redak.
+
+    Vraća {"serija": ..., "redci": [...]} kao `objavi_za_grupu`.
+    """
+    uid = _tekst(ucenik_id).upper()
+    if not uid:
+        raise ValueError("Upiši šifru učenika (npr. AA1111) — bez šifre test ne bi imao kome ići.")
+    if izvorni_test is None:
+        raise ValueError("Odaberi test koji zadaješ.")
+    ime = _tekst(ime_djeteta)
+    if ime.lower() in ("none", "nan"):
+        ime = ""
+    return objavi_za_grupu(
+        sheet, izvorni_test=izvorni_test,
+        ucenici=[{"ucenik_id": uid, "ime_djeteta": ime}],
+        naziv=naziv, trajanje_min=trajanje_min, otvara_od=otvara_od, zatvara_do=zatvara_do,
+        serija=serija or oznaka_serije(f"učenik {uid}"), autor=autor)
+
+
+def nadji_ucenika(ucenici, kod) -> dict | None:
+    """Učenik po šifri (`ucenik_id`) iz popisa [{"ucenik_id", "ime_djeteta"}]; None ako ga nema."""
+    k = _tekst(kod).upper()
+    if not k:
+        return None
+    for u in ucenici or ():
+        if _tekst((u or {}).get("ucenik_id")).upper() == k:
+            return u
+    return None
+
+
+def load_ucenici(sheet) -> list[dict]:
+    """Svi učenici iz CRM taba `Učenici` kao [{"ucenik_id", "ime_djeteta"}] — za zadavanje testa
+    po šifri. Vraća [] ako taba nema (stranica tada radi bez provjere šifre)."""
+    izlaz = []
+    for r in _load_opcionalni_tab(sheet, "Učenici"):
+        uid = _tekst((r or {}).get("ucenik_id")).upper()
+        if not uid:
+            continue
+        izlaz.append({"ucenik_id": uid, "ime_djeteta": _tekst(r.get("ime_djeteta"))})
+    return izlaz
+
+
 # ============================================================
 # UI
 # ============================================================
@@ -1899,12 +1949,14 @@ def prikazi_pregled(st, test) -> None:
 
 def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                      danas=None, autor: str = "", grupe=None, kante=None,
-                     ucitaj_bazu=None, ucitaj_sifrarnik=None) -> None:
-    """Cijela stranica 📝 Testovi: popis, uređivanje, pregled, rezultati, zadavanje grupi,
-    spremnost baze i provjere.
+                     ucitaj_bazu=None, ucitaj_sifrarnik=None, ucenici=None) -> None:
+    """Cijela stranica 📝 Testovi: popis, uređivanje, pregled, rezultati, zadavanje grupi i
+    pojedinom učeniku, spremnost baze i provjere.
 
     `ucitaj_bazu` je funkcija bez argumenata koja vraća retke taba `Zadaci` — poziva se
     SAMO kad Caki klikne „Učitaj” (20.000 redaka se ne čita pri svakom otvaranju stranice).
+    `ucenici` = [{"ucenik_id", "ime_djeteta"}] iz taba `Učenici` — za provjeru šifre kad se test
+    zadaje jednom učeniku (31.10.2026.); bez njega se šifra ne provjerava.
     """
     testovi = list(testovi or [])
     rezultati = list(rezultati or [])
@@ -1925,7 +1977,7 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
     m4.metric("Prosječan rezultat", f"{ukupno['prosjek']} %" if ukupno["broj"] else "—")
 
     tab_popis, tab_rezultati, tab_ucenik, tab_zadaj, tab_baza, tab_provjere = st.tabs(
-        ["📋 Testovi", "📊 Rezultati", "👤 Po učeniku", "👥 Zadaj grupi",
+        ["📋 Testovi", "📊 Rezultati", "👤 Po učeniku", "👥 Zadaj test",
          "🎯 Spremnost baze", "🩺 Provjere"])
 
     # ------------------------------------------------ 📋 popis + uređivanje
@@ -2376,7 +2428,7 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                 with st.expander("📋 Sažetak za roditelja (kopiraj u WhatsApp ili mail)"):
                     st.code(tekst_rod, language=None)
 
-    # ------------------------------------------------ 👥 zadaj grupi
+    # ------------------------------------------------ 👥 zadaj test (grupi ili učeniku)
     with tab_zadaj:
         st.markdown("**Zadaj postojeći test cijeloj grupi**")
         st.caption("Zadaci se kopiraju (zamrznuti) — izmjena izvornog testa ne dira ovo. Svaki "
@@ -2454,6 +2506,72 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                                          f"📤 Objavljeno **{len(rez['redci'])}** testova za "
                                          f"„{_tekst(grupa.get('naziv'))}” (serija "
                                          f"`{rez['serija']}`). Učenici ga vide u Moj CAKI → 📝 Testovi.")
+
+            # 31.10.2026. (Cakijev zahtjev): isti test može se zadati i JEDNOM učeniku po šifri —
+            # za dopunu, nadoknadu ili učenika koji ne ide u grupu. Portal se NE mijenja:
+            # `_smije_vidjeti` u caki-booking-termina/testovi_online.py prikazuje test onome
+            # čiji je `ucenik_id` u retku, pa je dovoljan jedan redak u `Testovi_zakazani`.
+            st.divider()
+            st.markdown("**🧑 Zadaj test jednom učeniku (po šifri)**")
+            st.caption("Upiši šifru učenika — istu kojom ulazi u **Moj CAKI** (npr. `AA1111`). Test "
+                       "dobiva samo taj učenik i vidi ga pod 📝 Testovi; ostali ga ne vide. Zadaci se "
+                       "kopiraju (zamrznuti), kao i kod zadavanja grupi.")
+            kod_u = _tekst(st.text_input(
+                "Šifra učenika", key="ta_kod_ucenika", placeholder="npr. AA1111",
+                help="Šifra je `ucenik_id` iz taba Učenici — isti kod koji učenik upisuje u portal.",
+            )).upper()
+            nadjen_u = nadji_ucenika(ucenici, kod_u)
+            if not kod_u:
+                st.caption("Upiši šifru pa se ovdje pokaže o kojem je učeniku riječ.")
+            elif nadjen_u:
+                st.success(f"✅ {_tekst(nadjen_u.get('ime_djeteta')) or 'učenik bez imena'} · "
+                           f"šifra `{kod_u}`")
+            elif ucenici:
+                st.warning(f"Šifra `{kod_u}` nije u tabu `Učenici`. Provjeri je — test s pogrešnom "
+                           "šifrom ne bi vidio nitko.")
+            else:
+                st.caption(f"Šifra `{kod_u}` · popis učenika nije dostupan pa je ne provjeravam.")
+            potvrdi_kod = True
+            if kod_u and ucenici and not nadjen_u:
+                potvrdi_kod = st.checkbox("Šifra nije u popisu — svejedno objavi", key="ta_kod_potvrdi")
+            with st.form("ta_forma_ucenik"):
+                naziv_u = st.text_input(
+                    "Naziv testa (vidi ga učenik)", key="ta_naziv_ucenik",
+                    value=(f"{_tekst(izvor.get('naziv'))} — {kod_u}" if izvor else ""))
+                c1u, c2u, c3u = st.columns(3)
+                trajanje_u = c1u.number_input(
+                    "Trajanje (min)", min_value=5, max_value=240, step=5, key="ta_trajanje_ucenik",
+                    value=int(_broj((izvor or {}).get("trajanje_min"), 45)))
+                otvara_u = c2u.date_input("Otvoren od", key="ta_otvara_ucenik",
+                                          value=_kao_datum((izvor or {}).get("otvara_od")),
+                                          format="DD.MM.YYYY")
+                zatvara_u = c3u.date_input(
+                    "Otvoren do", key="ta_zatvara_ucenik",
+                    value=_kao_datum((izvor or {}).get("zatvara_do"), date.today()),
+                    format="DD.MM.YYYY")
+                posalji_u = st.form_submit_button(
+                    "📤 Objavi za učenika", type="primary",
+                    disabled=not kod_u or izvor is None or not potvrdi_kod)
+
+            if posalji_u:
+                greske_u = provjeri_izmjene(naziv_u, trajanje_u, otvara_u, zatvara_u)
+                if greske_u:
+                    for g_ in greske_u:
+                        st.error(g_)
+                else:
+                    try:
+                        rez_u = zadaj_uceniku(
+                            sheet, izvorni_test=izvor, ucenik_id=kod_u,
+                            ime_djeteta=_tekst((nadjen_u or {}).get("ime_djeteta")),
+                            naziv=naziv_u, trajanje_min=trajanje_u, otvara_od=_datum(otvara_u),
+                            zatvara_do=_datum(zatvara_u),
+                            serija=oznaka_serije(f"učenik {kod_u}", danas), autor=_tekst(autor))
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        _osvjezi(st, "success",
+                                 f"📤 Test objavljen učeniku `{kod_u}` (serija `{rez_u['serija']}`). "
+                                 "Vidi ga u Moj CAKI → 📝 Testovi.")
 
     # ------------------------------------------------ 🎯 spremnost baze
     with tab_baza:

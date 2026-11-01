@@ -74,6 +74,26 @@ def grupiraj(rows):
     return jedinice, upozorenja
 
 
+def prebroji(rows):
+    """Koliko je redaka u bazi po ulozi: {'redaka', 'samostalni', 'skupina', 'stavki'}.
+
+    31.10.2026. (Cakijev nalaz „u builderu 10.177, u bazi 18.053"): brojač u Test Builderu
+    broji JEDINICE (samostalni zadaci + skupine), a stavke skupina se prikazuju unutar kartice
+    svoje skupine pa se ne broje zasebno. Zato broj jedinica NIJE broj redaka u bazi - razlika
+    je točno broj stavki. Ova funkcija daje razradu za tu rečenicu u aplikaciji.
+    """
+    brojke = {"redaka": len(rows), "samostalni": 0, "skupina": 0, "stavki": 0}
+    for r in rows:
+        u = uloga_retka(r)
+        if u == ULOGA_SKUPINA:
+            brojke["skupina"] += 1
+        elif u == ULOGA_STAVKA:
+            brojke["stavki"] += 1
+        else:
+            brojke["samostalni"] += 1
+    return brojke
+
+
 def nasljedi(skupina, stavka):
     """Kopija stavke u kojoj su prazna nasljedna polja popunjena iz skupine."""
     out = dict(stavka)
@@ -307,6 +327,30 @@ def upit_odgovara(tekst: str, upit) -> bool:
     return True
 
 
+def izgleda_kao_sifra(upit) -> bool:
+    """Je li upit ŠIFRA zadatka, a ne riječ (npr. `Poglavlje1.1_primjeri_003`).
+
+    31.10.2026. (Cakijev nalaz „610 zadataka pronađeno, a pola nema veze s pretragom"):
+    pretraga je za duge riječi gledala samo PRVIH 6 znakova, pa je šifra
+    `Poglavlje1.1_primjeri_003` tražila „poglav” i vraćala stotine zadataka iz drugih
+    cjelina. Šifra se zato prepoznaje i traži SE U CIJELOSTI, samo u ID-u.
+    Uvjet: jedna riječ (bez razmaka), sadrži brojku, i sadrži '_' ili '.' (npr. Matematika_4_2_dio_268).
+    """
+    u = _s(upit)
+    if not u or " " in u:
+        return False
+    if not any(ch.isdigit() for ch in u):
+        return False
+    return "_" in u or "." in u
+
+
+def redak_odgovara(redak, upit) -> bool:
+    """Jedan redak baze protiv upita — s ID-em kao posebnim slučajem (v. izgleda_kao_sifra)."""
+    if izgleda_kao_sifra(upit):
+        return normalizuj_upit(_s(upit)) in normalizuj_upit(_s((redak or {}).get("id")))
+    return upit_odgovara(tekst_za_pretragu(redak), upit)
+
+
 def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit="", f_biblioteka=()):
     """Filter Test Buildera na razini JEDINICE (samostalan ili skupina+stavke).
     Cjelina/potpoglavlje/težina: prolazi ako ih ima skupina ILI bilo koja stavka.
@@ -327,7 +371,8 @@ def jedinica_odgovara(j, f_cjelina=(), f_potpoglavlje=(), f_tezina=(), upit="", 
         return False
     if upit:
         # 22.10.2026.: tolerantna pretraga (v. upit_odgovara) po SVIM poljima, ne samo tekstu.
-        if not any(upit_odgovara(tekst_za_pretragu(r), upit) for r in redovi):
+        # 31.10.2026.: ako upit izgleda kao šifra, traži se samo u ID-u (v. redak_odgovara).
+        if not any(redak_odgovara(r, upit) for r in redovi):
             return False
     return True
 

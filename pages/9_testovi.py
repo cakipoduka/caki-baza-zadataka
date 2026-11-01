@@ -115,6 +115,13 @@ def _kante_mature(crm_id_: str):
     return ta.kante_mature(ta.load_raspored_mature(_crm_sheet(crm_id_)))
 
 
+@st.cache_data(ttl=300)
+def _ucenici(crm_id_: str):
+    """Svi učenici iz taba `Učenici` (šifra + ime) — 31.10.2026., za „🧑 Zadaj test jednom
+    učeniku (po šifri)” u tabu „Zadaj test”: po njoj se provjeri je li šifra stvarno postoji."""
+    return ta.load_ucenici(_crm_sheet(crm_id_))
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _zadaci_baze(predmet_slug: str):
     """Svi retci taba `Zadaci` ovog predmeta. Poziva se SAMO kad Caki klikne „Učitaj” —
@@ -182,6 +189,7 @@ if samo_predmet:
 
 ta.prikazi_stranicu(st, sheet, testovi, rezultati, predmet=predmet if samo_predmet else "",
                     autor="Caki", grupe=_grupe_upisa(crm_id), kante=_kante_mature(crm_id),
+                    ucenici=_ucenici(crm_id),
                     ucitaj_bazu=lambda: _zadaci_baze(predmet),
                     # 21.10.2026.: popis cjelina iz ŠIFRARNIKA — da se vidi koje su prazne
                     # (Cakijev nalaz iz fizike: 35 od 55 cjelina nema nijedan zadatak).

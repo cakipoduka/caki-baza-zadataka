@@ -108,6 +108,22 @@ KRAJ_OZNAKA_PO_TIPU = {
 }
 
 
+def _tisucice(n) -> str:
+    """Broj s točkom kao razdjelnikom tisućica (18.053) - hrvatski zapis."""
+    try:
+        return f"{int(n):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return str(n)
+
+
+def _rijec_jedinica(n) -> str:
+    """1 jedinica, 2 jedinice, 5 jedinica, 10.177 jedinica."""
+    n = abs(int(n))
+    if n % 100 in (11, 12, 13, 14) or n % 10 == 1:
+        return "jedinica"
+    return "jedinice" if n % 10 in (2, 3, 4) else "jedinica"
+
+
 # ---------------------------------------------------------------
 # Lozinka (isti obrazac kao u app.py)
 # ---------------------------------------------------------------
@@ -678,9 +694,14 @@ with col_pretraga:
                 # tražilo samo u tekstu i ključnim riječima — udžbenički zadaci imaju prazne
                 # ključne riječi, a u tekstu piše `\log` (ne „logaritam”). Sada traži i po
                 # cjelini, potpoglavlju, nazivu/tipu izvora, ID-u i konačnom odgovoru.
-                if not _skupine.upit_odgovara(_skupine.tekst_za_pretragu(z), f_tekst):
+                if not _skupine.redak_odgovara(z, f_tekst):
                     continue
             filtrirano.append({"tip": "samostalan", "glavni": z, "stavke": []})
+
+    # 31.10.2026. (Cakijev nalaz „builder pokazuje manje zadataka nego što ih baza ima"):
+    # brojač broji JEDINICE, ne retke - v. rečenicu s razradom niže. Ovdje se samo pripreme brojke.
+    _brojke_baze = _skupine.prebroji(zadaci) if _SKUPINE_OK else None
+    _sto_jedinica = _rijec_jedinica(len(filtrirano)) if _SKUPINE_OK else "zadataka"
 
     # ID-jevi zadataka koji su VEĆ u "2. Odabrani zadaci" - za kvačicu/oznaku
     # niže i onemogućavanje ponovnog dodavanja istog zadatka (zahtjev 14.9.2026.:
@@ -710,9 +731,26 @@ with col_pretraga:
     broj_prikaza = st.session_state.get("tb_broj_prikaza", 50)
 
     if len(filtrirano) > broj_prikaza:
-        st.caption(f"{len(filtrirano)} zadataka pronađeno (prikazano prvih {broj_prikaza})")
+        st.caption(f"Pronađeno {_tisucice(len(filtrirano))} {_sto_jedinica} (prikazano prvih {broj_prikaza})")
     else:
-        st.caption(f"{len(filtrirano)} zadataka pronađeno (prikazani svi)")
+        st.caption(f"Pronađeno {_tisucice(len(filtrirano))} {_sto_jedinica} (prikazani svi)")
+
+    # 31.10.2026. (Cakijev nalaz „builder pokazuje 10.177, a baza ima 18.053 zadataka"):
+    # brojač gore broji JEDINICE - samostalne zadatke i skupine - jer se stavke skupine
+    # (a), b), c)…) prikazuju UNUTAR kartice svoje skupine i ne mogu se dodati zasebno.
+    # Ništa ne nedostaje: zbroj redaka u bazi = jedinice + stavke. Ova rečenica to pokaže
+    # brojevima, da se razlika ne mora pogađati.
+    if _brojke_baze:
+        _br_jedinica = len(_jedinice_sve)      # stvarni broj jedinica u bazi (i kad je filter aktivan)
+        st.caption(
+            f"🧮 U bazi je {_tisucice(_brojke_baze['redaka'])} redaka: "
+            f"{_tisucice(_brojke_baze['samostalni'])} samostalnih zadataka + "
+            f"{_tisucice(_brojke_baze['skupina'])} skupina + "
+            f"{_tisucice(_brojke_baze['stavki'])} stavki (a), b), c)…). Stavke se vide unutar kartice "
+            "svoje skupine pa ih brojač jedinica ne broji zasebno — ukupno je zato "
+            f"{_tisucice(_br_jedinica)} {_rijec_jedinica(_br_jedinica)}, a ne "
+            f"{_tisucice(_brojke_baze['redaka'])}."
+        )
 
     # Masovno dodavanje (15.9.2026., UX prijedlog - stavka 3) - dodaje sve TRENUTNO
     # PRIKAZANE (do broj_prikaza) zadatke koji još nisu u "2. Odabrani zadaci" u jednom

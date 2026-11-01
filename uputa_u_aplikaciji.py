@@ -50,8 +50,9 @@ UPUTE = {
             "matrica razreda, usporedba dvaju testova.",
             "**👤 Po učeniku** — povijest, slabe cjeline, promašeni zadaci, **🧠 profil po Bloom "
             "razinama**, gotov sažetak za roditelja (kopiraj u WhatsApp/mail).",
-            "**👥 Zadaj grupi** — isti test cijeloj grupi Upisa ili kanti Mature (jedan redak po učeniku, "
-            "zajednička oznaka `serija`).",
+            "**👥 Zadaj test** — isti test cijeloj grupi Upisa ili kanti Mature (jedan redak po učeniku, "
+            "zajednička oznaka `serija`), a ispod toga i **🧑 jednom učeniku po šifri** — za dopunu, "
+            "nadoknadu ili učenika koji ne ide u grupu (31.10.2026.).",
             "**🩺 Provjere** — tabovi, stupci, dupli ID-evi, test bez roka, započeli-bez-predaje.",
         ],
         "pazi": [
