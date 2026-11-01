@@ -12,9 +12,10 @@ da to utjece na stvarne podatke:
   - NISTA se ne upisuje u `Rezultati_testova` niti bilo koji drugi tab -- ocjena se
     prikaze samo na ekranu i nestane kad stranicu zatvoris/refreshas.
 
-Ocjenjivanje je u `ocjenjivanje_pretpregled.py` -- NAMJERNA kopija logike iz
-`caki-booking-termina/testovi_online.py` (v. upozorenje u tom modulu zasto nije import).
-Ako se stvarno ocjenjivanje promijeni, promijeni i ovdje.
+Ocjenjivanje je u `ocjenjivanje_pretpregled.py`, a sama usporedba odgovora u
+`provjera_odgovora.py` -- ISTI modul (bajt-identican) koristi i portal
+`caki-booking-termina/testovi_online.py`, pa Pretpregled ne moze dati drugu ocjenu od portala.
+(Do 1.11.2026. bila je namjerna kopija logike; razdvojila se i to je popravljeno.)
 
 SECRETS: GOOGLE_SERVICE_ACCOUNT_JSON, APP_PASSWORD, CRM_SHEET_ID (iste kao Test Builder
 za objavu online testa).
@@ -120,7 +121,12 @@ if st.button("Ocijeni (samo na ekranu, nista se ne sprema)", type="primary"):
     bodovi, maks, detalji = ocjeni(zadaci, odgovori)
     st.success(f"Rezultat: **{bodovi:g} / {maks:g}** bodova "
                f"({round(100 * bodovi / maks) if maks else 0}%).")
+    # 1.11.2026.: statusi "ceka" i "sumnja" NISU konačna nula — u portalu ih rješava Caki
+    # u 🧑‍🏫 Provjeri rješenja (v. provjera_odgovora.py)
+    _oznaka = {"tocno": "OK", "sumnja": "SUMNJA", "ceka": "CEKA"}
     for i, d in enumerate(detalji):
-        ikona = "OK" if d["tocno"] else "X"
+        ikona = _oznaka.get(str(d.get("status", "")), "X")
         st.write(f"[{ikona}] Zadatak {i + 1}: upisao/la si „{d['odgovor'] or '(prazno)'}“, "
                  f"tocan odgovor je „{d['ocekivano']}“ -- {d['bodovi']:g}/{d['max']:g} bod.")
+        if d.get("zasto"):
+            st.caption(f"    {d['zasto']} · izvor: {d.get('izvor', '')}")

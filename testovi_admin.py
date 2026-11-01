@@ -1186,7 +1186,13 @@ def tablica_nacrta(nacrt):
 
 
 def promaseni_zadaci(rezultati, testovi, ucenik_id, limit: int = 20) -> list[dict]:
-    """Zadaci koje učenik nije riješio točno (kroz sve testove), najnoviji prvi."""
+    """Zadaci koje učenik nije riješio točno (kroz sve testove), najnoviji prvi.
+
+    1.11.2026.: zadaci koji ČEKAJU odluku (`ceka` = nema ključa ili je postupak, `sumnja` =
+    zapis sličan ključu) se NE prikazuju kao promašeni — nisu promašeni, nego neriješeni.
+    Prije je ovaj popis prikazivao i njih (i to je bio dio Cakijevog nalaza: točni odgovori
+    su se pojavljivali kao „promašeni“ jer se uspoređivao zapis, a ne vrijednost).
+    """
     uid = _tekst(ucenik_id).upper()
     izlaz: list[dict] = []
 
@@ -1195,6 +1201,8 @@ def promaseni_zadaci(rezultati, testovi, ucenik_id, limit: int = 20) -> list[dic
         zadaci = zadaci_iz_testa(test) if test else []
         for i, d in enumerate(detalji_iz_retka(r)):
             if not isinstance(d, dict) or d.get("tocno"):
+                continue
+            if _tekst(d.get("status")) in ("ceka", "sumnja"):
                 continue
             z = zadaci[i] if i < len(zadaci) else {}
             izlaz.append({
@@ -2727,22 +2735,27 @@ __all__ = [
 # ============================================================
 
 def potrebna_provjera(rezultat) -> bool:
-    """Ima li rezultat ijedan zadatak sa statusom "ceka" (nema ključa ili je postupak)."""
-    return any(_tekst(d.get("status")) == "ceka" for d in detalji_iz_retka(rezultat))
+    """Ima li rezultat ijedan zadatak koji čeka Cakijevu odluku.
+
+    25.10.2026.: `ceka` (nema ključa ili je postupak).
+    1.11.2026.: i **`sumnja`** — odgovor je sličan ključu, ali se ne može automatski odlučiti
+    (`provjera_odgovora.py`); takav zadatak NIJE konačna nula.
+    """
+    return any(_tekst(d.get("status")) in ("ceka", "sumnja") for d in detalji_iz_retka(rezultat))
 
 
 def zadaci_za_provjeru(rezultat) -> list:
-    """Popis (redni_broj, detalj) samo za zadatke koji čekaju provjeru."""
+    """Popis (redni_broj, detalj) samo za zadatke koji čekaju provjeru (`ceka` ili `sumnja`)."""
     return [(i, d) for i, d in enumerate(detalji_iz_retka(rezultat))
-            if _tekst(d.get("status")) == "ceka"]
+            if _tekst(d.get("status")) in ("ceka", "sumnja")]
 
 
 def primijeni_provjeru(ws, redak: int, rezultat: dict, odluke: dict, provjerio: str = "") -> dict:
     """Upiši Cakijeve odluke u JEDAN redak rezultata i preračunaj ukupno.
 
     `odluke` = {redni_broj_zadatka: {"status": "tocno"|"netocno"|"ceka", "bodovi": broj}}
-    Pravilo: "tocno" nosi sve bodove zadatka (`max`), "netocno" 0, "ceka" ostaje otvoreno
-    (npr. dio koji se provjerava naknadno). Vraća polja koja su upisana.
+    Pravilo: "tocno" nosi sve bodove zadatka (`max`), "netocno" 0, "ceka" (i 1.11.2026. "sumnja")
+    ostaje otvoreno (npr. dio koji se provjerava naknadno). Vraća polja koja su upisana.
     """
     import json as _json
     from datetime import datetime as _dt
@@ -2753,7 +2766,7 @@ def primijeni_provjeru(ws, redak: int, rezultat: dict, odluke: dict, provjerio: 
         if not o:
             continue
         st = _tekst(o.get("status")) or "netocno"
-        d["status"] = st if st in ("tocno", "netocno", "ceka") else "netocno"
+        d["status"] = st if st in ("tocno", "netocno", "ceka", "sumnja") else "netocno"
         d["tocno"] = d["status"] == "tocno"
         if d["status"] == "tocno":
             d["bodovi"] = round(_broj(d.get("max")), 2)
@@ -2764,7 +2777,7 @@ def primijeni_provjeru(ws, redak: int, rezultat: dict, odluke: dict, provjerio: 
 
     bodovi = round(sum(_broj(d.get("bodovi")) for d in detalji), 2)
     maks = round(sum(_broj(d.get("max")) for d in detalji), 2)
-    ostalo = any(_tekst(d.get("status")) == "ceka" for d in detalji)
+    ostalo = any(_tekst(d.get("status")) in ("ceka", "sumnja") for d in detalji)
     polja = {
         "detalji_json": _json.dumps(detalji, ensure_ascii=False),
         "bodovi": bodovi,

@@ -43,7 +43,7 @@ predmet = predmet_config.odaberi_predmet(st)
 postavke = predmet_config.postavke(predmet)
 st.title("🧑‍🏫 Provjera rješenja")
 st.caption(f"Predmet: **{postavke['naziv']}** · zadaci koje sustav ne može ocijeniti sam "
-           f"(bez ključa ili postupak) čekaju tvoju odluku.")
+           f"(bez ključa, postupak ili odgovor koji je sličan ključu — `sumnja`) čekaju tvoju odluku.")
 
 if "CRM_SHEET_ID" not in st.secrets:
     st.error("U Streamlit Secrets nedostaje **CRM_SHEET_ID**.")
@@ -92,14 +92,23 @@ st.divider()
 odluke = {}
 for i, d in ta.zadaci_za_provjeru(rezultat):
     zadatak = zadaci[i] if i < len(zadaci) else {}
-    with st.expander(f"#{i + 1} · {zadatak.get('tekst', '')[:70]}…", expanded=True):
+    _status = str(d.get("status", "")).strip()
+    _znak = "⚠️ sumnja" if _status == "sumnja" else "⏳ čeka"
+    with st.expander(f"#{i + 1} · {_znak} · {zadatak.get('tekst', '')[:60]}…", expanded=True):
         st.markdown(zadatak.get("tekst", "_(tekst zadatka nije dostupan)_"))
         c1, c2 = st.columns(2)
         c1.markdown("**Učenikov odgovor:**")
         c1.markdown(f"> {d.get('odgovor') or '_nije odgovoreno_'}")
         c2.markdown("**Očekivano rješenje:**")
         c2.markdown(f"> {d.get('ocekivano') or '_nema ključa_'}")
-        st.caption(f"Bodovi zadatka: {d.get('max')} · status: {d.get('status', '')}")
+        st.caption(f"Bodovi zadatka: {d.get('max')} · status: {_status}")
+        # 1.11.2026.: zašto je zadatak ovdje — AI je drugi glas, ne odluka (v. provjera_odgovora.py)
+        _izvor, _zasto = str(d.get("izvor", "")).strip(), str(d.get("zasto", "")).strip()
+        if _izvor == "ai":
+            st.info(f"🤖 AI (samo prijedlog, ključ je bio jedini izvor istine): {_zasto or '—'}")
+        elif _status == "sumnja":
+            st.warning(f"⚠️ Nije odlučeno automatski: {_zasto or 'sličan zapis, nije sigurno'}"
+                       + (f" · izvor: {_izvor}" if _izvor else ""))
         izbor = st.radio(
             "Odluka", ["⏳ ostavi otvoreno", "✅ točno", "❌ netočno"],
             key=f"odluka_{rezultat.get('rezultat_id')}_{i}", horizontal=True,
