@@ -2322,6 +2322,9 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
 
             st.markdown("**Predaje (najslabiji prvi)**")
             st.dataframe(tablica_rezultata(moji), hide_index=True, width="stretch")
+            link_provjere(st, "Ocjena po zadatku se mijenja u 🧑‍🏫 Provjeri i ispravku ocjena — "
+                              "„✏️ Ispravak po zadatku” za jedan rezultat, „🧮 Preračun starih "
+                              "rezultata” kad je cijeli test ocijenjen starom logikom.")
 
             uspjeh = uspjeh_po_zadatku(test_r, moji)
             if uspjeh:
@@ -2430,6 +2433,11 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
             if promaseni:
                 with st.expander(f"❌ Zadatci koje nije riješio točno ({len(promaseni)})"):
                     st.dataframe(tablica_promasenih(promaseni), hide_index=True, width="stretch")
+                    st.caption("Ako je odgovor tu greškom (npr. `\\mathrm{8.8605}` prema `8.8605` — "
+                               "stara logika nije skidala LaTeX omotač), preračunaj test ili ispravi "
+                               "ocjenu po zadatku ispod.")
+                    link_provjere(st, "Preračun vrijedi za cijeli test; ispravak po zadatku za "
+                                      "jednog učenika.")
 
             tekst_rod = tekst_sazetka_za_roditelja(rezultati, testovi, odabrani_u)
             if tekst_rod:
@@ -2734,6 +2742,21 @@ __all__ = [
 # 🧑‍🏫 Ručna provjera rješenja (25.10.2026.)
 # ============================================================
 
+def link_provjere(st, tekst: str = "") -> None:
+    """🧑 Link na stranicu „Provjera i ispravak ocjena" (`pages/18_provjera_rjesenja.py`).
+
+    Zašto (1.11.2026.): Caki je tražio gdje se mijenja ocjena po zadatku i **nije našao opciju** —
+    do stranice se dolazilo samo preko rezultata koji čekaju provjeru. Sada je link uz popis
+    predaja i uz popis promašenih zadataka.
+    """
+    try:
+        st.page_link("pages/18_provjera_rjesenja.py", label="🧑‍🏫 Provjera i ispravak ocjena")
+    except Exception:                                   # noqa: BLE001 — AppTest ili stariji Streamlit
+        st.caption("🧑‍🏫 Provjera i ispravak ocjena je u lijevom izborniku.")
+    if _tekst(tekst):
+        st.caption(tekst)
+
+
 def potrebna_provjera(rezultat) -> bool:
     """Ima li rezultat ijedan zadatak koji čeka Cakijevu odluku.
 
@@ -2750,16 +2773,62 @@ def zadaci_za_provjeru(rezultat) -> list:
             if _tekst(d.get("status")) in ("ceka", "sumnja")]
 
 
-def primijeni_provjeru(ws, redak: int, rezultat: dict, odluke: dict, provjerio: str = "") -> dict:
-    """Upiši Cakijeve odluke u JEDAN redak rezultata i preračunaj ukupno.
+def _slovo_stupca(naziv: str, zaglavlje: list) -> str:
+    """Naziv stupca -> slovo (A, B, … AA) za `batch_update`. Prazno ako stupca nema."""
+    if naziv not in zaglavlje:
+        return ""
+    idx = zaglavlje.index(naziv) + 1
+    slovo = ""
+    while idx > 0:
+        idx, ostatak = divmod(idx - 1, 26)
+        slovo = chr(65 + ostatak) + slovo
+    return slovo
 
-    `odluke` = {redni_broj_zadatka: {"status": "tocno"|"netocno"|"ceka", "bodovi": broj}}
-    Pravilo: "tocno" nosi sve bodove zadatka (`max`), "netocno" 0, "ceka" (i 1.11.2026. "sumnja")
-    ostaje otvoreno (npr. dio koji se provjerava naknadno). Vraća polja koja su upisana.
+
+def upisi_u_redak(ws, redak: int, polja: dict) -> dict:
+    """Upiši SAMO zadana polja u jedan redak (`batch_update`). Nepoznata polja se preskaču.
+
+    Izdvojeno 1.11.2026. da ga koriste i ručna provjera i **preračun starih rezultata** —
+    do tada je taj kod bio zakopan u `primijeni_provjeru`.
     """
+    zaglavlje = [_tekst(h) for h in ws.row_values(1)]
+    paket = []
+    for naziv, vrijednost in (polja or {}).items():
+        slovo = _slovo_stupca(naziv, zaglavlje)
+        if slovo:
+            paket.append({"range": f"{slovo}{redak}", "values": [[vrijednost]]})
+    if paket:
+        ws.batch_update(paket, value_input_option="RAW")
+    return polja
+
+
+def _polja_rezultata(detalji, provjerio: str = "") -> dict:
+    """Detalji po zadatku -> polja retka `Rezultati_testova` (bodovi se ZBRAJAJU iz detalja)."""
     import json as _json
     from datetime import datetime as _dt
 
+    bodovi = round(sum(_broj(d.get("bodovi")) for d in detalji), 2)
+    maks = round(sum(_broj(d.get("max")) for d in detalji), 2)
+    ostalo = any(_tekst(d.get("status")) in ("ceka", "sumnja") for d in detalji)
+    return {
+        "detalji_json": _json.dumps(detalji, ensure_ascii=False),
+        "bodovi": bodovi,
+        "bodovi_max": maks,
+        "postotak": int(round(100 * bodovi / maks)) if maks else 0,
+        "provjera": "ceka" if ostalo else "ocjenjeno",
+        "provjerio": _tekst(provjerio),
+        "provjereno": _dt.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def primijeni_provjeru(ws, redak: int, rezultat: dict, odluke: dict, provjerio: str = "") -> dict:
+    """Upiši Cakijeve odluke u JEDAN redak rezultata i preračunaj ukupno.
+
+    `odluke` = {redni_broj_zadatka: {"status": "tocno"|"netocno"|"ceka"|"sumnja", "bodovi": broj}}
+    Pravilo: "tocno" nosi sve bodove zadatka (`max`), "netocno" 0, "ceka"/"sumnja" ostaje otvoreno.
+    **1.11.2026.:** ako je `bodovi` zadan, on ima prednost (djelomični bodovi) — `tocno` je tada
+    istina samo ako je dosegnut `max`. Time Caki može dati pola boda, a da ne mora mijenjati tip.
+    """
     detalji = detalji_iz_retka(rezultat)
     for i, d in enumerate(detalji):
         o = (odluke or {}).get(i)
@@ -2767,36 +2836,110 @@ def primijeni_provjeru(ws, redak: int, rezultat: dict, odluke: dict, provjerio: 
             continue
         st = _tekst(o.get("status")) or "netocno"
         d["status"] = st if st in ("tocno", "netocno", "ceka", "sumnja") else "netocno"
-        d["tocno"] = d["status"] == "tocno"
-        if d["status"] == "tocno":
-            d["bodovi"] = round(_broj(d.get("max")), 2)
+        maks_d = _broj(d.get("max"))
+        zadano = o.get("bodovi")
+        if zadano is not None and _tekst(zadano) != "":
+            b = min(max(_broj(zadano, 0.0), 0.0), maks_d)
+            d["bodovi"] = round(b, 2)
+            d["tocno"] = d["status"] != "netocno" and b >= maks_d - 1e-9 and bool(maks_d)
+        elif d["status"] == "tocno":
+            d["bodovi"] = round(maks_d, 2)
+            d["tocno"] = True
         elif d["status"] == "netocno":
             d["bodovi"] = 0.0
+            d["tocno"] = False
         else:
             d["bodovi"] = round(_broj(o.get("bodovi"), 0.0), 2)
+            d["tocno"] = False
 
-    bodovi = round(sum(_broj(d.get("bodovi")) for d in detalji), 2)
-    maks = round(sum(_broj(d.get("max")) for d in detalji), 2)
-    ostalo = any(_tekst(d.get("status")) in ("ceka", "sumnja") for d in detalji)
-    polja = {
-        "detalji_json": _json.dumps(detalji, ensure_ascii=False),
-        "bodovi": bodovi,
-        "postotak": int(round(100 * bodovi / maks)) if maks else 0,
-        "provjera": "ceka" if ostalo else "ocjenjeno",
-        "provjerio": _tekst(provjerio),
-        "provjereno": _dt.now().strftime("%Y-%m-%d %H:%M"),
-    }
-
-    zaglavlje = [_tekst(h) for h in ws.row_values(1)]
-    paket = []
-    for naziv, vrijednost in polja.items():
-        if naziv in zaglavlje:
-            slovo = ""
-            idx = zaglavlje.index(naziv) + 1
-            while idx > 0:
-                idx, ostatak = divmod(idx - 1, 26)
-                slovo = chr(65 + ostatak) + slovo
-            paket.append({"range": f"{slovo}{redak}", "values": [[vrijednost]]})
-    if paket:
-        ws.batch_update(paket, value_input_option="RAW")
+    polja = _polja_rezultata(detalji, provjerio)
+    upisi_u_redak(ws, redak, polja)
     return polja
+
+
+# ============================================================
+# 🧮 Preračun VEĆ PREDANIH rezultata (1.11.2026.)
+# ============================================================
+
+def odgovori_iz_retka(rezultat) -> dict:
+    """`odgovori_json` -> {redni_broj: odgovor} (JSON ključevi su stringovi → pretvori u int)."""
+    import json as _json
+
+    sirovo = (rezultat or {}).get("odgovori_json") if isinstance(rezultat, dict) else None
+    try:
+        podaci = _json.loads(str(sirovo or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(podaci, dict):
+        return {}
+    izlaz = {}
+    for k, v in podaci.items():
+        try:
+            izlaz[int(k)] = v
+        except (TypeError, ValueError):
+            continue
+    return izlaz
+
+
+def preracunaj_rezultat(rezultat, zadaci, dopusti_rucne: bool = False) -> dict:
+    """Ponovno ocijeni JEDAN već predani rezultat današnjom logikom (`provjera_odgovora`).
+
+    Zašto (Cakijev nalaz 31.10./1.11.2026.): testovi predani prije popravka nose krive bodove
+    (`\\mathrm{8.8605}` je bio 0). Odgovori su srećom SAČUVANI u `odgovori_json`, a zadaci su
+    zamrznuti u `Testovi_zakazani.zadaci_json` — pa se ocjena može pošteno preračunati.
+
+    Ništa ne upisuje. Vraća:
+      {"moze": bool, "razlog": str, "stari_bodovi", "novi_bodovi", "stari_postotak",
+       "novi_postotak", "detalji": [...], "promjene": [...]}
+    """
+    stari_bodovi = _broj((rezultat or {}).get("bodovi"))
+    stari_postotak = _broj((rezultat or {}).get("postotak"))
+    prazno = {"moze": False, "stari_bodovi": stari_bodovi, "novi_bodovi": stari_bodovi,
+              "stari_postotak": stari_postotak, "novi_postotak": stari_postotak,
+              "detalji": [], "promjene": []}
+
+    if _tekst((rezultat or {}).get("provjerio")) and not dopusti_rucne:
+        return {**prazno, "razlog": "ručno provjereno — preskočeno"}
+    if not zadaci:
+        return {**prazno, "razlog": "test nema čitljive zadatke"}
+    odgovori = odgovori_iz_retka(rezultat)
+    if not odgovori:
+        return {**prazno, "razlog": "nema sačuvanih odgovora"}
+
+    try:
+        from ocjenjivanje_pretpregled import ocjeni          # noqa: PLC0415 — lazy, bez ciklusa
+        bodovi, _maks, detalji = ocjeni(zadaci, odgovori)
+    except Exception as e:                                   # noqa: BLE001
+        return {**prazno, "razlog": f"preračun nije uspio ({type(e).__name__})"}
+
+    stari_detalji = detalji_iz_retka(rezultat)
+    promjene = []
+    for i, novi in enumerate(detalji):
+        stari = stari_detalji[i] if i < len(stari_detalji) else {}
+        prije, poslije = _broj(stari.get("bodovi")), _broj(novi.get("bodovi"))
+        if (abs(prije - poslije) > 1e-9
+                or _tekst(stari.get("status")) != _tekst(novi.get("status"))):
+            promjene.append({
+                "zadatak": i + 1,
+                "odgovor": _tekst(novi.get("odgovor")),
+                "ocekivano": _tekst(novi.get("ocekivano")),
+                "prije": prije,
+                "poslije": poslije,
+                "staro": _tekst(stari.get("status")) or "netocno",
+                "novo": _tekst(novi.get("status")),
+                "izvor": _tekst(novi.get("izvor")),
+            })
+
+    maks = round(sum(_broj(d.get("max")) for d in detalji), 2)
+    return {"moze": True, "razlog": "", "stari_bodovi": stari_bodovi, "novi_bodovi": bodovi,
+            "stari_postotak": stari_postotak,
+            "novi_postotak": int(round(100 * bodovi / maks)) if maks else 0,
+            "detalji": detalji, "promjene": promjene}
+
+
+def polja_preracuna(rezultat, zadaci, provjerio: str = "preračun") -> dict:
+    """Polja za upis preračuna (ili `{}` ako se ne može / nema što mijenjati)."""
+    rez = preracunaj_rezultat(rezultat, zadaci)
+    if not rez["moze"]:
+        return {}
+    return _polja_rezultata(rez["detalji"], provjerio)
