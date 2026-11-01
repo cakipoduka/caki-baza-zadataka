@@ -153,6 +153,45 @@ def _bez_varijable(izraz: str) -> str:
     return re.sub(r"^[a-z]=|^[a-z]:", "", izraz.strip())
 
 
+def _uparena_cjelina(izraz: str) -> bool:
+    """Je li CIJELI izraz jedna zagrada: `(a+b)` -> True, `(a)/(b)` -> False."""
+    if len(izraz) < 2 or izraz[0] != "(" or izraz[-1] != ")":
+        return False
+    dubina = 0
+    for i, znak in enumerate(izraz):
+        if znak == "(":
+            dubina += 1
+        elif znak == ")":
+            dubina -= 1
+            if dubina == 0:
+                return i == len(izraz) - 1
+    return False
+
+
+def bez_suvisnih_zagrada(izraz) -> str:
+    """Ukloni zagrade koje ne mijenjaju vrijednost: `((3-a))` -> `(3-a)`, `(3a)` -> `3a`.
+
+    Zašto (Cakijev nalaz 1.11.2026.): učenik je upisao
+    `\\mathrm{\\frac{\\left(3-a\\right)}{3a}}`, a ključ je `\\frac{3-a}{3a}` — ISTI izraz, ali
+    `\\left(…\\right)` ostavi dodatne zagrade u brojniku (`((3-a))/(3a)` prema `(3-a)/(3a)`) pa je
+    sustav rekao „sumnja". Ovim se takve zagrade ignoriraju pri usporedbi.
+
+    Namjerno usko: skida se samo zagrada koja obuhvaća CIJELI izraz i zagrada oko jednog
+    „atoma" (`(3a)`), i to samo kad ispred nje nije slovo ili zagrada — tako `f(x)` ostaje
+    `f(x)` (nije isto što i `fx`), a `(a+b)/(c+d)` se ne dira.
+    """
+    t = _tekst(izraz)
+    for _ in range(6):
+        novi = re.sub(r"\(\s*\(([^()]*)\)\s*\)", r"(\1)", t)      # ((x)) -> (x)
+        if _uparena_cjelina(novi):
+            novi = novi[1:-1]                                     # (a+b) -> a+b
+        novi = re.sub(r"(?<![\w)])\(([A-Za-z0-9.]+)\)", r"\1", novi)  # (3a) -> 3a ; f(x) ostaje
+        if novi == t:
+            return t
+        t = novi
+    return t
+
+
 # ============================================================
 # Mjerne jedinice
 # ============================================================
@@ -286,6 +325,10 @@ def _uporedi_jedan(kljuc, odgovor) -> tuple:
 
     va, vb = _bez_varijable(a), _bez_varijable(b)
     if va == vb:
+        return STATUS_TOCNO, IZVOR_ZAPIS
+    # ista formula, ali s dodatnim zagradama (\left( … \right) iz MathLive-a / Mathpix-a)
+    z1, z2 = bez_suvisnih_zagrada(va), bez_suvisnih_zagrada(vb)
+    if z1 and z1 == z2:
         return STATUS_TOCNO, IZVOR_ZAPIS
 
     ka, ua = razdvoji_jedinicu(va)
@@ -545,5 +588,6 @@ __all__ = [
     "IZVOR_ZAPIS", "IZVOR_BROJ", "IZVOR_JEDINICA", "IZVOR_AI", "IZVOR_SUMNJA",
     "OTVORENI_STATUSI", "JEDINICE_MJERNE", "UPUTA", "MODEL",
     "skini_omotace", "normalizuj", "razdvoji_jedinicu", "brojevi", "blizu",
-    "uporedi", "ai_uporedi", "sastavi_pitanje", "napravi_pozivac", "odluci", "tocno",
+    "bez_suvisnih_zagrada", "uporedi", "ai_uporedi", "sastavi_pitanje", "napravi_pozivac",
+    "odluci", "tocno",
 ]

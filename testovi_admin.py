@@ -1984,9 +1984,9 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
     m3.metric("Predaja", len(rezultati))
     m4.metric("Prosječan rezultat", f"{ukupno['prosjek']} %" if ukupno["broj"] else "—")
 
-    tab_popis, tab_rezultati, tab_ucenik, tab_zadaj, tab_baza, tab_provjere = st.tabs(
+    tab_popis, tab_rezultati, tab_ucenik, tab_zadaj, tab_baza, tab_provjere, tab_provjera = st.tabs(
         ["📋 Testovi", "📊 Rezultati", "👤 Po učeniku", "👥 Zadaj test",
-         "🎯 Spremnost baze", "🩺 Provjere"])
+         "🎯 Spremnost baze", "🩺 Provjere", "🧑‍🏫 Provjera"])
 
     # ------------------------------------------------ 📋 popis + uređivanje
     with tab_popis:
@@ -2710,6 +2710,19 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                     st.caption("Ako je odgovor promijenjen, objavi test ponovno iz Test Buildera "
                                "(nastaje nova zamrznuta kopija) i stari deaktiviraj.")
 
+    # ------------------------------------------------ 🧑‍🏫 provjera i ispravak ocjena
+    # 1.11.2026. (Cakijev zahtjev): „Spojiti provjeru rješenja s testovi karticom da sve bude na
+    # jednom mjestu." Sučelje je u `provjera_ocjena.py` (isto ga zove i stranica 18), pa se dvije
+    # kopije ne mogu razići. Uvoz je lijen — `provjera_ocjena` uvozi ovaj modul.
+    with tab_provjera:
+        try:
+            import provjera_ocjena as _po          # noqa: PLC0415
+
+            _po.prikazi(st, sheet, testovi, rezultati)
+        except Exception as e:                     # noqa: BLE001 — ne rušiti ostatak kartice
+            st.error(f"Provjera i ispravak ocjena se nije učitala ({type(e).__name__}: {e}). "
+                     f"Pokušaj osvježiti stranicu; ako se ponovi, javi Cakiju.")
+
 
 __all__ = [
     "TEST_TAB", "REZ_TAB", "REZ_HEADERS", "SERIJA_STUPAC", "STATUS_AKTIVAN", "GRANICA_CELIJE",
@@ -2743,18 +2756,17 @@ __all__ = [
 # ============================================================
 
 def link_provjere(st, tekst: str = "") -> None:
-    """🧑 Link na stranicu „Provjera i ispravak ocjena" (`pages/18_provjera_rjesenja.py`).
+    """Uputa gdje se mijenja ocjena po zadatku — tab **🧑‍🏫 Provjera** u istoj kartici.
 
-    Zašto (1.11.2026.): Caki je tražio gdje se mijenja ocjena po zadatku i **nije našao opciju** —
-    do stranice se dolazilo samo preko rezultata koji čekaju provjeru. Sada je link uz popis
-    predaja i uz popis promašenih zadataka.
+    Zašto (1.11.2026.): Caki je tražio gdje se mijenja ocjena po zadatku i **nije našao opciju**.
+    Otad je Provjera **tab u kartici 📝 Testovi** (isti ekran, ništa se ne traži u izborniku), a
+    stranica `pages/18_provjera_rjesenja.py` ostaje kao prečac.
     """
-    try:
-        st.page_link("pages/18_provjera_rjesenja.py", label="🧑‍🏫 Provjera i ispravak ocjena")
-    except Exception:                                   # noqa: BLE001 — AppTest ili stariji Streamlit
-        st.caption("🧑‍🏫 Provjera i ispravak ocjena je u lijevom izborniku.")
     if _tekst(tekst):
-        st.caption(tekst)
+        st.caption("🧑‍🏫 Provjera i ispravak ocjena je u tabu **Provjera** (gore, zadnji tab). "
+                   + _tekst(tekst))
+    else:
+        st.caption("🧑‍🏫 Provjera i ispravak ocjena je u tabu **Provjera** (gore, zadnji tab).")
 
 
 def potrebna_provjera(rezultat) -> bool:
