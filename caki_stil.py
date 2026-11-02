@@ -401,6 +401,37 @@ table.caki-tabela tbody tr:hover{ background:#F8FAFE; }
 .caki-traka .ft b{ color:var(--ck-ink2); font-weight:700; }
 .caki-traka .op{ margin-top:4px; font-size:.72rem; font-weight:600; }
 
+/* ---------- Bento kartice na 🏠 Danas (CRM) ---------- */
+/* unutar kartice metrika nije još jedna kartica — ploča je već bijela */
+[class*="st-key-caki-kartica-"] [data-testid="stMetric"]{
+  border:0 !important; box-shadow:none !important; background:transparent !important;
+  padding:0 !important; border-radius:0 !important;
+}
+[class*="st-key-caki-kartica-"] [data-testid="stButton"]{
+  display:flex; justify-content:flex-end;
+  border-top:1px solid var(--ck-crta-s); padding-top:.4rem; margin-top:.2rem;
+}
+[class*="st-key-caki-kartica-"] .stButton > button{
+  background:transparent !important;
+  border:1px solid transparent !important;
+  box-shadow:none !important;
+  color:var(--ck-plava) !important;
+  font-size:.84rem !important;
+  font-weight:600 !important;
+  padding:.3rem .55rem !important;
+  min-height:0 !important;
+  width:auto !important;
+}
+[class*="st-key-caki-kartica-"] .stButton > button:hover{
+  background:var(--ck-plava-p) !important;
+  border-color:#BFDBFE !important;
+  transform:none !important;
+  box-shadow:none !important;
+}
+[class*="st-key-caki-kartica-"] .stButton > button::after{
+  content:"↗"; margin-left:6px; font-size:.78rem; opacity:.85;
+}
+
 /* ---------- mobitel ---------- */
 @media (max-width:640px){
   .block-container, [data-testid="stMainBlockContainer"]{
