@@ -86,15 +86,18 @@ CSS = """
    CAKI tema v2 — kontrast, bijele kartice, vidljiva navigacija
    ============================================================ */
 :root{
-  --ck-plava:#227AFF; --ck-plava-t:#1461E0; --ck-plava-p:#E8F1FF;
-  --ck-ink:#0B1437; --ck-ink2:#1D2939; --ck-tekst:#475467; --ck-slabi:#667085;
-  --ck-crta:#DDE3EE; --ck-crta-s:#EDF1F7; --ck-poz:#EEF2F9;
-  --ck-sh:0 1px 3px rgba(16,24,40,.07), 0 10px 24px -18px rgba(16,24,40,.35);
+  /* CAKI tema v3 — tokeni iz Gemini/BetaCRM specifikacije (Slate + Tailwind) */
+  --ck-plava:#2563EB; --ck-plava-t:#1D4ED8; --ck-plava-p:#EFF6FF;
+  --ck-ink:#0F172A; --ck-ink2:#1E293B; --ck-tekst:#475569; --ck-slabi:#64748B;
+  --ck-crta:#E2E8F0; --ck-crta-s:#F1F5F9; --ck-poz:#F1F5F9;
+  --ck-amber:#F59E0B; --ck-amber-p:#FFFBEB;
+  --ck-sh:0 1px 3px rgba(0,0,0,.05), 0 1px 2px -1px rgba(0,0,0,.05);
+  --ck-sh-hover:0 4px 12px -2px rgba(15,23,42,.10), 0 2px 4px -2px rgba(15,23,42,.06);
 }
 
 /* ---------- podloga i tipografija ---------- */
 .stApp{
-  background:linear-gradient(180deg,#F5F8FD 0%,#E9EFF9 60%,#E4EBF7 100%) fixed;
+  background:linear-gradient(180deg,#F8FAFC 0%,#F1F5F9 45%,#EEF2F7 100%) fixed;
 }
 header[data-testid="stHeader"]{ background:transparent; }
 [data-testid="stAppDeployButton"]{ display:none !important; }
@@ -148,18 +151,22 @@ button[kind="primary"]:hover, button[kind="primaryFormSubmit"]:hover,
 /* ---------- kartice ---------- */
 [data-testid="stVerticalBlockBorderWrapper"],
 [class*="st-key-caki-"]{
-  border-radius:20px !important;
-  border:1px solid rgba(16,24,40,.06) !important;
+  border-radius:12px !important;
+  border:1px solid var(--ck-crta) !important;
   background:#fff !important;
-  box-shadow:0 1px 3px rgba(16,24,40,.07), 0 18px 36px -26px rgba(16,24,40,.45) !important;
+  box-shadow:var(--ck-sh) !important;
   padding:.3rem .45rem;
+  transition:box-shadow .15s ease, transform .15s ease;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:hover, [class*="st-key-caki-"]:hover{
+  box-shadow:var(--ck-sh-hover) !important;
 }
 /* obrasci = kartice */
 [data-testid="stForm"]{
-  border:1px solid rgba(16,24,40,.06) !important;
-  border-radius:20px !important;
+  border:1px solid var(--ck-crta) !important;
+  border-radius:12px !important;
   background:#fff !important;
-  box-shadow:0 1px 3px rgba(16,24,40,.07), 0 18px 36px -26px rgba(16,24,40,.45) !important;
+  box-shadow:var(--ck-sh) !important;
   padding:1.25rem 1.3rem 1.4rem !important;
 }
 /* u obrascu su razmaci manji — polja ne smiju „plivati" u praznom */
@@ -233,9 +240,9 @@ div[data-baseweb="popover"] li{ font-size:.88rem !important; }
 /* ---------- tabovi = segmentirana traka ---------- */
 [data-testid="stTabs"] > div:first-child,
 [data-testid="stTabs"] [data-baseweb="tab-list"]{
-  gap:4px; background:#DEE6F3; padding:5px; border-radius:14px;
-  border:1px solid #CBD6E8; overflow-x:auto; scrollbar-width:none;
-  box-shadow:inset 0 1px 2px rgba(16,24,40,.06);
+  gap:4px; background:#F1F5F9; padding:5px; border-radius:12px;
+  border:1px solid var(--ck-crta); overflow-x:auto; scrollbar-width:none;
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.04);
 }
 [data-testid="stTabs"] > div:first-child::-webkit-scrollbar{ display:none; }
 [data-testid="stTab"], [data-testid="stTabs"] button[data-baseweb="tab"]{
@@ -284,15 +291,15 @@ hr{ border-color:var(--ck-crta); margin:1.1rem 0; }
 
 /* ---------- metrike ---------- */
 [data-testid="stMetric"]{
-  background:#fff; border:1px solid var(--ck-crta); border-radius:14px;
-  padding:12px 14px; box-shadow:0 1px 2px rgba(16,24,40,.05);
+  background:#fff; border:1px solid var(--ck-crta); border-radius:12px;
+  padding:16px 18px; box-shadow:var(--ck-sh);
 }
 [data-testid="stMetricLabel"] p{
-  font-size:.68rem !important; font-weight:700 !important; letter-spacing:.07em;
+  font-size:.75rem !important; font-weight:600 !important; letter-spacing:.05em;
   text-transform:uppercase; color:var(--ck-slabi) !important;
 }
-[data-testid="stMetricValue"]{ font-size:1.45rem !important; font-weight:750 !important;
-  color:var(--ck-ink) !important; }
+[data-testid="stMetricValue"]{ font-size:1.875rem !important; font-weight:700 !important;
+  color:var(--ck-ink) !important; letter-spacing:-.02em; }
 [data-testid="stMetricValue"] > div{ white-space:normal; overflow:visible; text-overflow:clip;
   line-height:1.2; }
 
@@ -308,15 +315,17 @@ hr{ border-color:var(--ck-crta); margin:1.1rem 0; }
 .caki-grid.k3{ grid-template-columns:repeat(3,minmax(0,1fr)); }
 .caki-grid.k2{ grid-template-columns:repeat(2,minmax(0,1fr)); }
 .caki-stat{
-  background:#fff; border:1px solid var(--ck-crta); border-radius:14px; padding:13px 14px;
-  box-shadow:0 1px 2px rgba(16,24,40,.05); min-width:0;
+  background:#fff; border:1px solid var(--ck-crta); border-radius:12px; padding:16px 18px;
+  box-shadow:var(--ck-sh); min-width:0; transition:box-shadow .15s ease, transform .15s ease;
 }
-.caki-stat .l{ display:block; font-size:.66rem; font-weight:700; letter-spacing:.07em;
+.caki-stat:hover{ box-shadow:var(--ck-sh-hover); transform:translateY(-1px); }
+.caki-stat .l{ display:block; font-size:.75rem; font-weight:600; letter-spacing:.05em;
   text-transform:uppercase; color:var(--ck-slabi); }
-.caki-stat .v{ display:block; font-size:1.35rem; font-weight:750; color:var(--ck-ink);
-  letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin-top:5px; line-height:1.1; }
-.caki-stat .p{ display:block; font-size:.72rem; font-weight:600; margin-top:4px; color:var(--ck-slabi); }
-.caki-stat .p.zeleno{ color:#0E9F6E; } .caki-stat .p.narancasto{ color:#B54708; }
+.caki-stat .v{ display:block; font-size:1.875rem; font-weight:700; color:var(--ck-ink);
+  letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin-top:6px; line-height:1.15; }
+.caki-stat .p{ display:block; font-size:.75rem; font-weight:500; margin-top:5px; color:var(--ck-slabi); }
+.caki-stat .p.zeleno{ color:#047857; } .caki-stat .p.narancasto{ color:#B45309; }
+.caki-stat .p.crveno{ color:#B91C1C; }
 
 .caki-hero{
   border-radius:18px; padding:20px 22px; color:#fff; position:relative; overflow:hidden;
@@ -369,6 +378,28 @@ table.caki-tabela tbody td{
 }
 table.caki-tabela tbody tr:last-child td{ border-bottom:0; }
 table.caki-tabela tbody tr:hover{ background:#F8FAFE; }
+
+/* ---------- trake napretka (PDV limiti, iskorištenost) ---------- */
+.caki-traka-blok{
+  background:#fff; border:1px solid var(--ck-crta); border-radius:12px;
+  padding:16px 18px; box-shadow:var(--ck-sh);
+}
+.caki-traka-blok .hd{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+  margin-bottom:4px; }
+.caki-traka-blok .hd b{ font-size:.86rem; font-weight:700; color:var(--ck-ink); }
+.caki-traka-blok .hd span{ font-size:.72rem; color:var(--ck-slabi); }
+.caki-traka{ margin-top:16px; }
+.caki-traka .head{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.caki-traka .nm{ font-size:.84rem; font-weight:600; color:var(--ck-ink2);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.caki-traka .pc{ font-size:.76rem; font-weight:700; flex:0 0 auto; }
+.caki-traka .bar{ margin-top:8px; height:10px; border-radius:999px; background:#F1F5F9;
+  box-shadow:inset 0 0 0 1px var(--ck-crta); overflow:hidden; }
+.caki-traka .fill{ height:100%; border-radius:999px; transition:width .4s ease; }
+.caki-traka .ft{ margin-top:7px; display:flex; justify-content:space-between; gap:8px;
+  font-size:.72rem; color:var(--ck-slabi); font-variant-numeric:tabular-nums; }
+.caki-traka .ft b{ color:var(--ck-ink2); font-weight:700; }
+.caki-traka .op{ margin-top:4px; font-size:.72rem; font-weight:600; }
 
 /* ---------- mobitel ---------- */
 @media (max-width:640px){
@@ -451,6 +482,54 @@ def prazno_stanje(naslov: str, tekst: str, emoji: str = "📭") -> str:
         f'<div class="caki-prazno"><div class="e">{_esc(emoji)}</div>'
         f'<div class="t">{_esc(naslov)}</div><div class="s">{_esc(tekst)}</div></div>'
     )
+
+
+def napredak(stavke: list[dict], naslov: str = "", podnaslov: str = "") -> str:
+    """Trake napretka — npr. PDV limiti po subjektu (zahtjev iz Gemini/BetaCRM predloga).
+
+        st.markdown(stil.napredak([
+            {"naziv": "CAKI centar d.o.o.", "vrijednost": 55155, "limit": 60000,
+             "boja": "narancasto", "opis": "približavate se limitu"},
+        ], naslov="PDV limiti po subjektu", podnaslov="prag 60.000 € po subjektu"),
+        unsafe_allow_html=True)
+
+    `boja`: zeleno | narancasto | crveno. Postotak se računa sam (vrijednost / limit).
+    """
+    _boje = {"zeleno": "#10B981", "narancasto": "#F59E0B", "crveno": "#EF4444"}
+    _tekst = {"zeleno": "#047857", "narancasto": "#B45309", "crveno": "#B91C1C"}
+
+    def _eur(v) -> str:
+        try:
+            return f"{float(v):,.0f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+        except (TypeError, ValueError):
+            return str(v)
+
+    delovi = []
+    for s in stavke:
+        boja = s.get("boja", "zeleno")
+        boja = boja if boja in _boje else "zeleno"
+        try:
+            proc = max(0.0, min(100.0, float(s.get("vrijednost", 0)) / float(s.get("limit", 1)) * 100))
+        except (TypeError, ValueError, ZeroDivisionError):
+            proc = 0.0
+        opis = s.get("opis", "")
+        opis_html = (f'<div class="op" style="color:{_tekst[boja]}">{_esc(opis)}</div>'
+                     if opis else "")
+        delovi.append(
+            f'<div class="caki-traka">'
+            f'<div class="head"><span class="nm">{_esc(s.get("naziv", ""))}</span>'
+            f'<span class="pc" style="color:{_tekst[boja]}">{proc:.0f} %</span></div>'
+            f'<div class="bar"><div class="fill" style="width:{proc:.1f}%;'
+            f'background:{_boje[boja]}"></div></div>'
+            f'<div class="ft"><b>{_eur(s.get("vrijednost", 0))}</b>'
+            f'<span>od {_eur(s.get("limit", 0))}</span></div>'
+            f'{opis_html}</div>'
+        )
+    zag = ""
+    if naslov:
+        pod = f'<span>{_esc(podnaslov)}</span>' if podnaslov else ""
+        zag = f'<div class="hd"><b>{_esc(naslov)}</b>{pod}</div>'
+    return f'<div class="caki-traka-blok">{zag}{"".join(delovi)}</div>'
 
 
 def nav(stavke: list[str], kljuc: str = "caki_nav", zadano: int = 0):
