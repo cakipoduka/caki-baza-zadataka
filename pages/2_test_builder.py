@@ -1030,13 +1030,14 @@ with col_odabrano:
                          "identitete”), a lagan razina 3 („izračunaj 15 % od 240”).\n\n"
                          + "\n".join(f"{k} · {v} — {_BLOOM_OPIS[k]}" for k, v in _BLOOM_NAZIVI.items()))
 
-                st.caption("Kategorije vrednovanja (može više odjednom, bodovi po kategoriji):")
+                st.caption("Kategorije vrednovanja (može više odjednom, bodovi po kategoriji) — "
+                           "ⓘ uz kvačicu kaže što koja kategorija ocjenjuje:")
                 kat_cols = st.columns(3)
                 for kcol, (kod, naziv) in zip(kat_cols, KATEGORIJE_INFO):
                     with kcol:
                         odabrano_kat = st.checkbox(
                             kod, value=kod in z["kategorije"],
-                            key=f"kat_{kod}_{idx}", help=naziv,
+                            key=f"kat_{kod}_{idx}", help=predmet_config.opis_kategorije(kod, naziv),
                         )
                         if odabrano_kat:
                             z["kategorije"][kod] = st.text_input(
@@ -1176,6 +1177,10 @@ st.caption(
     "(UZV/RP/MK) i bodovi uređuju se **po zadatku** — vidi kontrole uz svaki zadatak u "
     "koloni '2. Odabrani zadaci' gore."
 )
+if KATEGORIJE_INFO:   # 4.11.2026.: što koja kategorija vrednovanja ocjenjuje (samo matematika)
+    with st.expander("ℹ️ Kategorije vrednovanja — što ocjenjuju UZV, MK i RP"):
+        for _kod, _naziv in KATEGORIJE_INFO:
+            st.markdown("- " + predmet_config.opis_kategorije(_kod, _naziv))
 
 # Gruba procjena broja stranica (§25.11, 14.9.2026.) — NIJE točan broj (stvaran
 # raspored ovisi o pdflatexu), samo orijentir PRIJE čekanja na kompajliranje.

@@ -35,6 +35,23 @@ _KATEGORIJE_MATEMATIKA = [
     ("MK", "Matematička komunikacija"),
 ]
 
+# 4.11.2026. (Cakijev tekst): što koja kategorija ocjenjuje — prikazuje se u ⓘ uz kvačicu u Test Builderu.
+OPISI_KATEGORIJA = {
+    "UZV": "Ocjenjuje razumijevanje matematičkih pojmova, odabir i provedbu ispravnih procedura, "
+           "povezivanje koncepata te provjeru ispravnosti postupaka i rezultata.",
+    "MK": "Ocjenjuje korištenje matematičkog jezika (simbola, zapisa i terminologije), prikaz i "
+          "prezentiranje podataka, prelazak između različitih prikaza te logičko organiziranje informacija.",
+    "RP": "Ocjenjuje prepoznavanje elemenata problema, naslućivanje i primjenu odabranih matematičkih "
+          "metoda te modeliranje problemskih situacija.",
+}
+
+
+def opis_kategorije(kod: str, naziv: str = "") -> str:
+    """Tekst za ⓘ: „**UZV — Usvojenost znanja i vještina**: Ocjenjuje …”."""
+    opis = OPISI_KATEGORIJA.get(kod, "")
+    glava = f"**{kod} — {naziv}**" if naziv else f"**{kod}**"
+    return f"{glava}: {opis}" if opis else glava
+
 PREDMETI = {
     "matematika": {
         "naziv": "Matematika",
