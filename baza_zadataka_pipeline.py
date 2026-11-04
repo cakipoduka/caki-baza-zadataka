@@ -130,7 +130,7 @@ def prikazi_opcije_markdown(ponudjeni_odgovori) -> str:
             continue
         if "$" in opcija:
             prikaz = opcija
-        elif _izgleda_kao_recenica(opcija):
+        elif _je_obican_tekst(opcija):
             prikaz = opcija
         else:
             prikaz = f"${opcija}$"
@@ -746,28 +746,75 @@ def _latex_to_pretext_math(text):
 def _pretext_text(raw_text):
     return _latex_to_pretext_math(_xml_escape(_normalizuj_ostatke_ocr_escapinga(raw_text)))
 
+_LATEX_NAREDBA_RE = re.compile(r"\\[a-zA-Z]+")
+
+
 def _izgleda_kao_recenica(raw):
-    """Heuristika: ako sadrži razmak I ima više slova nego brojeva/simbola, vjerojatno je
-    obična rečenica (npr. 'ne može se odrediti'), a ne matematički izraz."""
+    r"""Heuristika: ako sadrži razmak I ima više slova nego brojeva/simbola, vjerojatno je
+    obična rečenica (npr. 'ne može se odrediti'), a ne matematički izraz.
+
+    4.11.2026.: slova IZ LaTeX NAREDBI (\rangle, \cap, \langle, \cdot...) ne broje se kao
+    slova rečenice. Bez toga je intervalna i skupovna notacija spremljena BEZ $ omotača
+    (konvencija baze za ponudjeni_odgovori) ispadala "rečenica" i ispisivala se doslovno -
+    "[-1,1\rangle \cap\langle 3,5]" ima 15 slova naspram 14 ostalih znakova, iako u njemu
+    nema nijedne prave riječi. Pogađalo je i Streamlit pregled (prikazi_opcije_markdown) i
+    PDF skriptu (_pretext_math_or_text), a isto vrijedi za konacan_odgovor, rjesenje i uputa.
+
+    Naredbe se BRIŠU prije brojanja (ne cijeli izraz), pa prava rečenica s pokojom naredbom
+    ("ne postoji \infty rješenje") i dalje ostaje tekst - što je razlika u odnosu na grublje
+    pravilo u formatiraj_opciju() (pages/2_test_builder.py), koje svaki backslash proglasi
+    matematikom i takvu rečenicu bi slijepilo u "nepostojirješenje"."""
     if " " not in raw:
         return False
-    slova = sum(c.isalpha() for c in raw)
-    ostalo = len(raw) - slova
+    bez_naredbi = _LATEX_NAREDBA_RE.sub("", raw)
+    slova = sum(c.isalpha() for c in bez_naredbi)
+    ostalo = len(bez_naredbi) - slova
     return slova > ostalo
 
+_MATEMATICKI_ZNAK_RE = re.compile(r"[0-9+\-*/^_=<>\\(){}\[\]]")
+
+
+def _je_obican_tekst(raw):
+    """JEDINSTVENA odluka "ovo je običan tekst, ne matematika" za SVA polja koja baza sprema
+    BEZ $ omotača: ponudjeni_odgovori, konacan_odgovor, rjesenje, uputa i ćelije tablica.
+
+    4.11.2026.: prije je svako od tih mjesta odlučivalo po svom (rečenična heuristika za
+    opcije, zasebna provjera za ćelije tablica), pa su se razišli - jednočlana riječ kao
+    opcija ("kocka") išla je u <m> i ispadala u matematičkom kurzivu, dok je ista riječ u
+    ćeliji tablice ispravno ostajala tekst. Gore od ružnog: matematički font NEMA hrvatskih
+    slova, pa bi "stožac" ili "kružnica" xelatex tiho osakatio ("Missing character: There is
+    no ž in font cmmi9", uhvaćeno pravim PDF buildom 29.10.2026.).
+
+    Redoslijed provjera:
+    1. rečenica (razmak + pretežno slova, ne računajući LaTeX naredbe) -> tekst
+    2. ima slovo izvan ASCII-ja (č, ž, š, ć, đ) -> tekst, jer ga matematički font nema
+    3. ima broj, operator ili zagradu -> MATEMATIKA ("3x-9", "[-1,5]", "\\langle 1,3\\rangle")
+    4. inače: čista slovna riječ od barem 2 slova -> tekst ("kocka", "da", "cm")
+       Jedno slovo ostaje matematika, jer je to varijabla ("x", "n") ili oznaka odgovora ("B").
+    """
+    if _izgleda_kao_recenica(raw):
+        return True
+    if any(c.isalpha() and ord(c) > 127 for c in raw):
+        return True
+    if _MATEMATICKI_ZNAK_RE.search(raw):
+        return False
+    slova = sum(c.isalpha() for c in raw)
+    return slova >= 2 and slova == len(raw.replace(" ", ""))
+
+
 def _pretext_math_or_text(raw):
-    r"""Za polja poput ponudjeni_odgovori/konacan_odgovor koja NISU dosljedno omotana u
-    $...$ (za razliku od tekst_zadatka_latex): ako već sadrži $, ponašaj se kao _pretext_text.
-    INAČE: DEFAULT je matematika (čak i jednostavan izraz poput '3x-9' bez ^/_/\ znakova -
-    ranija verzija je to promašila kao 'obični tekst', što je u PDF izlazu gubilo prijelom
-    retka u <ol> listi), OSIM ako izraz 'izgleda kao rečenica' (ima razmake, pretežno slova) -
-    npr. 'ne može se odrediti' - tada ostaje običan tekst."""
+    r"""Za polja koja baza sprema BEZ $ omotača (ponudjeni_odgovori, konacan_odgovor,
+    rjesenje, uputa, ćelije tablica), za razliku od tekst_zadatka_latex: ako već sadrži $,
+    ponašaj se kao _pretext_text. Inače odluku donosi _je_obican_tekst - DEFAULT je
+    matematika (i goli izraz poput '3x-9' bez ^/_/\ znakova, jer ga je ranija verzija
+    promašila kao običan tekst i u PDF izlazu gubila prijelom retka u <ol> listi), a tekst
+    su rečenice i riječi."""
     if raw is None:
         return ""
     raw = _normalizuj_ostatke_ocr_escapinga(str(raw))
     if "$" in raw:
         return _pretext_text(raw)
-    if _izgleda_kao_recenica(raw):
+    if _je_obican_tekst(raw):
         return _xml_escape(raw)
     return f"<m>{_escape_postotak_u_matematici(_xml_escape(raw))}</m>"
 
@@ -867,39 +914,14 @@ def _pronadji_pipe_tablice(tekst):
     return segmenti
 
 
-_CELIJA_MATEMATICKI_ZNAK_RE = re.compile(r"[0-9+\-*/^_=<>\\(){}\[\]]")
-
-
-def _celija_je_tekst(raw):
-    """True ako je celija RIJEC ("disk", "kruznica", "Mjesec"), a ne matematicki izraz.
-
-    Zasto posebno od _pretext_math_or_text: ta funkcija golu rijec BEZ razmaka salje u <m>
-    (ispravno za "3x-9" u ponudjenim odgovorima), ali u tablici su jednoclane rijeci ceste kao
-    zaglavlje ili vrijednost - a u matematickom fontu NEMA hrvatskih slova, pa xelatex tiho
-    ispusti znak ("Missing character: There is no z in font cmmi9", uhvaceno pravim PDF
-    buildom 29.10.2026.). Redoslijed provjera: recenica -> rijec s dijakritikom -> ima
-    brojeva/operatora/zagrada (= matematika) -> cista slovna rijec od barem 2 slova."""
-    if _izgleda_kao_recenica(raw):
-        return True
-    if any(c.isalpha() and ord(c) > 127 for c in raw):
-        return True
-    if _CELIJA_MATEMATICKI_ZNAK_RE.search(raw):
-        return False
-    slova = sum(c.isalpha() for c in raw)
-    return slova >= 2 and slova == len(raw.replace(" ", ""))
-
-
 def _pretext_celija(raw):
-    r"""Jedna celija tablice. PRAZNA celija daje prazan sadrzaj (<cell></cell>), a ne <m></m> -
-    to bi u LaTeX izlazu bila prazna formula \( \). Celija koja je RIJEC ostaje obican tekst
-    (v. _celija_je_tekst), a sve ostalo ide kroz _pretext_math_or_text kao i ponudjeni
-    odgovori: $ znaci matematiku, a goli izraz ("-3", "f(x)") ide u <m> da brojevi u tablici
-    budu u matematickom fontu."""
+    r"""Jedna celija tablice. Jedina razlika u odnosu na ostala polja bez $ omotaca: PRAZNA
+    celija daje prazan sadrzaj (<cell></cell>), a ne <m></m> - to bi u LaTeX izlazu bila
+    prazna formula \( \). Sve ostalo je ista odluka kao za ponudjene odgovore (v.
+    _je_obican_tekst): rijec ostaje tekst, a izraz ("-3", "f(x)") ide u <m> da brojevi u
+    tablici budu u matematickom fontu."""
     if raw is None or not str(raw).strip():
         return ""
-    raw = _normalizuj_ostatke_ocr_escapinga(str(raw))
-    if "$" not in raw and _celija_je_tekst(raw):
-        return _xml_escape(raw)
     return _pretext_math_or_text(raw)
 
 

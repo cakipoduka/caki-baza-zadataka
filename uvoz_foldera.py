@@ -37,7 +37,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Europe/Zagreb")
-PROMPT_VERZIJA = "uvoz-2026-10-15"
+PROMPT_VERZIJA = "uvoz-2026-11-04"
 CACHE_FOLDER_NAZIV = "_uvoz_cache"
 IZVOR_TIPOVI = ["matura", "zbirka", "udzbenik", "vlastiti_materijal", "fakultet"]
 
@@ -234,7 +234,12 @@ D9. ZAPIS (LaTeX) - pravila baze
 - \frac{a}{b}; mješoviti broj $2\frac{1}{3}$; \sqrt{5}, \sqrt[3]{x}; kut $45^\circ$, \angle ABC, \triangle ABC, \overline{AB}, \perp, \parallel.
 - Hrvatska slova č ć š đ ž piši izravno (ne \v{c}). U običnom tekstu (izvan $) posebni znakovi se escapeaju: \% \& \# \_ \$.
 - Redni brojevi i godine ("5. razred", "2026.") ostaju običan tekst. Brojevi koji su podatak zadatka (mjere, količine, računi) idu u $...$.
-- Tablice: \begin{tabular}{...} s točnim brojem stupaca; formule u ćelijama u $...$; ako ne možeš sigurno rekonstruirati: "TABLICA: provjeri".
+- Tablice: ISKLJUČIVO markdown pipe format, NIKAD \begin{tabular} (skripta ga ne zna složiti, a znakovi & se usput pokvare).
+  Redak zaglavlja, ispod njega redak razdjelnika, pa redci podataka - svaki u SVOM retku (\n), i tablicu odvoji praznim
+  retkom od okolnog teksta. Primjer tri retka: "| $x$ | -3 | 0 |" pa "| :--- | :--- | :--- |" pa "| $f(x)$ | 2 | 5 |".
+  SVAKI redak mora imati ISTI broj stupaca - ako se ne poklapaju, tablica se uopće ne prikaže kao tablica. Prazna ćelija
+  ostaje prazna ("| 2 |  |"). Ako izvorna tablica nema redak zaglavlja, prvi redak podataka posluži kao zaglavlje.
+  Formule u ćelijama u $...$; ako ne možeš sigurno rekonstruirati: "TABLICA: provjeri".
 - Svaki $ mora imati par, svaka { svoju }, svaki \left svoj \right, svaki \begin svoj \end.
 - NE prepisuj u tekst zadatka: broj zadatka na početku, bodove u zagradi, "Odgovor: ____", crte za upis, oznake opcija, rješenje.
 - Ne mijenjaj redoslijed riječi, ne skraćuj, ne dopunjuj, ne "poboljšavaj" formulaciju i ne ispravljaj sumnjive brojeve: vjerno prepiši.
@@ -276,7 +281,7 @@ prostorne dijagonale kocke ako je brid $a=5$? A) 5 B) $5 \sqrt{2}$ C) $5 \sqrt{3
 (oznake točaka "A B C D E F G H" ispod slike NISU tekst zadatka)
 
 Primjer 2 - set. Ulaz: "Za zadatke 6. i 7. koristi tablicu. [tablica] 6. Koliko je učenika ukupno? 7. Koji je razred najbrojniji? A) 5.a B) 5.b C) 5.c". Izlaz:
-{"privremeni_broj": "6-7", "uloga": "skupina", "tekst_zadatka_latex": "Koristi tablicu. \\begin{tabular}{|c|c|} ... \\end{tabular}"},
+{"privremeni_broj": "6-7", "uloga": "skupina", "tekst_zadatka_latex": "Koristi tablicu.\n\n| Razred | Broj učenika |\n| --- | --- |\n| 5.a | 24 |\n| 5.b | 22 |\n| 5.c | 25 |"},
 {"privremeni_broj": "6", "uloga": "stavka", "roditelj_privremeni_broj": "6-7", "oznaka_stavke": "6", "tekst_zadatka_latex": "Koliko je učenika ukupno?", "tip_zadatka": "kratki_odgovor"},
 {"privremeni_broj": "7", "uloga": "stavka", "roditelj_privremeni_broj": "6-7", "oznaka_stavke": "7", "tekst_zadatka_latex": "Koji je razred najbrojniji?", "tip_zadatka": "visestruki_izbor", "ponudjeni_odgovori": ["5.a", "5.b", "5.c"]}
 

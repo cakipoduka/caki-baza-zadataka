@@ -22,7 +22,7 @@ import streamlit as st
 import predmet_config
 import uvoz_foldera as uf
 from baza_zadataka_pipeline import (
-    _izgleda_kao_recenica,
+    _je_obican_tekst,
     build_sifrarnik_potpoglavlja_text,
     build_sifrarnik_text,
     get_biblioteke_izvora,
@@ -240,10 +240,11 @@ def _prikazi_bez_dolar(v: str) -> str:
     """Prikaz za polja koja baza sprema BEZ $ omotaca (npr. konacan_odgovor kod
     kratki_odgovor/prosireni_odgovor - isto pravilo kao ponudjeni_odgovori, v. D6 u
     sistemskom promptu u uvoz_foldera.py). Ista heuristika kao prikazi_opcije_markdown()
-    u baza_zadataka_pipeline.py (ako vec ima $, ostavi; ako izgleda kao recenica, ostavi
-    kao tekst; inace omotaj u $...$), samo bez A)/B) prefiksa jer je ovo JEDNA vrijednost."""
+    u baza_zadataka_pipeline.py (ako vec ima $, ostavi; ako je obican tekst - recenica ili
+    rijec - ostavi kao tekst; inace omotaj u $...$), samo bez A)/B) prefiksa jer je ovo
+    JEDNA vrijednost."""
     v = (v or "").strip()
-    if not v or "$" in v or _izgleda_kao_recenica(v):
+    if not v or "$" in v or _je_obican_tekst(v):
         return v
     return f"${v}$"
 
