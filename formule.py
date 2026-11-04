@@ -111,33 +111,50 @@ def novi_id(postojeci=()) -> str:
     raise RuntimeError("Ne mogu složiti jedinstven ID formule.")
 
 
-def dodaj_formulu(sheet, *, naslov: str, tekst_latex: str = "", cjelina: str = "", paket: str = "",
-                  datoteka: str = "", opis: str = "", aktivno: bool = True) -> dict:
-    naslov = _tekst(naslov)
-    tekst_latex = _tekst(tekst_latex)
-    datoteka = _tekst(datoteka)
+def _provjeri_sadrzaj(naslov: str, tekst_latex: str, datoteka: str) -> None:
+    """Pravila koja vrijede za SVAKI redak — bez ijednog poziva prema Sheetsu."""
     if not naslov:
         raise ValueError("Formula treba naziv.")
     if not tekst_latex and not datoteka:
         raise ValueError("Formula treba sadržaj — LaTeX ILI datoteku (PDF/slika) iz Drivea.")
     if len(tekst_latex) > MAX_FORMULA_ZNAKOVA:
         raise ValueError(f"Formula je predugačka (>{MAX_FORMULA_ZNAKOVA} znakova).")
+
+
+def _slozi_redak(*, formula_id: str, naslov: str, tekst_latex: str = "", cjelina: str = "",
+                 paket: str = "", datoteka: str = "", opis: str = "", aktivno: bool = True) -> dict:
+    """Jedan redak taba `Formule` — čisti podaci, bez mreže (da se može slagati u paketu)."""
+    return {
+        "formula_id": formula_id,
+        "naslov": _tekst(naslov),
+        "cjelina": _cjeline(cjelina),
+        "paket": _tekst(paket),
+        "tekst_latex": _tekst(tekst_latex),
+        "datoteka": _tekst(datoteka),
+        "opis": _tekst(opis)[:300],
+        "aktivno": "Da" if aktivno else "Ne",
+        "kreirano": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def _kljuc_duplikata(naslov, paket) -> tuple:
+    return (_tekst(naslov).casefold(), _tekst(paket).casefold())
+
+
+def dodaj_formulu(sheet, *, naslov: str, tekst_latex: str = "", cjelina: str = "", paket: str = "",
+                  datoteka: str = "", opis: str = "", aktivno: bool = True) -> dict:
+    naslov = _tekst(naslov)
+    tekst_latex = _tekst(tekst_latex)
+    datoteka = _tekst(datoteka)
+    _provjeri_sadrzaj(naslov, tekst_latex, datoteka)
     ws = osiguraj_tab(sheet)
     try:
         postojeci = [_tekst(v) for v in ws.col_values(1)]
     except Exception:                                   # noqa: BLE001
         postojeci = []
-    redak = {
-        "formula_id": novi_id(postojeci),
-        "naslov": naslov,
-        "cjelina": _cjeline(cjelina),
-        "paket": _tekst(paket),
-        "tekst_latex": tekst_latex,
-        "datoteka": datoteka,
-        "opis": _tekst(opis)[:300],
-        "aktivno": "Da" if aktivno else "Ne",
-        "kreirano": datetime.now().strftime("%Y-%m-%d %H:%M"),
-    }
+    redak = _slozi_redak(formula_id=novi_id(postojeci), naslov=naslov, tekst_latex=tekst_latex,
+                         cjelina=cjelina, paket=paket, datoteka=datoteka, opis=opis,
+                         aktivno=aktivno)
     # Piše se po STVARNOM zaglavlju taba: ako je stupac dopisan na kraj, vrijednosti i dalje
     # sjedaju pod svoje ime (22.10.2026., Cakijev nalaz s PDF-om koji „nestane”).
     _zaglavlje = [_tekst(h) for h in ws.row_values(1)] or list(FORMULE_HEADERS)
@@ -219,18 +236,68 @@ def iz_teksta(blok: str) -> tuple[list[dict], list[str]]:
     return redci, greske
 
 
-def dodaj_vise(sheet, blok: str, paket: str = "") -> tuple[int, list[str]]:
-    """Dodaj sve formule iz višerednog unosa. Vraća (koliko_dodano, greške)."""
+def dodaj_vise(sheet, blok: str, paket: str = "",
+               preskoci_duplikate: bool = True) -> tuple[int, list[str]]:
+    """Dodaj sve formule iz višerednog unosa — **u jednom zapisu**. Vraća (koliko_dodano, poruke).
+
+    4.11.2026. (Cakijev nalaz: uvoz 54 formule pao s `APIError [429] Quota exceeded`):
+    prije se za svaku formulu zvao `dodaj_formulu`, a on radi ~3 čitanja + 1 pisanje prema
+    Sheetsu. Na 54 retka to je ~200 poziva u par sekundi, a Google dopušta 60 čitanja/min
+    po korisniku. Sada se zaglavlje i postojeći reci pročitaju **jednom**
+    (`get_all_values`), svi se redci slože u memoriji i upišu **jednim** `append_rows`.
+
+    `preskoci_duplikate` — formula s istim nazivom u istom paketu se ne dodaje dvaput, pa se
+    prekinuti uvoz smije mirno ponoviti: dopuni se samo ono što fali.
+    """
     redci, greske = iz_teksta(blok)
-    dodano = 0
+    if not redci:
+        return 0, greske
+
+    ws = osiguraj_tab(sheet)
+    try:                                                # JEDNO čitanje za sve što treba
+        sve = ws.get_all_values()
+    except Exception:                                   # noqa: BLE001
+        sve = []
+    zaglavlje = [_tekst(h) for h in (sve[0] if sve else [])] or list(FORMULE_HEADERS)
+
+    def _stupac(ime, zadano):
+        return zaglavlje.index(ime) if ime in zaglavlje else zadano
+
+    i_id, i_naslov, i_paket = _stupac("formula_id", 0), _stupac("naslov", 1), _stupac("paket", 3)
+    idovi, vidjeni = set(), set()
+    for red in sve[1:]:
+        def _celija(i):
+            return _tekst(red[i]) if i < len(red) else ""
+        if _celija(i_id):
+            idovi.add(_celija(i_id))
+        if _celija(i_naslov):
+            vidjeni.add(_kljuc_duplikata(_celija(i_naslov), _celija(i_paket)))
+
+    matrica, preskoceno = [], 0
     for r in redci:
+        naslov, latex, datoteka = r["naslov"], r["tekst_latex"], r["datoteka"]
         try:
-            dodaj_formulu(sheet, naslov=r["naslov"], cjelina=r["cjelina"],
-                          tekst_latex=r["tekst_latex"], datoteka=r["datoteka"], paket=paket)
-            dodano += 1
+            _provjeri_sadrzaj(naslov, latex, datoteka)
         except ValueError as e:
-            greske.append(f"{r['naslov']}: {e}")
-    return dodano, greske
+            greske.append(f"{naslov}: {e}")
+            continue
+        kljuc = _kljuc_duplikata(naslov, paket)
+        if preskoci_duplikate and kljuc in vidjeni:
+            preskoceno += 1
+            continue
+        vidjeni.add(kljuc)
+        redak = _slozi_redak(formula_id=novi_id(idovi), naslov=naslov, tekst_latex=latex,
+                             cjelina=r["cjelina"], paket=paket, datoteka=datoteka)
+        idovi.add(redak["formula_id"])
+        matrica.append([redak.get(h, "") for h in zaglavlje])
+
+    if preskoceno:
+        greske.append(f"ℹ️ Preskočeno {preskoceno} formula — već postoje u paketu "
+                      f"„{_tekst(paket) or '(bez paketa)'}” (isti naziv).")
+    if not matrica:
+        return 0, greske
+    ws.append_rows(matrica, value_input_option="RAW")   # JEDAN zapis za sve retke
+    return len(matrica), greske
 
 
 def paketi(formule) -> list[str]:

@@ -110,8 +110,13 @@ with st.expander("📥 Uvezi više formula odjednom (copy/paste)"):
     _blok = st.text_area("Formule (jedna po retku)", height=220, key="f_bulk_blok",
                          placeholder="Kvadratna formula || Kvadratna jednadžba || "
                                      "x_{1,2}=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}")
+    _bez_duplikata = st.checkbox("Preskoči formule koje već postoje (isti naziv + paket)",
+                                 value=True, key="f_bulk_dupli",
+                                 help="Drži ovo uključeno pa se prekinuti uvoz smije ponoviti — "
+                                      "dopuni se samo ono što fali.")
     if st.button("📥 Uvezi sve", key="f_bulk_uvoz", type="primary"):
-        _dodano, _greske = F.dodaj_vise(sheet, _blok, paket=_paket_bulk)
+        _dodano, _greske = F.dodaj_vise(sheet, _blok, paket=_paket_bulk,
+                                        preskoci_duplikate=_bez_duplikata)
         if _dodano:
             st.success(f"✅ Uvezeno {_dodano} formula u paket „{_paket_bulk}”.")
         for _g in _greske[:10]:

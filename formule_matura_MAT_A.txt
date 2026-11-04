@@ -1,0 +1,80 @@
+# ============================================================
+# Knjižica formula — DRŽAVNA MATURA, Matematika A (MATA.69.HR.R.T2.08)
+# Format: Naziv || cjelina1; cjelina2 || LaTeX
+# Paket upiši u polje „Paket za sve uvezene formule", npr. Matura 2026 — službene
+# Nazive cjelina po potrebi preimenuj da odgovaraju šifrarniku tvoje baze.
+# ============================================================
+
+# --- KOMPLEKSNI BROJEVI ---
+Kompleksni broj — algebarski zapis || Kompleksni brojevi || z=a+bi,\ a,b\in\mathbb{R},\ i^2=-1,\quad \bar{z}=a-bi,\quad |z|=\sqrt{a^2+b^2}
+Kompleksni broj — trigonometrijski zapis || Kompleksni brojevi || z=r(\cos\varphi+i\sin\varphi),\quad \varphi\in[0,2\pi\rangle
+Umnožak kompleksnih brojeva || Kompleksni brojevi || z_1\cdot z_2=r_1r_2\left(\cos(\varphi_1+\varphi_2)+i\sin(\varphi_1+\varphi_2)\right)
+Kvocijent kompleksnih brojeva || Kompleksni brojevi || \frac{z_1}{z_2}=\frac{r_1}{r_2}\left(\cos(\varphi_1-\varphi_2)+i\sin(\varphi_1-\varphi_2)\right)
+Potenciranje kompleksnog broja (Moivre) || Kompleksni brojevi || z^n=r^n(\cos n\varphi+i\sin n\varphi)
+
+# --- POTENCIJE, KORIJENI, ALGEBARSKI IZRAZI ---
+Pravila za potencije i korijene || Potencije i korijeni || a^m\cdot a^n=a^{m+n},\quad a^m:a^n=a^{m-n}\ (a\neq 0),\quad a^{-m}=\frac{1}{a^m}\ (a\neq 0),\quad \sqrt[n]{a^m}=a^{\frac{m}{n}}
+Kvadrat binoma || Algebarski izrazi || (a\pm b)^2=a^2\pm 2ab+b^2
+Kub binoma || Algebarski izrazi || (a\pm b)^3=a^3\pm 3a^2b+3ab^2\pm b^3
+Razlika kvadrata || Algebarski izrazi || a^2-b^2=(a-b)(a+b)
+Zbroj i razlika kubova || Algebarski izrazi || a^3\pm b^3=(a\pm b)(a^2\mp ab+b^2)
+Binomni koeficijent || Kombinatorika || \binom{n}{k}=\frac{n!}{k!\,(n-k)!}
+
+# --- KVADRATNA JEDNADŽBA I FUNKCIJA ---
+Kvadratna formula || Kvadratna jednadžba || ax^2+bx+c=0,\ a\neq 0\ \Rightarrow\ x_{1,2}=\frac{-b\pm\sqrt{b^2-4ac}}{2a}
+Vièteove formule || Kvadratna jednadžba || x_1+x_2=-\frac{b}{a},\quad x_1\cdot x_2=\frac{c}{a}
+Tjeme parabole || Kvadratna funkcija || T\left(-\frac{b}{2a},\ \frac{4ac-b^2}{4a}\right)
+
+# --- LOGARITMI ---
+Logaritam — definicija || Logaritmi || b^x=a\iff x=\log_b a,\quad \log_b b^x=x=b^{\log_b x}
+Logaritam umnoška i kvocijenta || Logaritmi || \log_b(xy)=\log_b x+\log_b y,\quad \log_b\frac{x}{y}=\log_b x-\log_b y
+Logaritam potencije || Logaritmi || \log_b x^y=y\log_b x
+Prijelaz na drugu bazu || Logaritmi || \log_a x=\frac{\log_b x}{\log_b a}
+
+# --- PLANIMETRIJA ---
+Površina trokuta || Planimetrija || P=\frac{a\cdot v_a}{2},\quad P=\sqrt{s(s-a)(s-b)(s-c)},\quad s=\frac{a+b+c}{2}
+Površina trokuta — ostale formule || Planimetrija || P=\frac{ab\sin\gamma}{2},\quad P=\frac{abc}{4r_o},\quad P=r_u\,s
+Jednakostraničan trokut || Planimetrija || P=\frac{a^2\sqrt{3}}{4},\quad v=\frac{a\sqrt{3}}{2},\quad r_o=\frac{2}{3}v,\quad r_u=\frac{1}{3}v
+Površina paralelograma || Planimetrija || P=a\cdot v
+Površina trapeza || Planimetrija || P=\frac{a+c}{2}\cdot v
+Površina kruga || Planimetrija || P=r^2\pi
+Opseg kruga || Planimetrija || O=2r\pi
+Površina kružnoga isječka || Planimetrija || P=\frac{r^2\pi\alpha}{360^\circ}
+Duljina kružnoga luka || Planimetrija || l=\frac{r\pi\alpha}{180^\circ}
+
+# --- STEREOMETRIJA ---
+Oznake za tijela || Stereometrija || B=\text{površina osnovke (baze)},\quad P=\text{površina pobočja (plašta)},\quad h=\text{duljina visine}
+Obujam prizme i valjka || Stereometrija || V=B\cdot h
+Oplošje prizme i valjka || Stereometrija || O=2B+P
+Obujam piramide i stošca || Stereometrija || V=\frac{1}{3}B\cdot h
+Oplošje piramide || Stereometrija || O=B+P
+Oplošje stošca || Stereometrija || O=r^2\pi+r\pi s,\quad r=\text{polumjer osnovke},\ s=\text{duljina izvodnice}
+Obujam kugle || Stereometrija || V=\frac{4}{3}r^3\pi
+Oplošje kugle || Stereometrija || O=4r^2\pi
+
+# --- TRIGONOMETRIJA ---
+Omjeri u pravokutnom trokutu || Trigonometrija || \sin\alpha=\frac{\text{duljina nasuprotne katete}}{\text{duljina hipotenuze}},\quad \cos\alpha=\frac{\text{duljina priležeće katete}}{\text{duljina hipotenuze}},\quad \operatorname{tg}\alpha=\frac{\text{duljina nasuprotne katete}}{\text{duljina priležeće katete}}
+Poučak o sinusima || Trigonometrija || \frac{a}{\sin\alpha}=\frac{b}{\sin\beta}=\frac{c}{\sin\gamma}
+Poučak o kosinusu || Trigonometrija || c^2=a^2+b^2-2ab\cos\gamma
+Osnovni trigonometrijski identitet || Trigonometrija || \sin^2 x+\cos^2 x=1,\quad \operatorname{tg} x=\frac{\sin x}{\cos x}
+Vrijednosti sinusa za 30°, 45° i 60° || Trigonometrija || \sin\frac{\pi}{6}=\frac{1}{2},\quad \sin\frac{\pi}{4}=\frac{\sqrt{2}}{2},\quad \sin\frac{\pi}{3}=\frac{\sqrt{3}}{2}
+
+# --- ANALITIČKA GEOMETRIJA I VEKTORI ---
+Udaljenost dviju točaka || Analitička geometrija || d(T_1,T_2)=\sqrt{(x_2-x_1)^2+(y_2-y_1)^2}
+Polovište dužine || Analitička geometrija || P\left(\frac{x_1+x_2}{2},\ \frac{y_1+y_2}{2}\right)
+Vektor zadan točkama || Vektori; Analitička geometrija || \overrightarrow{T_1T_2}=\vec{a}=(x_2-x_1)\vec{i}+(y_2-y_1)\vec{j}=a_1\vec{i}+a_2\vec{j}
+Skalarni umnožak vektora || Vektori || \vec{a}\cdot\vec{b}=|\vec{a}|\cdot|\vec{b}|\cdot\cos\alpha,\quad \vec{a}\cdot\vec{b}=a_1b_1+a_2b_2
+Jednadžba pravca || Analitička geometrija || y-y_1=k(x-x_1),\quad k=\frac{y_2-y_1}{x_2-x_1}
+Kut između dvaju pravaca || Analitička geometrija || \operatorname{tg}\alpha=\left|\frac{k_2-k_1}{1+k_1k_2}\right|
+Udaljenost točke od pravca || Analitička geometrija || d(T,p)=\frac{|Ax_1+By_1+C|}{\sqrt{A^2+B^2}}
+Jednadžba kružnice || Analitička geometrija || (x-p)^2+(y-q)^2=r^2
+
+# --- NIZOVI ---
+Aritmetički niz || Nizovi || a_n=a_1+(n-1)\cdot d,\quad S_n=\frac{n}{2}(a_1+a_n)
+Geometrijski niz || Nizovi || a_n=a_1\cdot q^{\,n-1},\quad S_n=a_1\cdot\frac{q^n-1}{q-1}
+
+# --- DERIVACIJE ---
+Derivacija umnoška || Derivacije || (f\cdot g)'=f'\cdot g+f\cdot g'
+Derivacija kvocijenta || Derivacije || \left(\frac{f}{g}\right)'=\frac{f'\cdot g-f\cdot g'}{g^2}
+Tangenta na graf funkcije || Derivacije || y-y_1=f'(x_1)\cdot(x-x_1)
+Tablica derivacija || Derivacije || c'=0,\quad (x^n)'=n\cdot x^{n-1},\ n\neq 0,\quad (\sin x)'=\cos x,\quad (\cos x)'=-\sin x,\quad (\operatorname{tg} x)'=\frac{1}{\cos^2 x}
