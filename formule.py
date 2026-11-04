@@ -101,14 +101,28 @@ def load_formule(sheet) -> list[dict]:
 
 
 def novi_id(postojeci=()) -> str:
+    """Sljedeći slobodan ID oblika `F<ggmmdd>-<broj>`.
+
+    4.11.2026. (pad `RuntimeError: Ne mogu složiti jedinstven ID formule`): stara verzija je
+    broj računala kao `len(postojeci) + 1` i, kad je taj ID bio zauzet, radila
+    `postojeci.add(kandidat)` — a dodavanje već postojećeg člana ne mijenja veličinu skupa,
+    pa je 200 puta vrtjela **isti** kandidat i pukla. Dovoljan je bio jedan prekid u
+    numeraciji (npr. obrisana formula): 10 ID-eva numeriranih 1–6, 8–11 → kandidat 11 zauzet.
+
+    Sada se kreće od najvećeg današnjeg broja i brojač se **uvijek** pomiče, pa petlja završi.
+    """
     danas = datetime.now().strftime("%y%m%d")
     postojeci = {_tekst(x) for x in (postojeci or ()) if _tekst(x)}
-    for _ in range(200):
-        kandidat = f"F{danas}-{len(postojeci) + 1}"
-        if kandidat not in postojeci:
-            return kandidat
-        postojeci.add(kandidat)
-    raise RuntimeError("Ne mogu složiti jedinstven ID formule.")
+    prefiks = f"F{danas}-"
+    najveci = 0
+    for x in postojeci:
+        rep = x[len(prefiks):] if x.startswith(prefiks) else ""
+        if rep.isdigit():
+            najveci = max(najveci, int(rep))
+    broj = najveci + 1
+    while f"{prefiks}{broj}" in postojeci:              # uvijek napreduje → nema vrtnje u mjestu
+        broj += 1
+    return f"{prefiks}{broj}"
 
 
 def _provjeri_sadrzaj(naslov: str, tekst_latex: str, datoteka: str) -> None:
