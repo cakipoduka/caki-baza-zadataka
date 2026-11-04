@@ -144,3 +144,64 @@ def _citljivo(odlomak: str) -> str:
     odlomak = re.sub(r"!!(.+?)!!", r"**\1**", odlomak, flags=re.DOTALL)
     odlomak = re.sub(r"\\pojam\{([^}]+)\}", r"*\1*", odlomak)
     return odlomak
+
+
+# ============================================================
+# LaTeX izlaz (4.11.2026., stranica „Skripta (LaTeX)")
+#
+# Isti markup, drugi cilj: pages/19_skripta_latex.py gradi PDF IZRAVNO pdflatexom
+# (ne preko PreTeXt-a), pa mu trebaju LaTeX naredbe umjesto PreTeXt tagova:
+#     !!istaknuto!!     -> \cakiistakni{...}     (podebljano; boja je u skripti crna,
+#                                                 pa isticanje nosi OBLIK slova, ne boja)
+#     \pojam{Naziv}     -> \cakipojam{...}       (podebljani kurziv)
+#     [RJESENJE]...     -> \cakiteorijarjesenje{...}  (SAMO verzija "profesor")
+# Sve tri naredbe definirane su u pages/caki-skripta.sty.
+#
+# Funkcije iznad (teorija_u_ptx_odlomke, ukloni_markup_za_pregled) NISU DIRANE -
+# PreTeXt staza (pages/4_skripta.py + skripta_build.py) radi točno kao prije.
+# Dijeljenje na segmente/odlomke namjerno koristi ISTE pomoćne funkcije
+# (_segmentiraj, _odlomci), da se pravila "što je odlomak" i "gdje počinje
+# [RJESENJE] blok" nikad ne raziđu između dva izlaza.
+# ============================================================
+
+def _zamijeni_inline_latex(tekst: str, render=lambda s: s) -> str:
+    """Kao _zamijeni_inline_oznake, ali umeće LaTeX naredbe umjesto <alert>/<term>.
+    render() se primjenjuje SAMO na obican tekst i na sadrzaj unutar markera - NIKAD na
+    same naredbe koje ova funkcija umece (inace bi escape pojeo backslash)."""
+    dijelovi = []
+    zadnji = 0
+    for m in _KOMBINIRANI_INLINE_RE.finditer(tekst):
+        dijelovi.append(render(tekst[zadnji:m.start()]))
+        if m.group("alert") is not None:
+            dijelovi.append(f"\\cakiistakni{{{render(m.group('alert'))}}}")
+        else:
+            dijelovi.append(f"\\cakipojam{{{render(m.group('pojam'))}}}")
+        zadnji = m.end()
+    dijelovi.append(render(tekst[zadnji:]))
+    return "".join(dijelovi)
+
+
+def teorija_u_latex_odlomke(tekst: str, verzija: str = "ucenik", render=lambda s: s) -> list:
+    """Pretvara sirovi tekst_teorije_latex u listu LaTeX odlomaka (bez omota - pozivatelj ih
+    spaja praznim retkom, sto je u LaTeXu novi odlomak).
+
+    render: funkcija primijenjena na obican tekst prije umetanja naredbi - proslijedi
+    latex_tekst.escape_outside_math za stvaran izlaz ($...$ ostaje, ostalo se escapira).
+    Zadano: identity (korisno za testove).
+
+    verzija="ucenik"   (zadano) - [RJESENJE] blokovi se PRESKACU u cijelosti.
+    verzija="profesor"          - [RJESENJE] blokovi ostaju, u \\cakiteorijarjesenje{...}.
+    """
+    _provjeri_verziju(verzija)
+    rezultat = []
+    for vrsta, sadrzaj in _segmentiraj(tekst):
+        if vrsta == "tekst":
+            rezultat.extend(_zamijeni_inline_latex(o, render) for o in _odlomci(sadrzaj))
+        elif verzija == "profesor":
+            unutarnji = "\\par\n".join(
+                _zamijeni_inline_latex(o, render) for o in _odlomci(sadrzaj)
+            )
+            if unutarnji:
+                rezultat.append(f"\\cakiteorijarjesenje{{{unutarnji}}}")
+        # verzija == "ucenik" i vrsta == "rjesenje" -> namjerno se nista ne dodaje
+    return rezultat

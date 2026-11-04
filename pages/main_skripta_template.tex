@@ -1,0 +1,35 @@
+% ============================================================
+%  CAKI SKRIPTA (LaTeX) — generirani dokument
+%  Ovu datoteku Streamlit pages/19_skripta_latex.py generira automatski, običnim
+%  string-replace-om placeholdera prije kompajliranja.
+%
+%  VAŽNO za buduće izmjene ove datoteke (naučeno 25.8.2026. na testnom predlošku):
+%  nazivi placeholdera u kodu ispod NIKAD se ne pišu doslovno (s dvostrukim
+%  vitičastim zagradama) igdje drugdje u ovoj datoteci — ni u komentaru ni u
+%  tekstu. Python .replace() je "slijep" i zamijenio bi SVAKU pojavu tog točnog
+%  niza znakova, uključujući onu u komentaru; neke vrijednosti sadrže prave
+%  novo-redove, pa bi takva zamjena usred komentara slomila cijelu preambulu.
+%
+%  Popis zamjena (opisno, bez doslovnog zapisa): oznaka dvostranog ispisa u
+%  opcijama documentclassa, predmet u zaglavlju, geometrija stranice, naziv u
+%  tekućem zaglavlju, naslov, podnaslov, datum i legenda težina.
+% ============================================================
+
+\documentclass[11pt, a4paper{{DVOSTRANO}}]{article}
+\newcommand{\cakipredmet}{{{PREDMET_ZAGLAVLJE}}}
+\usepackage{caki-skripta}
+
+% Margine: s uvezom (obostrani ispis) ili simetrične 1.3 cm — v. caki-skripta.sty §2
+{{GEOMETRIJA}}
+
+% Tekuće zaglavlje: naziv skripte lijevo, tekuća cjelina desno (\markright iz
+% \cakicjelina), broj stranice na vanjskom rubu — v. caki-skripta.sty §3
+\cakiskriptazaglavlje{ {{NASLOV_ZAGLAVLJE}} }
+
+\begin{document}
+
+\cakiskriptahead{ {{NASLOV}} }{ {{PODNASLOV}} }{ {{DATUM}} }{ {{LEGENDA}} }
+
+\input{generated/skripta_body}
+
+\end{document}
