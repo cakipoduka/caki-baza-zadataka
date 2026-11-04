@@ -425,7 +425,7 @@ def _skripta_iz_knjige():
 
     verzija_tablice = st.session_state.get(f"{stanje_kljuc}_v", 0)
     uredeno = st.data_editor(
-        tablica, hide_index=True, use_container_width=True,
+        tablica, hide_index=True, width="stretch",
         key=f"skripta_knjiga_tablica_{PREDMET}_{knjiga}_{verzija_tablice}",
         column_config={
             "Uključi": st.column_config.CheckboxColumn("Uključi", width="small"),
@@ -451,13 +451,13 @@ def _skripta_iz_knjige():
 
     k1, k2 = st.columns([1, 2])
     with k1:
-        if st.button("🔀 Primijeni redoslijed", use_container_width=True,
+        if st.button("🔀 Primijeni redoslijed", width="stretch",
                      help="Sortiraj tablicu po stupcu Redoslijed."):
             plan.sort(key=lambda p: (float(p["redoslijed"]), _poglavlje_sort_key(p["kljuc"])))
             st.session_state[f"{stanje_kljuc}_v"] = verzija_tablice + 1
             st.rerun()
     with k2:
-        if st.button("💾 Spremi plan i tipove u bazu", use_container_width=True):
+        if st.button("💾 Spremi plan i tipove u bazu", width="stretch"):
             if _spremi_sve(plan, spremljeno):
                 st.success("✅ Spremljeno (plan u 'Sifrarnik_poglavlja_knjige', tipovi u 'Zadaci').")
 
@@ -521,7 +521,7 @@ def _skripta_iz_knjige():
     verzija_stavke = st.session_state.get(f"{stanje_kljuc}_stavke_v_{odabrano}", 0)
     uredeno_stavke = st.data_editor(
         df_stavke.drop(columns=["_id", "_tip_ef", "_tip_baza"]), hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key=f"skripta_knjiga_stavke_{PREDMET}_{knjiga}_{odabrano}_{verzija_stavke}",
         column_config={
             "Uključi": st.column_config.CheckboxColumn("Uključi", width="small"),
@@ -560,13 +560,13 @@ def _skripta_iz_knjige():
 
     b1, b2, b3, b4 = st.columns(4)
     with b1:
-        postavi_sve = st.button("✅ Sve", use_container_width=True)
+        postavi_sve = st.button("✅ Sve", width="stretch")
     with b2:
-        postavi_nista = st.button("⬜ Ništa", use_container_width=True)
+        postavi_nista = st.button("⬜ Ništa", width="stretch")
     with b3:
-        samo_primjeri = st.button("📝 Samo primjeri", use_container_width=True)
+        samo_primjeri = st.button("📝 Samo primjeri", width="stretch")
     with b4:
-        samo_zadaci = st.button("🧮 Samo zadaci", use_container_width=True)
+        samo_zadaci = st.button("🧮 Samo zadaci", width="stretch")
     if postavi_sve or postavi_nista or samo_primjeri or samo_zadaci:
         if postavi_sve:
             pogl["primjeri"], pogl["zadaci"] = None, None

@@ -128,7 +128,7 @@ with tab1:
             st.session_state["uvoz_tablica"] = pd.DataFrame(uf.predlozi_grupiranje(datoteke, nacin))
         st.caption("Uloga i grupu možeš mijenjati u tablici. 'preskoči' = datoteka se ne obrađuje.")
         uredjeno = st.data_editor(
-            st.session_state["uvoz_tablica"], key="uvoz_editor", use_container_width=True, hide_index=True,
+            st.session_state["uvoz_tablica"], key="uvoz_editor", width="stretch", hide_index=True,
             column_config={"id": None, "uloga": st.column_config.SelectboxColumn("uloga", options=uf.ULOGE, required=True)},
             disabled=["naziv", "putanja", "vrsta"])
         redovi = uredjeno.to_dict("records")
@@ -149,7 +149,7 @@ with tab1:
             st.subheader("Izvori")
             st.caption("✅ uneseno · ♻️ uneseno, ali su se datoteke promijenile · 🟡 AI gotov, čeka pregled · ❌ greška · ⬜ novo")
             izv_df = st.data_editor(
-                pd.DataFrame(izv), key="uvoz_izvori_editor", use_container_width=True, hide_index=True,
+                pd.DataFrame(izv), key="uvoz_izvori_editor", width="stretch", hide_index=True,
                 column_config={"izvor_tip": st.column_config.SelectboxColumn("izvor_tip", options=uf.IZVOR_TIPOVI, required=True)},
                 disabled=["stanje", "grupa", "zadaci", "rjesenja"])
             c3, c4, c5 = st.columns(3)
@@ -258,7 +258,7 @@ with tab2:
         g = st.selectbox("Izvor", grupe_ev, key="pregled_grupa")
         moji = [r for r in evid if r["grupa"] == g]
         st.dataframe(pd.DataFrame(moji)[["model", "status", "vrijeme", "broj_jedinica", "broj_upozorenja", "tokeni_ulaz", "tokeni_izlaz", "poruka"]],
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         izlazi = {}
         for r in moji:
             try:
@@ -269,7 +269,7 @@ with tab2:
             (ma, a), (mb, b) = list(izlazi.items())[:2]
             st.subheader(f"Usporedba: {ma} ↔ {mb}")
             us = uf.usporedi_rezultate(a["zadaci"], b["zadaci"])
-            st.dataframe(pd.DataFrame(us), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(us), hide_index=True, width="stretch")
         if izlazi:
             mk = st.selectbox("Prikaži rezultat modela", list(izlazi), key="pregled_model")
             iz = izlazi[mk]
@@ -287,7 +287,7 @@ with tab2:
                                  "slika": z["slika_url"], "status_provjere": z["status_provjere"],
                                  "tekst": z["tekst_zadatka_latex"][:160]} for z in iz["zadaci"]
                                 if not samo or z["status_provjere"]])
-            st.dataframe(tab, hide_index=True, use_container_width=True)
+            st.dataframe(tab, hide_index=True, width="stretch")
             # 27.10.2026.: SVI (filtrirani) zadaci odjednom, ne jedan po jedan iz padajućeg
             # izbornika (Caki - usporava pregled) - isti st.container(border=True) stil kao
             # popis zadataka u pages/2_test_builder.py, radi vizualne dosljednosti.
@@ -419,7 +419,7 @@ with tab3:
                     "godina": iz_r["izvor"]["godina"] or "—",
                     "jedinica": r["broj_jedinica"], "upozorenja": r["broj_upozorenja"],
                 })
-            st.dataframe(pd.DataFrame(pregled_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(pregled_rows), hide_index=True, width="stretch")
             st.caption("izvor_naziv / izvor_tip / godina se NE uređuju ovdje kod više odabranih izvora - "
                        "koriste se onakvi kakvi su već zapisani kod obrade (Tab 1/2). Ako nešto od toga treba "
                        "promijeniti, odaberi SAMO taj jedan izvor gore (vraća se stari način s poljima za uređivanje).")

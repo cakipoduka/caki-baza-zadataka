@@ -684,7 +684,7 @@ with tab_obrada:
         st.caption("Označi mature za obradu. Ako izvor_naziv nije pronađen automatski, odaberi ga ručno. "
                    "Za prvi put preporuka: 2-3 mature kao proba.")
         uredeno = st.data_editor(
-            tablica, key="ai_tablica", hide_index=True, use_container_width=True,
+            tablica, key="ai_tablica", hide_index=True, width="stretch",
             column_config={
                 "obradi": st.column_config.CheckboxColumn("Obradi"),
                 "izvor_naziv_u_bazi": st.column_config.SelectboxColumn(
@@ -991,5 +991,5 @@ with tab_povijest:
         _, serije = ucitaj_tab_kao_dictove(ws_serije())
         st.dataframe(
             [{k: v for k, v in s.items() if k not in ("_redak", "uparivanje_json")} for s in serije],
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )

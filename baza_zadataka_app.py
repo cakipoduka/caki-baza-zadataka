@@ -2194,7 +2194,7 @@ def stranica_biblioteka_grupno():
     })
     # Ključ ovisi o broju prikazanih + verziji: promjena filtera/gumba daje svježu tablicu.
     uredjena = st.data_editor(
-        tablica, hide_index=True, use_container_width=True,
+        tablica, hide_index=True, width="stretch",
         disabled=[c for c in tablica.columns if c != "Odaberi"],
         key=f"bib_tablica_{st.session_state['bib_ver']}_{len(prikaz)}_{hash(tuple(tablica['id']))}",
     )
