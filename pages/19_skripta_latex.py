@@ -204,11 +204,11 @@ except Exception as e:  # noqa: BLE001
     st.warning(f"Ne mogu učitati plan poglavlja: {e}")
     plan = {"naslovi": {}, "redoslijed": {}, "odabir": {}}
 
-poglavlja = sl.grupiraj_po_poglavljima(
+sva_poglavlja = sl.grupiraj_po_poglavljima(
     redovi_knjige, naslovi_poglavlja=plan["naslovi"],
     redoslijed_poglavlja=plan["redoslijed"], odabir_poglavlja=plan["odabir"])
 
-if not poglavlja:
+if not sva_poglavlja:
     st.warning(f"Za knjigu „{knjiga}” nema uključenih poglavlja s odabranim zadacima. "
                "Provjeri plan na stranici 📘 Skripta → Iz knjige.")
     st.stop()
@@ -247,7 +247,48 @@ def _naziv_formule(fid):
 # ---------------------------------------------------------------
 
 st.divider()
-st.subheader("📑 Poglavlja — teorija, formule i oznaka cjeline")
+st.subheader("✅ Koja poglavlja idu u OVU skriptu")
+st.caption(
+    "Dok tipkaš knjigu, ovdje odabereš samo gotova poglavlja i ispišeš njih. "
+    "Ovo je **odvojeno** od uključenosti poglavlja u glavnom planu na 📘 Skripta — tamo se "
+    "ništa ne mijenja. Izbor se pamti gumbom „Spremi postavke poglavlja” niže."
+)
+
+_kljuc_odabira = f"tex_odabir_poglavlja_{PREDMET}_{knjiga}"
+_svi_kljucevi = [p["kljuc"] for p in sva_poglavlja]
+if _kljuc_odabira not in st.session_state:
+    st.session_state[_kljuc_odabira] = [
+        k for k in _svi_kljucevi
+        if spremljene_postavke.get(k, {}).get("u_skripti", True)]
+else:
+    # Plan se u međuvremenu mogao promijeniti (novo/izbačeno poglavlje) — multiselect pada
+    # ako u stanju ostane vrijednost koje više nema među opcijama.
+    st.session_state[_kljuc_odabira] = [k for k in st.session_state[_kljuc_odabira]
+                                        if k in _svi_kljucevi]
+
+_b1, _b2, _b3 = st.columns([1, 1, 5])
+if _b1.button("✅ Sva", key="tex_sva_poglavlja", width="stretch"):
+    st.session_state[_kljuc_odabira] = list(_svi_kljucevi)
+    st.rerun()
+if _b2.button("⬜ Nijedno", key="tex_nijedno_poglavlje", width="stretch"):
+    st.session_state[_kljuc_odabira] = []
+    st.rerun()
+
+_opis = {p["kljuc"]: f"{p['naslov']}  ·  {len(p['primjeri'])}P / {len(p['zadaci'])}Z"
+         for p in sva_poglavlja}
+odabrani_kljucevi = st.multiselect(
+    "Poglavlja u skripti", _svi_kljucevi, key=_kljuc_odabira,
+    format_func=lambda k: _opis.get(k, k),
+    help="Redoslijed u PDF-u je uvijek redoslijed iz plana, bez obzira kojim ih redom ovdje "
+         "dodaš. P = primjeri, Z = zadaci.")
+
+poglavlja = [p for p in sva_poglavlja if p["kljuc"] in set(odabrani_kljucevi)]
+if not poglavlja:
+    st.warning("Nijedno poglavlje nije odabrano — odaberi barem jedno da bi mogao generirati PDF.")
+    st.stop()
+
+st.divider()
+st.subheader("📑 Odabrana poglavlja — teorija, formule i oznaka cjeline")
 st.caption(
     "Za svako poglavlje možeš dodati **oznaku** (npr. `3.1` — po njoj se numeriraju zadaci), "
     "**teoriju** iz taba `Teorija_potpoglavlja` i **formule** iz taba `Formule` ili ručno "
@@ -300,13 +341,21 @@ for pog in poglavlja:
 
 if st.button("💾 Spremi postavke poglavlja u bazu", key="tex_spremi_postavke"):
     novo = dict(spremljene_postavke)
-    for pog in poglavlja:
-        novo[pog["kljuc"]] = {
-            "oznaka": pog.get("oznaka", ""),
-            "teorija_kljuc": pog.get("_teorija_kljuc", ""),
-            "formule_ids": pog.get("_formule_ids", []),
-            "formule_rucno": pog.get("formule_rucno", ""),
-        }
+    odabrano = set(odabrani_kljucevi)
+    for pog in sva_poglavlja:
+        kljuc = pog["kljuc"]
+        if kljuc in odabrano:
+            novo[kljuc] = {
+                "oznaka": pog.get("oznaka", ""),
+                "teorija_kljuc": pog.get("_teorija_kljuc", ""),
+                "formule_ids": pog.get("_formule_ids", []),
+                "formule_rucno": pog.get("formule_rucno", ""),
+                "u_skripti": True,
+            }
+        else:
+            # Neodabrano poglavlje: njegove postavke (teorija, formule…) se ČUVAJU — mijenja
+            # se samo zastavica, da se pri idućem otvaranju stranice ne vrati uključeno.
+            novo[kljuc] = {**novo.get(kljuc, {}), "u_skripti": False}
     try:
         postavke_modul.spremi(init_sheet(), novo)
         _ucitaj_postavke_za.clear()
@@ -347,8 +396,8 @@ sa_slikama = st.checkbox(
 
 ukupno_p = sum(len(p["primjeri"]) for p in poglavlja)
 ukupno_z = sum(len(p["zadaci"]) for p in poglavlja)
-st.info(f"U skriptu ide **{len(poglavlja)}** poglavlja: **{ukupno_p}** primjera i "
-        f"**{ukupno_z}** zadataka.")
+st.info(f"U skriptu ide **{len(poglavlja)}** od **{len(sva_poglavlja)}** poglavlja: "
+        f"**{ukupno_p}** primjera i **{ukupno_z}** zadataka.")
 
 
 # ---------------------------------------------------------------

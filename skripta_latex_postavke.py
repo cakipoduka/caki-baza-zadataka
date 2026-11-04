@@ -19,7 +19,12 @@ from __future__ import annotations
 import baza_zadataka_pipeline as bp
 
 POSTAVKE_TAB = "Skripta_latex_postavke"
-POSTAVKE_HEADERS = ["poglavlje_kljuc", "oznaka", "teorija_kljuc", "formule_ids", "formule_rucno"]
+POSTAVKE_HEADERS = ["poglavlje_kljuc", "oznaka", "teorija_kljuc", "formule_ids", "formule_rucno",
+                    # 4.11.2026. (Caki): „da"/„ne" — ide li poglavlje u OVU skriptu. Odvojeno od
+                    # stupca `ukljuceno` u tabu Sifrarnik_poglavlja_knjige, koji je dio plana za
+                    # PreTeXt stazu: Caki tipka cijelu knjigu, a usput ispisuje samo gotova
+                    # poglavlja — ne smije zbog toga mijenjati glavni plan. Prazno = da.
+                    "u_skripti"]
 
 # Razdjelnik u `teorija_kljuc` — (cjelina, potpoglavlje) spljošteno u jednu ćeliju.
 TEORIJA_RAZDJELNIK = "||"
@@ -74,13 +79,20 @@ def ucitaj(sheet) -> dict:
             "teorija_kljuc": _celija(r, "teorija_kljuc"),
             "formule_ids": ids,
             "formule_rucno": _celija(r, "formule_rucno"),
+            # Prazno/nepoznato = DA (poglavlje ide u skriptu) — tako stari redci, zapisani
+            # prije nego je ovaj stupac postojao, ostaju uključeni.
+            "u_skripti": _celija(r, "u_skripti").lower() not in ("ne", "no", "false", "0"),
         }
     return izlaz
 
 
 def spremi(sheet, postavke: dict) -> None:
     """Prepisuje CIJELI tab. postavke: isti oblik kakav vraća `ucitaj`.
-    Poglavlja kod kojih su SVA polja prazna se ne zapisuju (nema smisla trošiti redak)."""
+
+    Redak se izostavlja samo ako NEMA ničega za zapamtiti — dakle ako su sva polja prazna
+    I poglavlje je uključeno (to je ionako zadano stanje). Isključeno poglavlje se MORA
+    zapisati i kad je sve ostalo prazno, inače bi se pri sljedećem učitavanju vratilo kao
+    uključeno."""
     ws = bp.get_or_create_worksheet(sheet, POSTAVKE_TAB, POSTAVKE_HEADERS)
     redci = [POSTAVKE_HEADERS]
     for kljuc, p in (postavke or {}).items():
@@ -91,8 +103,9 @@ def spremi(sheet, postavke: dict) -> None:
         teorija = _t((p or {}).get("teorija_kljuc"))
         ids = ", ".join(_t(x) for x in ((p or {}).get("formule_ids") or []) if _t(x))
         rucno = _t((p or {}).get("formule_rucno"))
-        if not (oznaka or teorija or ids or rucno):
+        u_skripti = (p or {}).get("u_skripti", True)
+        if not (oznaka or teorija or ids or rucno) and u_skripti:
             continue
-        redci.append([kljuc, oznaka, teorija, ids, rucno])
+        redci.append([kljuc, oznaka, teorija, ids, rucno, "da" if u_skripti else "ne"])
     ws.clear()
     ws.update(values=redci, range_name="A1", value_input_option="RAW")
