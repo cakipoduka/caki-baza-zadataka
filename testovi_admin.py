@@ -130,6 +130,24 @@ def _kao_datum(vrijednost, zadano=None):
         return zadano or date.today()
 
 
+def _kao_datum_buduci(vrijednost, dani: int = 0, zadano=None):
+    """Kao `_kao_datum`, ali NIKAD ne vrati datum koji je već prošao (4.11.2026.).
+
+    Zašto postoji: „Zadaj test jednom učeniku”/„Zadaj test grupi” predispunjava polja
+    Otvoren od/Otvoren do datumima IZVORNOG testa (da se lakše ponovi isti raspon). Ako je
+    izvorni test već zatvoren (klonira se stariji test), taj stari datum ostaje predispunjen
+    i Caki ga lako ne primijeti — objavljeni test je tada mrtav čim nastane (zatvara_do je
+    već prošao), učenik ga nikad ne vidi u Moj CAKI, bez ikakve greške na ekranu (v.
+    `provjeri_izmjene` niže za sigurnosnu mrežu da se takav raspon uopće ne može spremiti).
+    Ovdje se takav datum zamjenjuje s `danas + dani`, SAMO kad je stvarno u prošlosti —
+    budući datum izvornog testa i dalje prolazi nepromijenjen.
+    """
+    d = _kao_datum(vrijednost, zadano)
+    if d < date.today():
+        return date.today() + timedelta(days=dani)
+    return d
+
+
 # ============================================================
 # Čitanje
 # ============================================================
@@ -1582,6 +1600,12 @@ def provjeri_izmjene(naziv, trajanje, otvara_od, zatvara_do) -> list[str]:
     od, do = _datum(otvara_od), _datum(zatvara_do)
     if od and do and do < od:
         greske.append("Datum „otvoren do” je prije datuma „otvoren od”.")
+    # 4.11.2026.: ako je "otvoren do" već prošao, test je mrtav čim se objavi — učenik ga
+    # NIKAD neće vidjeti u Moj CAKI (v. `_kao_datum_buduci` gore i TRACKER 4.11.2026.,
+    # slučaj OH3229 / T261101-2L0Z: raspon 24.10.–31.10. objavljen 1.11., nitko nije vidio).
+    if do and do < _datum(date.today()):
+        greske.append(f"Datum „otvoren do” ({do}) je već prošao — učenik test nikad ne bi "
+                      "vidio u Moj CAKI. Postavi datum u budućnosti.")
     return greske
 
 
@@ -2490,11 +2514,11 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                             "Trajanje (min)", min_value=5, max_value=240, step=5,
                             value=int(_broj((izvor or {}).get("trajanje_min"), 45)))
                         otvara_g = c2.date_input("Otvoren od",
-                                                 value=_kao_datum((izvor or {}).get("otvara_od")),
+                                                 value=_kao_datum_buduci((izvor or {}).get("otvara_od")),
                                                  format="DD.MM.YYYY")
                         zatvara_g = c3.date_input(
                             "Otvoren do",
-                            value=_kao_datum((izvor or {}).get("zatvara_do"), date.today()),
+                            value=_kao_datum_buduci((izvor or {}).get("zatvara_do"), dani=7),
                             format="DD.MM.YYYY")
                         st.caption(f"Objavit će se **{len(ucenici_g)}** testova (jedan po učeniku), "
                                    f"oznaka serije: „{oznaka_serije(grupa.get('naziv'), danas)}”.")
@@ -2559,11 +2583,11 @@ def prikazi_stranicu(st, sheet, testovi, rezultati, predmet: str = "",
                     "Trajanje (min)", min_value=5, max_value=240, step=5, key="ta_trajanje_ucenik",
                     value=int(_broj((izvor or {}).get("trajanje_min"), 45)))
                 otvara_u = c2u.date_input("Otvoren od", key="ta_otvara_ucenik",
-                                          value=_kao_datum((izvor or {}).get("otvara_od")),
+                                          value=_kao_datum_buduci((izvor or {}).get("otvara_od")),
                                           format="DD.MM.YYYY")
                 zatvara_u = c3u.date_input(
                     "Otvoren do", key="ta_zatvara_ucenik",
-                    value=_kao_datum((izvor or {}).get("zatvara_do"), date.today()),
+                    value=_kao_datum_buduci((izvor or {}).get("zatvara_do"), dani=7),
                     format="DD.MM.YYYY")
                 posalji_u = st.form_submit_button(
                     "📤 Objavi za učenika", type="primary",
