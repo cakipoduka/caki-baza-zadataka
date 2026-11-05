@@ -39,11 +39,18 @@ NASLOV_PRIMJERI = "Primjeri"
 NASLOV_ZADACI = "Zadaci"
 NASLOV_RJESENJA = "Rješenja"
 
-# Načini ispisa rješenja na kraju poglavlja
+# Načini ispisa rješenja
 RJESENJA_POSTUPAK = "postupak"   # puni postupak iz polja `rjesenje` (pad na konačan odgovor)
 RJESENJA_ODGOVOR = "odgovor"     # samo konačan odgovor (kompaktno, 2 stupca)
 RJESENJA_BEZ = "bez"             # bez rješenja (čista učenička vježbenica)
 RJESENJA_NACINI = (RJESENJA_POSTUPAK, RJESENJA_ODGOVOR, RJESENJA_BEZ)
+
+# GDJE idu rješenja (5.11.2026., Cakijev nalaz „puno praznih stranica zbog ispisa rješenja"):
+# svaka cjelina počinje na novoj stranici, pa blok rješenja na kraju svakog poglavlja često
+# ostavi pola prazne stranice prije sljedeće cjeline. Zato sada i varijanta „sve na kraju".
+MJESTO_POGLAVLJE = "poglavlje"   # blok rješenja iza svakog poglavlja (dosadašnje ponašanje)
+MJESTO_KRAJ = "kraj"             # jedna cjelina „Rješenja" na kraju skripte
+MJESTA_RJESENJA = (MJESTO_POGLAVLJE, MJESTO_KRAJ)
 
 
 # ============================================================
@@ -93,14 +100,44 @@ def _opcije_su_slike(opcije, row, slike_dostupne):
     return False, None, []
 
 
-def tekst_stavke(row, slike_dostupne=None, s_oznakom_tezine=True) -> tuple:
+# Podjela polja na "izjavnu" i "rješenjsku" stranu — kad je jedno polje neispravno, zamjenjuje
+# se SAMO njegova strana, a ne cijeli zadatak (npr. pokvareno `rjesenje` ne briše tekst pitanja).
+POLJA_IZJAVE = {"tekst zadatka", "uputa"}
+POLJA_RJESENJA = {"rješenje", "konačan odgovor"}
+
+
+def _je_losa_izjava(losa_polja) -> bool:
+    return any(p in POLJA_IZJAVE or p.startswith("opcija ") for p in losa_polja or ())
+
+
+def _je_lose_rjesenje(losa_polja) -> bool:
+    return any(p in POLJA_RJESENJA for p in losa_polja or ())
+
+
+def _oznaka_neispravnog(row, losa_polja) -> str:
+    """Vidljiva zamjena u PDF-u za zadatak čiji LaTeX ne bi prošao kompajliranje. Zadatak se
+    NE izbacuje nego ostaje na svom mjestu s ovom oznakom — tako numeracija (i veza s
+    rješenjima) ostaje netaknuta i u PDF-u se TOČNO vidi što treba popraviti u bazi."""
+    zid = str(row.get("id") or "bez id-a")
+    polja = ", ".join(sorted(losa_polja or ())) or "LaTeX"
+    return (f"\\cakineispravno{{{lt.escape_outside_math(zid)}}}"
+            f"{{{lt.escape_outside_math(polja)}}}")
+
+
+def tekst_stavke(row, slike_dostupne=None, s_oznakom_tezine=True, losa_polja=None) -> tuple:
     """Gradi (tekst_tex, slike_csv) za JEDAN redak baze — zajednička jezgra za primjer i
     zadatak (isti obrazac kao bp._build_statement_hint_solution_video za PreTeXt).
 
     s_oznakom_tezine: prefiks '[matura 2010, S] ' ispred teksta. Oznake L/S/T Caki je
     izričito tražio zadržati (4.11.2026.) — funkcija se NE duplicira, nego se poziva
     bp._oznaka_izvor_tezina, pa pravilo („zbirka" se ne ispisuje, matura dobiva godinu…)
-    ostaje na JEDNOM mjestu za obje staze."""
+    ostaje na JEDNOM mjestu za obje staze.
+
+    losa_polja: imena polja ovog retka koja ne bi prošla kompajliranje (v. provjeri_latex).
+    Ako je među njima tekst/uputa/opcija, umjesto teksta se ispisuje vidljiva oznaka i
+    zadatak se NE izbacuje — v. _oznaka_neispravnog."""
+    if _je_losa_izjava(losa_polja):
+        return _oznaka_neispravnog(row, losa_polja), ""
     raw = str(row.get("tekst_zadatka_latex") or "")
     opcije = _opcije_iz_retka(row)
     if opcije:
@@ -131,13 +168,18 @@ def tekst_stavke(row, slike_dostupne=None, s_oznakom_tezine=True) -> tuple:
     return tekst, slike_csv
 
 
-def rjesenje_stavke(row, nacin=RJESENJA_POSTUPAK) -> str:
+def rjesenje_stavke(row, nacin=RJESENJA_POSTUPAK, losa_polja=None) -> str:
     """Tekst rješenja za blok na kraju poglavlja. RJESENJA_POSTUPAK uzima puni postupak iz
     polja `rjesenje`, a ako ga nema pada na `konacan_odgovor` (bolje konačan odgovor nego
     prazan redak). RJESENJA_ODGOVOR uzima SAMO konačan odgovor.
 
     cuvaj_okoline=True: polje `rjesenje` zna sadržavati \\begin{tabular}/\\begin{align} —
-    v. objašnjenje u latex_tekst.escape_outside_math."""
+    v. objašnjenje u latex_tekst.escape_outside_math.
+
+    losa_polja: v. tekst_stavke — neispravno `rjesenje`/`konacan_odgovor` zamjenjuje se
+    vidljivom oznakom, a redak rješenja ostaje na svom mjestu."""
+    if _je_lose_rjesenje(losa_polja):
+        return _oznaka_neispravnog(row, [p for p in losa_polja if p in POLJA_RJESENJA])
     postupak = str(row.get("rjesenje") or "").strip()
     odgovor = str(row.get("konacan_odgovor") or "").strip()
     if nacin == RJESENJA_ODGOVOR:
@@ -221,7 +263,8 @@ def formule_blok(formule=None, rucno: str = "") -> str:
 # ============================================================
 
 def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_POSTUPAK,
-                   slike_dostupne=None) -> tuple:
+                   slike_dostupne=None, preskoci_neispravne: bool = False,
+                   mjesto_rjesenja: str = MJESTO_POGLAVLJE) -> tuple:
     """Gradi cijelo tijelo skripte (ono što ide u generated/skripta_body.tex).
 
     poglavlja: lista rječnika, redoslijedom kojim idu u PDF:
@@ -237,6 +280,12 @@ def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_
     verzija: "ucenik" | "profesor" — prosljeđuje se teoriji ([RJESENJE] blokovi).
     rjesenja: v. RJESENJA_NACINI.
     slike_dostupne: skup naziva slika skinutih na disk (None = ne provjeravaj).
+    preskoci_neispravne: True = polja koja bi srušila kompajliranje (v. provjeri_latex) se
+        zamjenjuju VIDLJIVOM oznakom u PDF-u umjesto da gradnja stane. Zadatak ostaje na
+        svom mjestu, pa se numeracija i veza sa rješenjima NE mijenjaju.
+    mjesto_rjesenja: v. MJESTA_RJESENJA. MJESTO_KRAJ skuplja rješenja SVIH poglavlja u jednu
+        cjelinu „Rješenja" na kraju (manje poluparaznih stranica); oznake ostaju iste
+        („3.1.2."), pa se i dalje točno zna kojem zadatku rješenje pripada.
 
     Vraća (tijelo_tex, broj_primjera, broj_zadataka).
 
@@ -245,6 +294,16 @@ def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_
     kao zadaci."""
     if rjesenja not in RJESENJA_NACINI:
         raise ValueError(f"rjesenja mora biti jedno od {RJESENJA_NACINI}, dobiveno: {rjesenja!r}")
+    if mjesto_rjesenja not in MJESTA_RJESENJA:
+        raise ValueError(f"mjesto_rjesenja mora biti jedno od {MJESTA_RJESENJA}, "
+                         f"dobiveno: {mjesto_rjesenja!r}")
+    na_kraju = mjesto_rjesenja == MJESTO_KRAJ
+    rjesenja_na_kraju = []        # [(naslov poglavlja, [(oznaka, tekst), ...]), ...]
+
+    losa = losa_polja_po_retku(provjeri_latex(poglavlja)) if preskoci_neispravne else {}
+
+    def _losa_za(kljuc_pog, row):
+        return losa.get((kljuc_pog, str(row.get("id") or "bez id-a")), set())
 
     redovi = []
     ukupno_primjera = 0
@@ -256,6 +315,7 @@ def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_
         if not primjeri and not zadaci:
             continue                      # prazno poglavlje nema smisla u PDF-u
         k += 1
+        kljuc_pog = str(pog.get("kljuc") or pog.get("naslov") or "")
         naslov = lt.escape_outside_math(str(pog.get("naslov") or "").strip())
         oznaka = lt.escape_outside_math(str(pog.get("oznaka") or "").strip())
         redovi.append(f"\\cakicjelina{{{oznaka}}}{{{naslov}}}")
@@ -264,7 +324,12 @@ def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_
         # zadatak 2.1, što zbunjuje). Bez oznake se koristi redni broj cjeline u skripti.
         broj = oznaka or str(k)
 
-        blok = teorija_blok(pog.get("teorija"), verzija=verzija)
+        teorija_sirova = pog.get("teorija")
+        if preskoci_neispravne and lt.provjeri_polje(teorija_sirova):
+            # Pokvarena teorija ne smije blokirati cijelu skriptu — mjesto ostaje vidljivo.
+            redovi.append("\\cakiteorija{\\cakineispravno{teorija}{tekst teorije}}")
+            teorija_sirova = ""
+        blok = teorija_blok(teorija_sirova, verzija=verzija)
         if blok:
             redovi.append(blok)
         blok = formule_blok(pog.get("formule"), pog.get("formule_rucno"))
@@ -274,7 +339,8 @@ def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_
         if primjeri:
             redovi.append(f"\\cakipodnaslovskripte{{{NASLOV_PRIMJERI}}}")
             for n, row in enumerate(primjeri, start=1):
-                tekst, slike = tekst_stavke(row, slike_dostupne)
+                tekst, slike = tekst_stavke(row, slike_dostupne,
+                                            losa_polja=_losa_za(kljuc_pog, row))
                 redovi.append(f"\\cakiprimjer{{Primjer {broj}.{n}.}}{{{tekst}}}{{{slike}}}")
                 redovi.append("")
             ukupno_primjera += len(primjeri)
@@ -286,7 +352,8 @@ def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_
         if zadaci:
             redovi.append(f"\\cakipodnaslovskripte{{{NASLOV_ZADACI}}}")
             for n, row in enumerate(zadaci, start=1):
-                tekst, slike = tekst_stavke(row, slike_dostupne)
+                tekst, slike = tekst_stavke(row, slike_dostupne,
+                                            losa_polja=_losa_za(kljuc_pog, row))
                 redovi.append(f"\\cakizadatakskripte{{Zadatak {broj}.{n}.}}{{{tekst}}}{{{slike}}}")
                 redovi.append("")
             ukupno_zadataka += len(zadaci)
@@ -300,28 +367,50 @@ def izgradi_tijelo(poglavlja, verzija: str = "ucenik", rjesenja: str = RJESENJA_
             if str(verzija).strip().lower() == "profesor":
                 for n, row in enumerate(primjeri, start=1):
                     odgovor = str(row.get("konacan_odgovor") or "").strip()
-                    if odgovor:
+                    if not odgovor:
+                        continue
+                    if "konačan odgovor" in _losa_za(kljuc_pog, row):
+                        stavke.append((f"Primjer {broj}.{n}.",
+                                       _oznaka_neispravnog(row, ["konačan odgovor"])))
+                    else:
                         stavke.append((f"Primjer {broj}.{n}.",
                                        lt.escape_outside_math(odgovor, cuvaj_okoline=True)))
             for n, row in enumerate(zadaci, start=1):
-                stavke.append((f"{broj}.{n}.", rjesenje_stavke(row, rjesenja)))
+                stavke.append((f"{broj}.{n}.",
+                               rjesenje_stavke(row, rjesenja,
+                                               losa_polja=_losa_za(kljuc_pog, row))))
 
-            if stavke:
+            if stavke and na_kraju:
+                rjesenja_na_kraju.append((naslov, stavke))
+            elif stavke:
                 redovi.append(f"\\cakirjesenjanaslov{{{NASLOV_RJESENJA} \\textendash{{}} {naslov}}}")
-                # Samo konačni odgovori su kratki retci pa stanu u 2 stupca (isti trik kao
-                # rjesenja_sekcija u Test Builderu, 8.10.2026.); puni postupak ostaje
-                # jednostupčan jer zna sadržavati tablice/poravnate jednadžbe koje se u
-                # uskom stupcu lome.
-                dva_stupca = rjesenja == RJESENJA_ODGOVOR
-                if dva_stupca:
-                    redovi.append("\\begin{multicols}{2}\\small")
-                for oznaka_st, tekst_st in stavke:
-                    redovi.append(f"\\cakirjesenjeskripte{{{oznaka_st}}}{{{tekst_st}}}")
-                if dva_stupca:
-                    redovi.append("\\end{multicols}")
+                redovi.extend(_blok_rjesenja(stavke, rjesenja))
                 redovi.append("")
 
+    # Sva rješenja u JEDNOJ cjelini na kraju skripte (v. mjesto_rjesenja). Cjelina se zove
+    # „Rješenja" i, kao i svaka druga, počinje na novoj stranici i ulazi u sadržaj.
+    if rjesenja_na_kraju:
+        redovi.append(f"\\cakicjelina{{}}{{{NASLOV_RJESENJA}}}")
+        for naslov_pog, stavke in rjesenja_na_kraju:
+            redovi.append(f"\\cakirjesenjanaslov{{{naslov_pog}}}")
+            redovi.extend(_blok_rjesenja(stavke, rjesenja))
+            redovi.append("")
+
     return "\n".join(redovi), ukupno_primjera, ukupno_zadataka
+
+
+def _blok_rjesenja(stavke, nacin) -> list:
+    """Retci rješenja, po potrebi u dva stupca.
+
+    Samo konačni odgovori su kratki retci pa stanu u 2 stupca (isti trik kao rjesenja_sekcija
+    u Test Builderu, 8.10.2026.); puni postupak ostaje jednostupčan jer zna sadržavati
+    tablice/poravnate jednadžbe koje se u uskom stupcu lome."""
+    dva_stupca = nacin == RJESENJA_ODGOVOR
+    redovi = ["\\begin{multicols}{2}\\small"] if dva_stupca else []
+    redovi += [f"\\cakirjesenjeskripte{{{oznaka}}}{{{tekst}}}" for oznaka, tekst in stavke]
+    if dva_stupca:
+        redovi.append("\\end{multicols}")
+    return redovi
 
 
 # ============================================================
@@ -372,13 +461,22 @@ def grupiraj_po_poglavljima(rows, naslovi_poglavlja=None, redoslijed_poglavlja=N
     return izlaz
 
 
-def provjeri_neuparene_dolare(poglavlja) -> list:
-    """Vraća [(poglavlje, oznaka_retka, polje, tekst)] za svaki redak gdje BILO KOJE polje
-    koje ide u LaTeX ima neparan broj '$' znakova — NAJČEŠĆI uzrok pucanja kompajliranja
-    (ista blokirajuća provjera kao u Test Builderu, prije generiranja)."""
+def provjeri_latex(poglavlja) -> list:
+    """Vraća popis SVIH polja koja bi srušila kompajliranje, kao rječnike:
+        {"poglavlje_kljuc", "poglavlje", "vrsta", "id", "polje", "problem", "tekst"}
+
+    4.11./5.11.2026. (Cakijev nalaz „ispisuje jednu po jednu, a može ih biti stotine"):
+    provjera prolazi kroz SVE retke SVIH predanih poglavlja i vraća sve nalaze odjednom —
+    pozivatelj ih prikazuje kao tablicu, a ne jedan po jedan. Ovo je SAV popis problema koje
+    se može naći bez pokretanja LaTeXa; ostale greške pdflatex javlja tek pri kompajliranju
+    (i to po jednu, zbog -halt-on-error), pa je zato tu i `preskoci_neispravne` u
+    izgradi_tijelo — da jedna pokvarena ćelija ne blokira ispis cijele skripte.
+
+    Što se provjerava i zašto samo to: v. latex_tekst.provjeri_polje."""
     problemi = []
     for pog in poglavlja or []:
         naslov = str(pog.get("naslov") or pog.get("kljuc") or "")
+        kljuc = str(pog.get("kljuc") or naslov)
         for vrsta in ("primjeri", "zadaci"):
             for row in pog.get(vrsta) or []:
                 zid = str(row.get("id") or "bez id-a")
@@ -390,11 +488,28 @@ def provjeri_neuparene_dolare(poglavlja) -> list:
                     slovo = lt.SLOVA_OPCIJA[j] if j < len(lt.SLOVA_OPCIJA) else str(j + 1)
                     polja.append((f"opcija {slovo}", opcija))
                 for naziv_polja, sadrzaj in polja:
-                    if lt.broj_dolara(sadrzaj) % 2 != 0:
-                        problemi.append((naslov, zid, naziv_polja, str(sadrzaj)))
-        if lt.broj_dolara(pog.get("teorija")) % 2 != 0:
-            problemi.append((naslov, "teorija", "tekst teorije", str(pog.get("teorija") or "")))
+                    for opis in lt.provjeri_polje(sadrzaj):
+                        problemi.append({
+                            "poglavlje_kljuc": kljuc, "poglavlje": naslov,
+                            "vrsta": "primjer" if vrsta == "primjeri" else "zadatak",
+                            "id": zid, "polje": naziv_polja, "problem": opis,
+                            "tekst": str(sadrzaj if sadrzaj is not None else ""),
+                        })
+        for opis in lt.provjeri_polje(pog.get("teorija")):
+            problemi.append({
+                "poglavlje_kljuc": kljuc, "poglavlje": naslov, "vrsta": "teorija",
+                "id": "(teorija)", "polje": "tekst teorije", "problem": opis,
+                "tekst": str(pog.get("teorija") or ""),
+            })
     return problemi
+
+
+def losa_polja_po_retku(problemi) -> dict:
+    """{(poglavlje_kljuc, id): {naziv_polja, ...}} iz izlaza provjeri_latex."""
+    mapa = {}
+    for p in problemi or []:
+        mapa.setdefault((p["poglavlje_kljuc"], p["id"]), set()).add(p["polje"])
+    return mapa
 
 
 def sve_slike(poglavlja) -> list:

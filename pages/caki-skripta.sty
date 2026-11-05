@@ -118,9 +118,18 @@
 % LaTeX hooka puca s "Incomplete \iffalse", pa se NE koristi.
 \newcommand{\cakisljedecacjelina}{\clearpage}
 \newcommand{\cakiprvacjelina}{\global\let\cakiprvacjelina\cakisljedecacjelina}
+% 5.11.2026. (Caki, „puno praznih stranica"): prekidač koji ukida prijelom stranice po
+% cjelini - cjeline se tada nižu jedna za drugom, s većim razmakom. Poziva se u preambuli
+% (predložak), PRIJE prve cjeline, pa \cakiprvacjelina preuzme novo značenje.
+\newcommand{\cakicjelinebezprijeloma}{%
+    \renewcommand{\cakisljedecacjelina}{\par\addvspace{10mm}}%
+}
 \newcommand{\cakicjelina}[2]{%
     \cakiprvacjelina
     \markright{#2}%
+    % U sadržaj (\tableofcontents) ide puna oznaka + naslov. MORA biti NAKON prijeloma
+    % stranice, inače bi zapisalo broj PRETHODNE stranice.
+    \addcontentsline{toc}{section}{\ifblank{#1}{}{#1\ \ }#2}%
     \par\addvspace{2mm}
     \begin{center}
         {\color{MathPrimary}\sffamily\bfseries\Huge
@@ -128,6 +137,25 @@
     \end{center}
     \vspace{2mm}\hrule height 1.2pt \color{MathPrimary}
     \vspace{4mm}
+}
+
+% --- 5b. SADRŽAJ (5.11.2026., na Cakijev upit) ------------------------------
+% Pravi LaTeX-ov \tableofcontents, s BROJEVIMA STRANICA - stavke u njega upisuje
+% \cakicjelina preko \addcontentsline (v. gore). Naslov („Sadržaj") dolazi iz babela, pa
+% se ne tipka ovdje.
+%
+% VAŽNO: za točne brojeve stranica treba TRI prolaza pdflatexa (1. skupi stavke u .toc,
+% 2. ubaci sadržaj - čime se sve pomakne, 3. ispravi brojeve). Stranica
+% pages/19_skripta_latex.py zato pokreće treći prolaz kad je sadržaj uključen.
+\newcommand{\cakisadrzaj}{%
+    \begingroup
+    \renewcommand{\contentsname}{\normalfont\sffamily\bfseries\Large Sadr\v{z}aj}%
+    \setlength{\parskip}{0pt}%
+    \tableofcontents
+    \endgroup
+    % Sadržaj je svoja stranica — prva cjelina kreće čisto. \cakiprvacjelina prvi put ne
+    % radi prijelom, pa ovdje nema dvostrukog preskakanja stranice.
+    \clearpage
 }
 
 % --- 6. PODNASLOV UNUTAR CJELINE ("Primjeri", "Zadaci", "Rješenja") ---------
@@ -237,6 +265,23 @@
     #2%
     \ifblank{#3}{}{\par\vspace{2mm}{\centering\cakislike{#3}\par}}%
     \par
+}
+
+% --- 11b. OZNAKA NEISPRAVNOG LaTeXA (5.11.2026., Cakijev nalaz) -------------
+% \cakineispravno{id zadatka}{koja polja}
+% Kad polje iz baze ima LaTeX koji bi srušio kompajliranje (neparan `$`, neuravnotežene
+% `{ }` u matematici), stranica NE prekida gradnju nego umjesto tog teksta ispiše ovu
+% oznaku. Zadatak OSTAJE na svom mjestu, pa numeracija i veza s rješenjima ostaju iste, a
+% u PDF-u se točno vidi što treba popraviti u bazi. Namjerno upadljivo, ali bez boje
+% (skripta je crno-bijela) - obrub + velika slova.
+% Širina 0.75\linewidth, ne puna: oznaka se ispisuje IZA naslova zadatka („Zadatak 3.1.2."
+% u žutoj traci), pa bi puna širina prešla desni rub (provjereno na probnom PDF-u 5.11.2026.).
+\newcommand{\cakineispravno}[2]{%
+    \fbox{\parbox{0.75\linewidth}{%
+        \small\sffamily\bfseries NEISPRAVAN LaTeX \textendash{} nije ispisano\par
+        \normalfont\footnotesize zadatak: #1 \quad polje: #2\par
+        \footnotesize\itshape Popravi u bazi, osvježi podatke i generiraj PDF ponovno.%
+    }}%
 }
 
 % --- 12. RJEŠENJA NA KRAJU POGLAVLJA ---------------------------------------

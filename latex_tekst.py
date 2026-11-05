@@ -99,6 +99,57 @@ def escape_outside_math(text: str, cuvaj_okoline: bool = False) -> str:
     return "".join(out)
 
 
+def saldo_viticastih(text: str) -> int:
+    """Saldo NEESCAPIRANIH vitičastih zagrada: 0 = uravnoteženo, >0 = višak `{`, <0 = višak `}`.
+    Escapirani par (`\\{`, `\\}`) i `\\\\` se preskaču — oni su literalni znakovi, ne grupe.
+    Vraća prvi negativan saldo (zatvaranje bez otvaranja) odmah, jer je to već greška."""
+    saldo = 0
+    i, n = 0, len(text or "")
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2                      # `\{`, `\}`, `\\`, `\frac` -> drugi znak se preskače
+            continue
+        if c == "{":
+            saldo += 1
+        elif c == "}":
+            saldo -= 1
+            if saldo < 0:
+                return saldo
+        i += 1
+    return saldo
+
+
+def provjeri_polje(sadrzaj) -> list:
+    """Vraća popis OPISA problema zbog kojih bi pdflatex pao na ovom polju (prazno = u redu).
+
+    Namjerno provjerava SAMO ono što je stvarno fatalno, da ne prijavljuje lažne greške:
+
+    1. **Neparan broj `$`** — matematički način ostaje otvoren i ruši cijeli dokument.
+    2. **Neuravnotežene `{ }` UNUTAR `$...$`** (ili unutar sačuvane okoline). Izvan
+       matematike `{` i `}` prolaze kroz escape_outside_math i postaju bezopasan tekst, pa
+       bi provjera cijelog polja prijavljivala bezbroj bezopasnih redaka (npr. „skup {1,2}").
+       Unutar matematike se prenose doslovno, pa `$\\frac{1}{2$` doista puca.
+
+    Namjerno se NE prijavljuje nesparen `\\begin{...}` bez `\\end{...}`: takav se blok ne
+    prepoznaje kao okolina, pa ga escape pretvori u običan tekst — ružno, ali ne pada."""
+    s = str(sadrzaj if sadrzaj is not None else "")
+    if not s:
+        return []
+    problemi = []
+    if broj_dolara(s) % 2 != 0:
+        problemi.append("neparan broj `$` (otvorena matematika)")
+
+    # Regije koje idu u LaTeX DOSLOVNO: $...$ i cijele \begin{...}...\end{...} okoline.
+    doslovno = [m.group(0)[1:-1] for m in re.finditer(r"\$[^$]*\$", s)]
+    doslovno += [m.group(0) for m in _OKOLINA_RE.finditer(s)]
+    for regija in doslovno:
+        if saldo_viticastih(regija) != 0:
+            problemi.append("neuravnotežene `{ }` unutar matematike")
+            break
+    return problemi
+
+
 def broj_dolara(text) -> int:
     """Broji '$' znakove koji NISU escapirani (\\$) - koristi se za provjeru parnosti
     prije slanja u LaTeX. Neparan broj = tekst će razbiti kompajliranje.

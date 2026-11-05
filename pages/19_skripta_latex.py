@@ -169,6 +169,52 @@ def _cist(tekst) -> str:
     return " ".join(str(tekst or "").split()).strip()
 
 
+def osvjezi_kes():
+    """Prazni SVE keševe ove stranice.
+
+    5.11.2026. (Cakijev nalaz „ispravio sam i spremio, ali nije odmah povuklo"): tab `Zadaci`
+    se drži 10 minuta (`ttl=600`), pa se ispravak u Sheetu ne vidi odmah i stranica ponavlja
+    istu grešku. Bez ovoga bi Caki morao čekati da keš istekne."""
+    for funkcija in (_ucitaj_zadatke_za, _ucitaj_plan_za, _ucitaj_teoriju_za,
+                     _ucitaj_formule_za, _ucitaj_postavke_za):
+        try:
+            funkcija.clear()
+        except Exception:  # noqa: BLE001 — čišćenje keša ne smije srušiti stranicu
+            pass
+
+
+def _csv_problema(problemi) -> str:
+    """Popis problema kao CSV (za „Preuzmi popis") — da Caki može ispravljati u Sheetu
+    gledajući cijeli popis, bez skrolanja po stranici."""
+    import csv
+    import io as _io
+    izlaz = _io.StringIO()
+    pisac = csv.writer(izlaz, delimiter=";")
+    pisac.writerow(["poglavlje", "vrsta", "id", "polje", "problem", "tekst"])
+    for p in problemi:
+        pisac.writerow([p["poglavlje"], p["vrsta"], p["id"], p["polje"], p["problem"],
+                        " ".join(str(p["tekst"]).split())])
+    return izlaz.getvalue()
+
+
+def _prikazi_problema(problemi, naslov_poruke):
+    """Jedna tablica sa SVIM nalazima + preuzimanje popisa + gumb za osvježavanje keša."""
+    st.markdown(f"**{naslov_poruke}**")
+    st.dataframe(
+        [{"poglavlje": p["poglavlje"], "vrsta": p["vrsta"], "id": p["id"],
+          "polje": p["polje"], "problem": p["problem"],
+          "tekst": " ".join(str(p["tekst"]).split())[:300]} for p in problemi],
+        width="stretch", hide_index=True)
+    d1, d2 = st.columns([1, 1])
+    d1.download_button("⬇️ Preuzmi popis (CSV)", data=_csv_problema(problemi).encode("utf-8-sig"),
+                       file_name="skripta_latex_greske.csv", mime="text/csv",
+                       key=f"tex_csv_{abs(hash(naslov_poruke)) % 10**8}")
+    if d2.button("🔄 Osvježi podatke iz baze", key=f"tex_osv_{abs(hash(naslov_poruke)) % 10**8}",
+                 help="Nakon ispravka u Google Sheetu — stranica inače drži podatke do 10 minuta."):
+        osvjezi_kes()
+        st.rerun()
+
+
 # ---------------------------------------------------------------
 # Učitavanje podataka
 # ---------------------------------------------------------------
@@ -179,6 +225,12 @@ st.caption(
     "bez PreTeXt-a i bez GitHub Actions. Postojeća stranica **📘 Skripta** radi nepromijenjeno. "
     "Redoslijed poglavlja, nazive i odabir zadataka i dalje uređuješ ondje — ovdje se samo koriste."
 )
+
+if st.button("🔄 Osvježi podatke iz baze", key="tex_osvjezi_gore",
+             help="Klikni nakon što si nešto ispravio u Google Sheetu — stranica inače drži "
+                  "zadatke, teoriju i formule u kešu do 10 minuta."):
+    osvjezi_kes()
+    st.rerun()
 
 try:
     svi_zadaci = _ucitaj_zadatke_za(PREDMET)
@@ -240,6 +292,17 @@ def _naziv_formule(fid):
     f = formule_po_id.get(str(fid)) or {}
     paket = _cist(f.get("paket"))
     return f"{_cist(f.get('naslov')) or fid}" + (f"  ·  {paket}" if paket else "")
+
+
+# Spremljene postavke se upisuju na SVA poglavlja, ne samo na odabrana — tako provjera
+# „cijele knjige" (niže) vidi i teoriju poglavlja koja trenutno nisu u ispisu. Za odabrana
+# poglavlja ove vrijednosti kasnije prepisuju widgeti u sklopivim blokovima.
+for _p in sva_poglavlja:
+    _s = spremljene_postavke.get(_p["kljuc"], {})
+    _p["oznaka"] = _s.get("oznaka", "")
+    _p["teorija"] = teorije.get(_s.get("teorija_kljuc", ""), "")
+    _p["formule"] = [formule_po_id[x] for x in _s.get("formule_ids", []) if x in formule_po_id]
+    _p["formule_rucno"] = _s.get("formule_rucno", "")
 
 
 # ---------------------------------------------------------------
@@ -390,14 +453,62 @@ dvostrano = o3.checkbox(
     "Obostrani ispis s uvezom", value=True, key="tex_dvostrano",
     help="Unutarnja margina veća od vanjske (1.9/1.0 cm) — uvez ne pojede tekst. "
          "Isključeno = simetrične margine 1.3 cm, kao kod testova.")
+
+# --- Gdje su rješenja i prijelom stranice: oboje utječe na broj polupraznih stranica ---
+m1, m2, m3 = st.columns(3)
+mjesto_rjesenja = m1.radio(
+    "Gdje su rješenja", [sl.MJESTO_KRAJ, sl.MJESTO_POGLAVLJE], key="tex_mjesto_rjesenja",
+    format_func=lambda x: {"kraj": "Sva na kraju skripte",
+                           "poglavlje": "Iza svakog poglavlja"}[x],
+    help="Sva na kraju: jedna cjelina „Rješenja” s numeracijom po poglavljima "
+         "(3.1.1., 3.1.2., …) — manje polupraznih stranica. Oznake su iste u oba slučaja.")
+nova_stranica = m2.checkbox(
+    "Svaka cjelina na novoj stranici", value=True, key="tex_nova_stranica",
+    help="Isključi ako želiš još manje praznog papira — cjeline se tada nižu jedna za "
+         "drugom, s većim razmakom umjesto prijeloma.")
+sa_sadrzajem = m3.checkbox(
+    "Ispiši sadržaj (s brojevima stranica)", value=False, key="tex_sadrzaj",
+    help="Popis cjelina s brojevima stranica, odmah iza naslova. Traži treći prolaz "
+         "pdflatexa, pa gradnja traje malo dulje.")
 sa_slikama = st.checkbox(
     "Uključi slike uz zadatke", value=True, key="tex_slike",
     help="Isključi za brzu probu izgleda — slike se dohvaćaju s Drivea i to je najsporiji dio.")
+dopusti_neispravne = st.checkbox(
+    "Nastavi i kad neki zadatak ima neispravan LaTeX", value=False, key="tex_dopusti",
+    help="Zadatak ostaje na svom mjestu (numeracija se ne mijenja), ali umjesto teksta piše "
+         "vidljiva oznaka NEISPRAVAN LaTeX, s id-om i poljem. Korisno da jedna pokvarena "
+         "ćelija ne blokira ispis cijele skripte.")
 
 ukupno_p = sum(len(p["primjeri"]) for p in poglavlja)
 ukupno_z = sum(len(p["zadaci"]) for p in poglavlja)
 st.info(f"U skriptu ide **{len(poglavlja)}** od **{len(sva_poglavlja)}** poglavlja: "
         f"**{ukupno_p}** primjera i **{ukupno_z}** zadataka.")
+
+
+# ---------------------------------------------------------------
+# Provjera LaTeXa — SVI nalazi odjednom
+# ---------------------------------------------------------------
+
+with st.expander("🔍 Provjera LaTeXa (sve greške odjednom)", expanded=False):
+    st.caption(
+        "Nađe SVA polja koja bi srušila kompajliranje i ispiše ih u jednoj tablici — ne jedno "
+        "po jedno. Provjerava neparan broj `$` i neuravnotežene `{ }` unutar matematike; to su "
+        "greške koje se mogu naći bez pokretanja LaTeXa. Ostalo javi pdflatex pri gradnji."
+    )
+    cijela_knjiga = st.checkbox(
+        "Provjeri CIJELU knjigu (sva poglavlja, ne samo odabrana)", value=True,
+        key="tex_provjeri_sve",
+        help="Da odjednom vidiš sve što treba popraviti, a ne samo u poglavljima koja sad ispisuješ.")
+    if st.button("🔍 Provjeri sada", key="tex_provjeri_gumb"):
+        _za_provjeru = sva_poglavlja if cijela_knjiga else poglavlja
+        _nalazi = sl.provjeri_latex(_za_provjeru)
+        if not _nalazi:
+            st.success(f"Nema nijedne greške u {len(_za_provjeru)} poglavlja. Možeš generirati PDF.")
+        else:
+            _redaka = len({(p["poglavlje_kljuc"], p["id"]) for p in _nalazi})
+            st.error(f"❌ {len(_nalazi)} nalaza u {_redaka} redaka baze "
+                     f"(provjereno {len(_za_provjeru)} poglavlja).")
+            _prikazi_problema(_nalazi, "Sve greške:")
 
 
 # ---------------------------------------------------------------
@@ -413,6 +524,8 @@ def _pripremi_main_tex():
             .replace("{{DVOSTRANO}}", ", twoside" if dvostrano else "")
             .replace("{{PREDMET_ZAGLAVLJE}}", predmet_config.postavke(PREDMET)["zaglavlje_pdf"])
             .replace("{{GEOMETRIJA}}", "\\cakiuvez" if dvostrano else "\\cakibezuveza")
+            .replace("{{PRIJELOM}}", "" if nova_stranica else "\\cakicjelinebezprijeloma")
+            .replace("{{SADRZAJ}}", "\\cakisadrzaj" if sa_sadrzajem else "")
             .replace("{{NASLOV_ZAGLAVLJE}}", escape_outside_math(naslov))
             .replace("{{NASLOV}}", escape_outside_math(naslov))
             .replace("{{PODNASLOV}}", escape_outside_math(podnaslov))
@@ -421,16 +534,22 @@ def _pripremi_main_tex():
 
 
 if st.button("🖨️ Generiraj PDF", type="primary", key="tex_generiraj"):
-    # BLOKIRAJUĆA provjera prije kompajliranja — neparan broj `$` je najčešći uzrok pada
-    # (isti obrazac kao u Test Builderu: bolje jasna poruka nego 40 redaka LaTeX loga).
-    problemi = sl.provjeri_neuparene_dolare(poglavlja)
-    if problemi:
-        st.error(f"❌ {len(problemi)} polja ima neparan broj `$` znakova — to sigurno razbija "
-                 "kompajliranje. Ispravi ih u bazi i pokušaj ponovno:")
-        for naslov_pog, zid, polje, tekst in problemi[:30]:
-            st.markdown(f"**{naslov_pog}** · `{zid}` — polje *{polje}*:")
-            st.code(tekst, language="text")
+    # Provjera prije kompajliranja: SVI nalazi odjednom (ne jedan po jedan), jer pdflatex s
+    # -halt-on-error staje na prvoj grešci pa bi inače slijedilo desetke krugova.
+    problemi = sl.provjeri_latex(poglavlja)
+    if problemi and not dopusti_neispravne:
+        redaka = len({(p["poglavlje_kljuc"], p["id"]) for p in problemi})
+        st.error(
+            f"❌ {len(problemi)} nalaza u {redaka} redaka baze razbilo bi kompajliranje. "
+            "Ispravi ih u Sheetu pa klikni gumb za osvježavanje ispod tablice — ili uključi "
+            "kvačicu „Nastavi i kad neki zadatak ima neispravan LaTeX” gore i ispiši skriptu "
+            "odmah, s označenim mjestima.")
+        _prikazi_problema(problemi, "Sve greške u odabranim poglavljima:")
         st.stop()
+    if problemi:
+        st.warning(f"⚠️ {len(problemi)} nalaza — ta mjesta će u PDF-u biti označena kao "
+                   "NEISPRAVAN LaTeX, ostalo se ispisuje normalno.")
+        _prikazi_problema(problemi, "Označeno u PDF-u:")
 
     # Slike se dohvaćaju PRIJE gradnje .tex-a, da se u dokument upišu samo one koje stvarno
     # postoje (isti razlog kao u Test Builderu).
@@ -452,7 +571,8 @@ if st.button("🖨️ Generiraj PDF", type="primary", key="tex_generiraj"):
                            + ("…" if len(nedostaju) > 15 else ""))
 
     tijelo, broj_p, broj_z = sl.izgradi_tijelo(
-        poglavlja, verzija=verzija, rjesenja=rjesenja, slike_dostupne=set(slike_bytes))
+        poglavlja, verzija=verzija, rjesenja=rjesenja, slike_dostupne=set(slike_bytes),
+        preskoci_neispravne=bool(problemi), mjesto_rjesenja=mjesto_rjesenja)
     if not tijelo.strip():
         st.error("Nema sadržaja za PDF.")
         st.stop()
@@ -477,7 +597,9 @@ if st.button("🖨️ Generiraj PDF", type="primary", key="tex_generiraj"):
             ok, log_tail = True, ""
             # Dva prolaza: breakable tcolorbox okviri i fancyhdr trebaju drugi prolaz da
             # se prijelomi/brojevi stranica slegnu (isto kao Test Builder).
-            for _ in range(2):
+            # TRI prolaza kad je uključen sadržaj: 1. skupi stavke u .toc, 2. ubaci sadržaj
+            # (čime se sav sadržaj pomakne za koju stranicu), 3. ispravi brojeve stranica.
+            for _ in range(3 if sa_sadrzajem else 2):
                 r = subprocess.run(
                     ["pdflatex", "-no-shell-escape", "-interaction=nonstopmode",
                      "-halt-on-error", "main.tex"],
