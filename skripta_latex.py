@@ -29,6 +29,7 @@ import os
 
 import baza_zadataka_pipeline as bp
 import latex_tekst as lt
+import skupine_zadataka
 import teorija_markup
 
 # Naslovi odjeljaka unutar poglavlja — na jednom mjestu, da ih Caki mijenja bez
@@ -64,10 +65,94 @@ def _slike_csv(row, slike_dostupne) -> str:
     slike_dostupne: skup naziva slika koje su STVARNO skinute na disk. Slika koje nema se
     PRESKAČE — referenciranje nepostojeće datoteke ruši cijelo kompajliranje s
     "File not found" (ista zaštita kao u Test Builderu)."""
-    nazivi = [os.path.basename(x) for x in bp.razdvoji_slike(row.get("slika_putanja"))]
+    izvori = [row] + list(row.get("stavke") or [])   # skupina: i slike njezinih stavki
+    nazivi = []
+    for r in izvori:
+        for x in bp.razdvoji_slike(r.get("slika_putanja")):
+            naziv = os.path.basename(x)
+            if naziv and naziv not in nazivi:
+                nazivi.append(naziv)
     if slike_dostupne is not None:
         nazivi = [x for x in nazivi if x in slike_dostupne]
     return ",".join(f"images/{x}" for x in nazivi)
+
+
+# ============================================================
+# Tablice u tekstu zadatka (6.11.2026., Cakijev nalaz)
+#
+# Baza drži tablice u DVA oblika:
+#   1. markdown pipe tablica  — noviji uvozi (v. upute/UPDATE_04-11_uvoz_pipe_tablice.md)
+#   2. `\begin{tabular}` s ESCAPEANIM `\&` — uvozi od 27.–30.10.2026.
+# Prva verzija ove stranice ispisivala je oboje doslovno: pipe tablica je izlazila kao
+# „| Litre | 9.1 | 23.45 |", a tabular kao jedan stupac s vidljivim `&` (jer `\&` u LaTeXu
+# znači ZNAK &, a ne razdjelnik stupaca).
+#
+# Rješenje NAMJERNO ne piše vlastiti parser: koristi iste, već dokazane funkcije kojima i
+# PreTeXt staza slaže tablice (bp._latex_tabular_u_pipe -> bp._pronadji_pipe_tablice), pa se
+# dvije staze ne mogu razići u tome ŠTO je tablica. Ovdje je nova samo zadnja karika —
+# ispis segmenta kao pravog LaTeX tabulara.
+# ============================================================
+
+def _latex_celija(raw) -> str:
+    """Jedna ćelija tablice. Odluka „tekst ili matematika" ide kroz bp._je_obican_tekst —
+    JEDINSTVENO mjesto za cijeli projekt (v. ondje): riječ ostaje tekst (matematički font
+    nema č/ž/š/ć/đ!), a izraz ide u $...$ da brojevi budu u matematičkom fontu."""
+    if raw is None or not str(raw).strip():
+        return ""
+    s = str(raw).strip()
+    if "$" in s:
+        return lt.escape_outside_math(s)
+    if bp._je_obican_tekst(s):
+        return lt.escape_outside_math(s)
+    return f"${s}$"
+
+
+def _latex_tabular(redovi) -> str:
+    """[[ćelija, ...], ...] -> pravi LaTeX tabular, centriran, s mrežom crta (prvi redak je
+    zaglavlje, kako markdown i definira). Mreža (`|c|c|` + \\hline) namjerno je ista kao u
+    tablicama koje je AI uvozio, da izgled ostane prepoznatljiv."""
+    redovi = [r for r in (redovi or []) if r]
+    if not redovi:
+        return ""
+    sirina = max(len(r) for r in redovi)
+    linije = ["\\par\\vspace{2mm}", "{\\centering",
+              "\\begin{tabular}{|" + "c|" * sirina + "}", "\\hline"]
+    for redak in redovi:
+        celije = [_latex_celija(c) for c in redak] + [""] * (sirina - len(redak))
+        linije.append(" & ".join(celije) + " \\\\ \\hline")
+    linije += ["\\end{tabular}", "\\par}", "\\vspace{2mm}"]
+    return "\n".join(linije)
+
+
+def tekst_u_latex_blokove(raw) -> str:
+    """Tekst zadatka -> LaTeX, s tablicama složenima kao prave tablice.
+
+    Redoslijed je isti kao u bp._statement_tekst_lines (PreTeXt staza):
+    1. `\\begin{tabular}` -> pipe tablica (usput rješava i escapeani `\\&`),
+    2. tekst se razlomi na segmente (tekst / tablica),
+    3. tekstualni segmenti idu kroz escape, tablični u \\begin{tabular}.
+    Zadatak BEZ tablice prolazi kroz točno isti escape kao i prije — bez promjene."""
+    raw = bp._latex_tabular_u_pipe(str(raw or ""))
+    if not raw.strip():
+        return ""
+    dijelovi = []
+    for vrsta, sadrzaj in bp._pronadji_pipe_tablice(raw):
+        if vrsta == "tab":
+            dijelovi.append(_latex_tabular(sadrzaj))
+        else:
+            tekst = lt.escape_outside_math(str(sadrzaj).strip(), cuvaj_okoline=True)
+            if tekst:
+                dijelovi.append(tekst)
+    return "\n".join(dijelovi)
+
+
+def _escape_stavke(sadrzaj) -> str:
+    """Escape za stavke skupine i za rješenja: tablica se spljošti u čitljiv redak
+    („x, f(x); -1, 7") umjesto blok-tablice. Razlog je isti kao kod bp._latex_tabular_u_tekst:
+    blok-tablica unutar stavke a)/b)/c) ili unutar uskog stupca rješenja razbija slog —
+    ali SIROVI `\\begin{tabular}` ne izlazi nikad."""
+    return lt.escape_outside_math(bp._latex_tabular_u_tekst(str(sadrzaj or "")),
+                                  cuvaj_okoline=True)
 
 
 def _opcije_iz_retka(row) -> list:
@@ -107,11 +192,14 @@ POLJA_RJESENJA = {"rješenje", "konačan odgovor"}
 
 
 def _je_losa_izjava(losa_polja) -> bool:
-    return any(p in POLJA_IZJAVE or p.startswith("opcija ") for p in losa_polja or ())
+    # "stavka a) tekst zadatka" — polje stavke skupine (v. provjeri_latex).
+    return any(p in POLJA_IZJAVE or p.startswith("opcija ") or p.endswith(" tekst zadatka")
+               for p in losa_polja or ())
 
 
 def _je_lose_rjesenje(losa_polja) -> bool:
-    return any(p in POLJA_RJESENJA for p in losa_polja or ())
+    return any(p in POLJA_RJESENJA or p.endswith(" rješenje") or p.endswith(" konačan odgovor")
+               for p in losa_polja or ())
 
 
 def _oznaka_neispravnog(row, losa_polja) -> str:
@@ -146,7 +234,17 @@ def tekst_stavke(row, slike_dostupne=None, s_oznakom_tezine=True, losa_polja=Non
         raw = bp._bez_opcija_u_tekstu(raw)
 
     oznaka = bp._oznaka_izvor_tezina(row) if s_oznakom_tezine else ""
-    tekst = lt.escape_outside_math(oznaka + raw.strip(), cuvaj_okoline=True)
+    # Oznaka težine se escapira zasebno i lijepi ISPRED tijela: tijelo može početi tablicom,
+    # koja je blok, pa se oznaka ne smije provući kroz isti prolaz.
+    tekst = lt.escape_outside_math(oznaka) + tekst_u_latex_blokove(raw)
+
+    # SKUPINA ZADATAKA (6.11.2026., Cakijev nalaz „a, b, c se prikazuju kao zasebni zadaci"):
+    # uvod skupine + stavke a), b), c)… u JEDNOM zadatku. Blok gradi skupine_zadataka —
+    # isti modul i isti izgled kao u Test Builderu, da se dva ispisa ne raziđu. Dodaje se
+    # NAKON escapiranja uvoda, jer sadrži prave LaTeX naredbe (\textbf, \qquad).
+    stavke = row.get("stavke") or []
+    if stavke:
+        tekst += skupine_zadataka.izgradi_stavke_blok(stavke, escape=_escape_stavke)
 
     slike_csv = _slike_csv(row, slike_dostupne)
     if opcije:
@@ -179,7 +277,17 @@ def rjesenje_stavke(row, nacin=RJESENJA_POSTUPAK, losa_polja=None) -> str:
     losa_polja: v. tekst_stavke — neispravno `rjesenje`/`konacan_odgovor` zamjenjuje se
     vidljivom oznakom, a redak rješenja ostaje na svom mjestu."""
     if _je_lose_rjesenje(losa_polja):
-        return _oznaka_neispravnog(row, [p for p in losa_polja if p in POLJA_RJESENJA])
+        return _oznaka_neispravnog(row, [p for p in losa_polja if _je_lose_rjesenje([p])])
+
+    # Skupina: rješenje po stavci a), b), c)… (isti blok kao u Test Builderu).
+    stavke = row.get("stavke") or []
+    if stavke:
+        rjesenje_tex, konacan_tex = skupine_zadataka.izgradi_rjesenja_blok(
+            stavke, escape=_escape_stavke)
+        if nacin == RJESENJA_ODGOVOR:
+            return konacan_tex or rjesenje_tex
+        return rjesenje_tex
+
     postupak = str(row.get("rjesenje") or "").strip()
     odgovor = str(row.get("konacan_odgovor") or "").strip()
     if nacin == RJESENJA_ODGOVOR:
@@ -417,6 +525,24 @@ def _blok_rjesenja(stavke, nacin) -> list:
 # Grupiranje redaka baze u poglavlja (ista pravila kao PreTeXt skripta iz knjige)
 # ============================================================
 
+def _filtriraj_jedinice(redovi, izbor):
+    """Kao bp._filtriraj_po_odabiru, ali svjesno SKUPINA: jedinica ostaje ako je u odabiru
+    glavni redak ILI bilo koja njezina stavka.
+
+    Zašto: plan na stranici 📘 Skripta nabraja POJEDINAČNE retke baze, pa odabir zna
+    sadržavati samo id-eve stavki. Da se gleda isključivo glavni redak, takva bi skupina
+    tiho ispala iz skripte."""
+    if izbor is None:
+        return redovi
+    skup = {str(x) for x in izbor}
+    izlaz = []
+    for r in redovi:
+        idovi = {str(r.get("id", ""))} | {str(s.get("id", "")) for s in (r.get("stavke") or [])}
+        if idovi & skup:
+            izlaz.append(r)
+    return izlaz
+
+
 def grupiraj_po_poglavljima(rows, naslovi_poglavlja=None, redoslijed_poglavlja=None,
                             odabir_poglavlja=None) -> list:
     """Redci baze -> lista poglavlja (bez teorije i formula — njih dodaje stranica).
@@ -432,10 +558,21 @@ def grupiraj_po_poglavljima(rows, naslovi_poglavlja=None, redoslijed_poglavlja=N
     naslovi_poglavlja = naslovi_poglavlja or {}
     odabir_poglavlja = odabir_poglavlja or {}
 
+    # 1) SKUPINE PRIJE razvrstavanja po poglavljima (6.11.2026.). Redoslijed je bitan: stavka
+    #    zna imati prazan `izvor_naziv` (nasljeđuje ga od skupine), pa bi sama završila u
+    #    poglavlju „bez naziva", odvojena od svoje skupine. Nakon grupiranja poglavlje se
+    #    određuje iz GLAVNOG retka, a stavke putuju s njim.
+    jedinice, _upozorenja = skupine_zadataka.grupiraj(list(rows or []))
+
     po_poglavlju = {}
-    for row in rows or []:
-        kljuc = bp.parsiraj_poglavlje_iz_izvora(row.get("izvor_naziv", ""))
-        po_poglavlju.setdefault(kljuc, []).append(row)
+    for jedinica in jedinice:
+        glavni = jedinica["glavni"]
+        red = dict(glavni)          # kopija — redci iz Sheeta se ne diraju
+        if jedinica["stavke"]:
+            # nasljedi(): prazna polja stavke (cjelina, težina, izvor…) popuni iz skupine
+            red["stavke"] = [skupine_zadataka.nasljedi(glavni, s) for s in jedinica["stavke"]]
+        kljuc = bp.parsiraj_poglavlje_iz_izvora(glavni.get("izvor_naziv", ""))
+        po_poglavlju.setdefault(kljuc, []).append(red)
 
     izlaz = []
     for kljuc in sorted(po_poglavlju,
@@ -445,9 +582,9 @@ def grupiraj_po_poglavljima(rows, naslovi_poglavlja=None, redoslijed_poglavlja=N
             continue
         grupa = po_poglavlju[kljuc]
         tipovi = odabir.get("tipovi") or {}
-        primjeri = bp._filtriraj_po_odabiru(
+        primjeri = _filtriraj_jedinice(
             [r for r in grupa if bp._je_primjer_za_skriptu(r, tipovi)], odabir.get("primjeri"))
-        zadaci = bp._filtriraj_po_odabiru(
+        zadaci = _filtriraj_jedinice(
             [r for r in grupa if not bp._je_primjer_za_skriptu(r, tipovi)], odabir.get("zadaci"))
         if not primjeri and not zadaci:
             continue
@@ -487,6 +624,13 @@ def provjeri_latex(poglavlja) -> list:
                 for j, opcija in enumerate(_opcije_iz_retka(row)):
                     slovo = lt.SLOVA_OPCIJA[j] if j < len(lt.SLOVA_OPCIJA) else str(j + 1)
                     polja.append((f"opcija {slovo}", opcija))
+                # Stavke skupine (a, b, c…) idu u isti ispis pa se moraju i provjeriti —
+                # inače bi neparan `$` u stavci srušio build, a tablica ga ne bi pokazala.
+                for j, stavka in enumerate(row.get("stavke") or []):
+                    oznaka_st = skupine_zadataka.slovo(j)
+                    polja += [(f"stavka {oznaka_st} tekst zadatka", stavka.get("tekst_zadatka_latex")),
+                              (f"stavka {oznaka_st} rješenje", stavka.get("rjesenje")),
+                              (f"stavka {oznaka_st} konačan odgovor", stavka.get("konacan_odgovor"))]
                 for naziv_polja, sadrzaj in polja:
                     for opis in lt.provjeri_polje(sadrzaj):
                         problemi.append({
@@ -519,8 +663,9 @@ def sve_slike(poglavlja) -> list:
     for pog in poglavlja or []:
         for vrsta in ("primjeri", "zadaci"):
             for row in pog.get(vrsta) or []:
-                for x in bp.razdvoji_slike(row.get("slika_putanja")):
-                    naziv = os.path.basename(x)
-                    if naziv and naziv not in nazivi:
-                        nazivi.append(naziv)
+                for r in [row] + list(row.get("stavke") or []):
+                    for x in bp.razdvoji_slike(r.get("slika_putanja")):
+                        naziv = os.path.basename(x)
+                        if naziv and naziv not in nazivi:
+                            nazivi.append(naziv)
     return nazivi
