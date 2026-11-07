@@ -107,21 +107,26 @@ def _latex_celija(raw) -> str:
     return f"${s}$"
 
 
-def _latex_tabular(redovi) -> str:
-    """[[ćelija, ...], ...] -> pravi LaTeX tabular, centriran, s mrežom crta (prvi redak je
-    zaglavlje, kako markdown i definira). Mreža (`|c|c|` + \\hline) namjerno je ista kao u
-    tablicama koje je AI uvozio, da izgled ostane prepoznatljiv."""
+def _latex_tabular(redovi, samostalno: bool = True) -> str:
+    """[[ćelija, ...], ...] -> pravi LaTeX tabular, s mrežom crta (prvi redak je zaglavlje,
+    kako markdown i definira). Mreža (`|c|c|` + \\hline) namjerno je ista kao u tablicama
+    koje je AI uvozio, da izgled ostane prepoznatljiv.
+
+    samostalno=True: tablica je blok u tekstu zadatka — centrira se i dobiva razmak gore/dolje.
+    samostalno=False: tablica je unutar minipagea (opcija A/B/C/D), gdje centriranje i razmak
+    dolaze izvana — bez ovoga bi svaka opcija dobila dvostruki razmak."""
     redovi = [r for r in (redovi or []) if r]
     if not redovi:
         return ""
     sirina = max(len(r) for r in redovi)
-    linije = ["\\par\\vspace{2mm}", "{\\centering",
-              "\\begin{tabular}{|" + "c|" * sirina + "}", "\\hline"]
+    linije = ["\\begin{tabular}{|" + "c|" * sirina + "}", "\\hline"]
     for redak in redovi:
         celije = [_latex_celija(c) for c in redak] + [""] * (sirina - len(redak))
         linije.append(" & ".join(celije) + " \\\\ \\hline")
-    linije += ["\\end{tabular}", "\\par}", "\\vspace{2mm}"]
-    return "\n".join(linije)
+    linije.append("\\end{tabular}")
+    if not samostalno:
+        return "\n".join(linije)
+    return "\n".join(["\\par\\vspace{2mm}", "{\\centering"] + linije + ["\\par}", "\\vspace{2mm}"])
 
 
 def tekst_u_latex_blokove(raw) -> str:
@@ -144,6 +149,48 @@ def tekst_u_latex_blokove(raw) -> str:
             if tekst:
                 dijelovi.append(tekst)
     return "\n".join(dijelovi)
+
+
+def _opcija_kao_tablica(opcija):
+    """Ako je CIJELA ponuđena opcija jedna tablica, vrati njezine retke; inače None.
+
+    Koristi isti par funkcija kao tekst zadatka (bp._latex_tabular_u_pipe ->
+    bp._pronadji_pipe_tablice), pa se „što je tablica" nigdje ne odlučuje dvaput. Priznaje se
+    SAMO ako uz tablicu nema drugog teksta — opcija „tablica + objašnjenje" ostaje običan
+    tekst, jer bi je minipage raspored osakatio."""
+    sirovo = bp._latex_tabular_u_pipe(str(opcija or ""))
+    if not sirovo.strip():
+        return None
+    tablice = [s for vrsta, s in bp._pronadji_pipe_tablice(sirovo) if vrsta == "tab"]
+    ostatak = "".join(str(s) for vrsta, s in bp._pronadji_pipe_tablice(sirovo) if vrsta != "tab")
+    if len(tablice) == 1 and not ostatak.strip():
+        return tablice[0]
+    return None
+
+
+def _opcije_kao_tablice(opcije):
+    """Popis tablica ako su SVE opcije tablice (inače None — siguran pad na tekstualni
+    prikaz, isto načelo kao kod opcija-slika)."""
+    if len(opcije or []) < 2:
+        return None
+    tablice = [_opcija_kao_tablica(o) for o in opcije]
+    return tablice if all(t is not None for t in tablice) else None
+
+
+# Širina minipagea po broju opcija — četiri tablice moraju stati u redak.
+_SIRINA_OPCIJE = {2: "0.46", 3: "0.31", 4: "0.23"}
+
+
+def _blok_opcija_tablica(tablice) -> str:
+    """A) B) C) D) kao tablice jedna uz drugu (v. \\cakiopcijatablica u caki-skripta.sty)."""
+    sirina = _SIRINA_OPCIJE.get(len(tablice), "0.18")
+    dijelovi = []
+    for i, redovi in enumerate(tablice):
+        slovo = lt.SLOVA_OPCIJA[i] if i < len(lt.SLOVA_OPCIJA) else str(i + 1)
+        dijelovi.append(f"\\cakiopcijatablica{{{slovo}}}{{{sirina}}}{{%\n"
+                        f"{_latex_tabular(redovi, samostalno=False)}%\n}}")
+    return ("\n\\par\\vspace{3mm}\n\\noindent\n" + "\n".join(dijelovi)
+            + "\n\\par\\vspace{2mm}\n")
 
 
 def _escape_stavke(sadrzaj) -> str:
@@ -257,7 +304,14 @@ def tekst_stavke(row, slike_dostupne=None, s_oznakom_tezine=True, losa_polja=Non
             tekst += f"\n\\par\\vspace{{2mm}}\n{{\\centering\\cakislikeopcije{{{lista}}}\\par}}"
             slike_csv = ""   # slike su VEĆ umetnute u tekst — ne prikazuj ih drugi put
         else:
-            tekst += lt.izgradi_opcije_blok(opcije)
+            # 6.11.2026.: opcije koje su SAME TABLICE (zadaci „Koja tablica pripada
+            # funkciji…?"). Redoslijed provjere je isti kao kod slika: prvo poseban
+            # slučaj, pa siguran pad na tekstualni \quad-blok.
+            tablice = _opcije_kao_tablice(opcije)
+            if tablice:
+                tekst += _blok_opcija_tablica(tablice)
+            else:
+                tekst += lt.izgradi_opcije_blok(opcije)
 
     uputa = str(row.get("uputa") or "").strip()
     if uputa:

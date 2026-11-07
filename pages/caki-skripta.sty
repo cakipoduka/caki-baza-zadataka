@@ -267,6 +267,21 @@
     \par
 }
 
+% --- 10b. PONUĐENI ODGOVORI KOJI SU TABLICE (6.11.2026., Cakijev nalaz) -----
+% \cakiopcijatablica{slovo}{širina}{tablica}
+% Zadaci tipa „Koja tablica pripada funkciji...?" imaju ČETIRI TABLICE kao ponuđene
+% odgovore. Tekstualni \mcFourOptions ih ne može složiti (tablica je blok, ne tok teksta),
+% pa svaka ide u svoj minipage sa slovom iznad — ista ideja kao \cakislikeopcije u
+% caki-style.sty za opcije koje su slike.
+% Širinu računa Python (ovisno o broju opcija), jer on jedini zna koliko ih je.
+\newcommand{\cakiopcijatablica}[3]{%
+    \begin{minipage}[t]{#2\linewidth}
+        \centering
+        {\small\sffamily\bfseries\color{MathPrimary} #1)}\\[1mm]
+        #3
+    \end{minipage}\hspace{0.01\linewidth}%
+}
+
 % --- 11b. OZNAKA NEISPRAVNOG LaTeXA (5.11.2026., Cakijev nalaz) -------------
 % \cakineispravno{id zadatka}{koja polja}
 % Kad polje iz baze ima LaTeX koji bi srušio kompajliranje (neparan `$`, neuravnotežene
