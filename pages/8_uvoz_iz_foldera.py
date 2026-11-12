@@ -28,6 +28,7 @@ from baza_zadataka_pipeline import (
     get_biblioteke_izvora,
     get_drive_service,
     get_gspread_client,
+    get_potpoglavlja_po_cjelini,
     get_or_create_worksheet,
     nadopuni_ili_dodaj_zadatke,
     prikazi_opcije_markdown,
@@ -232,6 +233,16 @@ with tab1:
                     st.success("Gotovo. Idi na karticu '2. Pregled i usporedba'.")
 
 # ===================================================================================================================
+@st.cache_data(ttl=300)
+def _potpoglavlja_po_cjelini():
+    """{cjelina: [potpoglavlje, ...]} iz taba Sifrarnik_potpoglavlja - za izbornike u
+    preglednoj tablici koraka 2. Kesirano jer se cita pri svakom reruna tablice."""
+    try:
+        return {c: [pp for pp, _ in v] for c, v in get_potpoglavlja_po_cjelini(sheet).items()}
+    except Exception:  # noqa: BLE001 - sifrarnik nije kriticna ovisnost pregleda
+        return {}
+
+
 def ucitaj_izlaz(file_id):
     return drive_io().procitaj_json(file_id)
 
@@ -282,12 +293,113 @@ with tab2:
                 with st.expander(f"📎 Dostupne oznake slika u ovom izvoru ({len(iz['mapa_slika'])}) - za ručno popunjavanje polja ispod"):
                     for oznaka, info in sorted(iz["mapa_slika"].items()):
                         st.markdown(f"`{oznaka}` — [otvori]({'https://drive.google.com/file/d/' + info['drive_id'] + '/view'})")
-            samo = st.checkbox("Samo zadaci s upozorenjem", value=False)
-            tab = pd.DataFrame([{"br": z["privremeni_broj"], "uloga": z["uloga"], "tip": z["tip_zadatka"], "odgovor": z["konacan_odgovor"],
-                                 "slika": z["slika_url"], "status_provjere": z["status_provjere"],
-                                 "tekst": z["tekst_zadatka_latex"][:160]} for z in iz["zadaci"]
-                                if not samo or z["status_provjere"]])
-            st.dataframe(tab, hide_index=True, width="stretch")
+            baza_kljuc = r_model["izlaz_file_id"]
+            samo = st.checkbox("Samo zadaci s upozorenjem", value=False, key=f"samo_upoz_{baza_kljuc}")
+
+            # 12.11.2026. (Cakijev zahtjev): PREGLEDNA TABLICA prije upisa. Jedan redak = jedan
+            # zadatak, pa se najveci dio posla - maknuti kvacicu zadatku koji ne zelim, popraviti
+            # bodove, dodijeliti cjelinu/potpoglavlje - odradi BEZ renderanja stotina LaTeX
+            # kartica (kod 300-500 zadataka mjesecno to je razlika izmedu upotrebljivog i ne).
+            # Kartice ispod ostaju za zadatke kojima stvarno treba pogledati tekst/sliku/rjesenje.
+            # Sve se sprema u ISTU cache datoteku na Driveu, pa korak 3 vidi ispravljenu verziju.
+            _pp_po_cjelini = _potpoglavlja_po_cjelini()
+            _sve_cjeline = [z.get("cjelina") for z in iz["zadaci"]]
+            _opcije_cjelina = uf.opcije_za_stupac(_pp_po_cjelini.keys(), _sve_cjeline)
+            _opcije_potpoglavlja = uf.opcije_za_stupac(
+                uf.potpoglavlja_u_opsegu(_pp_po_cjelini, _sve_cjeline),
+                [z.get("potpoglavlje") for z in iz["zadaci"]])
+            _opcije_tezina = uf.opcije_za_stupac(
+                ["lako", "srednje", "tesko"], [z.get("tezina") for z in iz["zadaci"]])
+            _opcije_tip = uf.opcije_za_stupac(
+                ["visestruki_izbor", "kratki_odgovor", "prosireni_odgovor"],
+                [z.get("tip_zadatka") for z in iz["zadaci"]])
+
+            with st.expander("⚡ Masovno postavi cjelinu/potpoglavlje za SVE zadatke ovog izvora"):
+                st.caption(
+                    "Za zbirke i udzbenike gdje cijelo poglavlje ide u istu cjelinu. Primjenjuje se "
+                    "na sve zadatke izvora (i one skrivene filterom), odmah se sprema na Drive."
+                )
+                mc1, mc2, mc3 = st.columns([3, 3, 1])
+                _mas_cj = mc1.selectbox("Cjelina", [""] + sorted(_pp_po_cjelini),
+                                        key=f"mas_cj_{baza_kljuc}")
+                _mas_pp = mc2.selectbox("Potpoglavlje (neobavezno)",
+                                        [""] + list(_pp_po_cjelini.get(_mas_cj, [])),
+                                        key=f"mas_pp_{baza_kljuc}", disabled=not _mas_cj)
+                mc3.write("")
+                if mc3.button("Primijeni", key=f"mas_go_{baza_kljuc}", disabled=not _mas_cj):
+                    for z in iz["zadaci"]:
+                        z["cjelina"] = _mas_cj
+                        if _mas_pp:
+                            z["potpoglavlje"] = _mas_pp
+                    try:
+                        drive_io().spremi_json(None, None, iz, postojeci_id=baza_kljuc)
+                        st.session_state.pop(f"grid_{baza_kljuc}", None)
+                        st.success(f"Postavljeno na {len(iz['zadaci'])} zadataka i spremljeno.")
+                        st.rerun()
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"Spremanje nije uspjelo: {e}")
+
+            _redci = []
+            for z in iz["zadaci"]:
+                if samo and not z["status_provjere"]:
+                    continue
+                _redci.append({
+                    "unesi": bool(z.get("unesi", True)),
+                    "br": z["privremeni_broj"],
+                    "uloga": z["uloga"],
+                    "tip": z["tip_zadatka"],
+                    "cjelina": z.get("cjelina", ""),
+                    "potpoglavlje": z.get("potpoglavlje", ""),
+                    "tezina": z.get("tezina", ""),
+                    "bodovi": z.get("max_bodovi", ""),
+                    "slika": len([x for x in str(z.get("slika_url") or "").split("|") if x.strip()]),
+                    "odgovor": z["konacan_odgovor"],
+                    "upozorenje": z["status_provjere"],
+                    "tekst": z["tekst_zadatka_latex"][:160],
+                })
+            _grid = st.data_editor(
+                pd.DataFrame(_redci), key=f"grid_{baza_kljuc}", hide_index=True, width="stretch",
+                column_config={
+                    "unesi": st.column_config.CheckboxColumn(
+                        "✓", default=True, width="small",
+                        help="Makni kvacicu zadatku koji ne zelis u bazi. Odznacena skupina "
+                             "povlaci i sve svoje stavke."),
+                    "br": st.column_config.TextColumn("br", width="small"),
+                    "uloga": st.column_config.TextColumn("uloga", width="small"),
+                    "tip": st.column_config.SelectboxColumn("tip", options=_opcije_tip),
+                    "cjelina": st.column_config.SelectboxColumn("cjelina", options=_opcije_cjelina, width="medium"),
+                    "potpoglavlje": st.column_config.SelectboxColumn("potpoglavlje", options=_opcije_potpoglavlja, width="medium"),
+                    "tezina": st.column_config.SelectboxColumn("tezina", options=_opcije_tezina, width="small"),
+                    "bodovi": st.column_config.TextColumn("bodovi", width="small"),
+                    "slika": st.column_config.NumberColumn("🖼️", width="small", help="Broj slika pridruzenih zadatku"),
+                    "odgovor": st.column_config.TextColumn("odgovor", width="small"),
+                    "upozorenje": st.column_config.TextColumn("upozorenje", width="medium"),
+                    "tekst": st.column_config.TextColumn("tekst (pocetak)", width="large"),
+                },
+                disabled=["br", "uloga", "slika", "tekst"],
+            )
+            _r_grid = _grid.to_dict("records")
+            _lose_pp = [
+                r for r in _r_grid
+                if str(r["potpoglavlje"] or "").strip()
+                and str(r["potpoglavlje"]).strip() not in _pp_po_cjelini.get(str(r["cjelina"] or "").strip(), [])
+            ]
+            if _lose_pp:
+                st.warning(
+                    f"⚠️ {len(_lose_pp)} zadataka ima potpoglavlje koje po sifrarniku ne pripada svojoj "
+                    "cjelini: " + ", ".join(f"#{r['br']}" for r in _lose_pp[:12])
+                    + ("…" if len(_lose_pp) > 12 else "")
+                )
+            _bez_pp = sum(1 for r in _r_grid if not str(r["potpoglavlje"] or "").strip())
+            if _bez_pp:
+                st.info(
+                    f"ℹ️ {_bez_pp} zadataka jos nema potpoglavlje. Takvi zadaci se u Test Builderu "
+                    "vide samo preko opcije „— (bez potpoglavlja)” - bolje ih dodijeliti sada nego poslije."
+                )
+            st.caption(
+                f"Za upis oznaceno **{sum(1 for r in _r_grid if r['unesi'])}** od {len(_r_grid)} "
+                "prikazanih zadataka. Promjene vrijede tek nakon gumba „💾 Spremi izmjene” na dnu."
+            )
             # 27.10.2026.: SVI (filtrirani) zadaci odjednom, ne jedan po jedan iz padajućeg
             # izbornika (Caki - usporava pregled) - isti st.container(border=True) stil kao
             # popis zadataka u pages/2_test_builder.py, radi vizualne dosljednosti.
@@ -301,10 +413,15 @@ with tab2:
             # "Upiši u bazu" kod sljedećeg čitanja automatski vidi ispravljenu verziju, bez
             # dodatnog koraka sinkronizacije.
             st.divider()
-            baza_kljuc = r_model["izlaz_file_id"]
-            for z in iz["zadaci"]:
-                if samo and not z["status_provjere"]:
-                    continue
+            _za_kartice = [z for z in iz["zadaci"] if not (samo and not z["status_provjere"])]
+            _kljuc_prikaz = f"kartice_prikaz_{baza_kljuc}"
+            _prikaz = st.session_state.get(_kljuc_prikaz, 20)
+            st.markdown(f"#### ✏️ Kartice ({len(_za_kartice)}) — tekst, ponudeni odgovori, slika, rjesenje")
+            st.caption(
+                "Cjelinu, potpoglavlje, tezinu, bodove i kvacicu za upis brze mijenjas u tablici gore. "
+                "Kartice se prikazuju po 20 da stranica ostane brza."
+            )
+            for z in _za_kartice[:_prikaz]:
                 broj = z["privremeni_broj"]
                 pref = f"ured_{baza_kljuc}_{broj}_"
                 with st.container(border=True):
@@ -325,7 +442,28 @@ with tab2:
                         c2.text_input("Oznaka slike (slika_url, npr. SLIKA_08)", value=z["slika_url"], key=pref + "slika")
                         st.text_area("Rješenje (puni postupak)", value=z.get("rjesenje", ""), key=pref + "rjesenje", height=80)
                         st.text_input("status_provjere (isprazni kad ispraviš)", value=z["status_provjere"], key=pref + "status")
+            if len(_za_kartice) > _prikaz:
+                if st.button(f"⬇️ Prikazi jos ({len(_za_kartice) - _prikaz} preostalo)",
+                             key=f"jos_kartica_{baza_kljuc}"):
+                    st.session_state[_kljuc_prikaz] = _prikaz + 20
+                    st.rerun()
+
             if st.button("💾 Spremi izmjene u ovaj izvor", key=f"spremi_izmjene_{baza_kljuc}"):
+                # Prvo tablica (metapodaci), pa kartice (tekst/slike) - kartice imaju zadnju rijec
+                # nad poljima koja uredjuju obje, jer ih covjek tamo gleda zajedno s tekstom.
+                _po_broju = {str(r["br"]): r for r in _r_grid}
+                for z in iz["zadaci"]:
+                    r = _po_broju.get(str(z["privremeni_broj"]))
+                    if r is None:
+                        continue  # zadatak skriven filterom "samo upozorenja" - ne diraj
+                    z["unesi"] = bool(r["unesi"])
+                    z["tip_zadatka"] = str(r["tip"] or "").strip()
+                    z["cjelina"] = str(r["cjelina"] or "").strip()
+                    z["potpoglavlje"] = str(r["potpoglavlje"] or "").strip()
+                    z["tezina"] = str(r["tezina"] or "").strip()
+                    z["max_bodovi"] = str(r["bodovi"] or "").strip()
+                    z["konacan_odgovor"] = str(r["odgovor"] or "").strip()
+                    z["status_provjere"] = str(r["upozorenje"] or "").strip()
                 for z in iz["zadaci"]:
                     broj = z["privremeni_broj"]
                     pref = f"ured_{baza_kljuc}_{broj}_"
@@ -389,13 +527,24 @@ with tab3:
                      "zadatke ovog upisa - u PreTeXt izlazu idu kao primjer (§27.3), a Test Builder ih svejedno prikazuje "
                      "jednako kao i sve ostale (ne isključuje ih iz pretrage).")
             samo_cisti = st.checkbox("Upiši samo zadatke BEZ upozorenja", value=False)
+            # 12.11.2026.: kvačica "unesi" iz pregledne tablice (korak 2). Zadaci bez te kvačice
+            # NE idu u bazu; odznačena skupina povlači i svoje stavke (v. uf.primijeni_odabir).
+            _odznaceno = sum(1 for z in iz["zadaci"] if not z.get("unesi", True))
+            if _odznaceno:
+                st.caption(f"✓ U pregledu je {_odznaceno} zadataka odznačeno — oni se neće upisati.")
             if iz.get("nepotpuno"):
                 st.warning("Odgovor modela je bio nepotpun — provjeri da nedostaju zadnji zadaci.")
             if st.button("✅ Upiši u bazu", type="primary"):
                 try:
                     dio = drive_io()
                     slike_folder = predmet_config.slike_folder_id(predmet, st.secrets)
-                    zad = [z for z in iz["zadaci"] if not (samo_cisti and z["status_provjere"])]
+                    zad, _por_odabir = uf.primijeni_odabir(
+                        [z for z in iz["zadaci"] if not (samo_cisti and z["status_provjere"])])
+                    for _p in _por_odabir:
+                        st.caption(f"• {_p}")
+                    if not zad:
+                        st.warning("Nijedan zadatak nije označen za upis — ništa nije upisano.")
+                        st.stop()
                     with st.spinner("Kopiram slike i upisujem..."):
                         zad = uf.pripremi_za_upis(zad, iz["mapa_slika"], izvor_naziv, dio, slike_folder)
                         dodano, azur = nadopuni_ili_dodaj_zadatke(
@@ -446,7 +595,11 @@ with tab3:
                     for r in odabrani:
                         try:
                             iz_r = ucitaj_izlaz(r["izlaz_file_id"])
-                            zad = [z for z in iz_r["zadaci"] if not (samo_cisti and z["status_provjere"])]
+                            zad, _por_odabir = uf.primijeni_odabir(
+                                [z for z in iz_r["zadaci"] if not (samo_cisti and z["status_provjere"])])
+                            if not zad:
+                                rezultati.append(f"⏭️ {r['grupa']} · {r['model']}: nijedan zadatak nije označen za upis")
+                                continue
                             zad = uf.pripremi_za_upis(zad, iz_r["mapa_slika"], iz_r["izvor"]["izvor_naziv"], dio, slike_folder)
                             dodano, azur = nadopuni_ili_dodaj_zadatke(
                                 ws_zadaci, zad, iz_r["izvor"]["izvor_tip"], iz_r["izvor"]["izvor_naziv"],
@@ -457,7 +610,9 @@ with tab3:
                                                            "otisak": r["otisak"], "dodano": dodano, "nadopunjeno": azur})
                             ukupno_dodano += dodano
                             ukupno_azur += azur
-                            rezultati.append(f"✅ {r['grupa']} · {r['model']}: dodano {dodano}, nadopunjeno {azur}")
+                            rezultati.append(
+                                f"✅ {r['grupa']} · {r['model']}: dodano {dodano}, nadopunjeno {azur}"
+                                + (f" ({' '.join(_por_odabir)})" if _por_odabir else ""))
                         except Exception as e:  # noqa: BLE001
                             rezultati.append(f"❌ {r['grupa']} · {r['model']}: GREŠKA - {e}")
                 st.success(f"Ukupno: dodano {ukupno_dodano}, nadopunjeno {ukupno_azur} (od {len(odabrani)} odabranih izvora).")

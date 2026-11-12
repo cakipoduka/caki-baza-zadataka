@@ -1146,6 +1146,88 @@ def strukturiraj(pozovi, predmet, pruzatelj, sifrarnik, sifrarnik_pp, ispit_md, 
 USPOREDBA_POLJA = ["uloga", "tip_zadatka", "konacan_odgovor", "max_bodovi", "slika_zadana", "cjelina", "potpoglavlje", "tezina"]
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# PREGLED PRIJE UPISA (12.11.2026.) - pomocne funkcije za preglednu tablicu u koraku 2.
+# Cakijev zahtjev: "prije unosa u bazu - da za svaki zadatak mogu ispraviti tekst/ponudene
+# odgovore/sliku/obrisati (kvacicu maknuti) zadatak koji ne zelim". Tablica nosi metapodatke
+# (kvacica, cjelina, potpoglavlje, tezina, bodovi, tip), kartice ispod nose tekst/slike/rjesenje.
+# Ovdje je samo logika (bez Streamlita i mreze), da se moze testirati.
+# ---------------------------------------------------------------------------------------------------------------
+
+def _s_(v) -> str:
+    return "" if v is None else str(v).strip()
+
+
+def opcije_za_stupac(iz_sifrarnika, vrijednosti_u_podacima, prazno: str = ""):
+    """Popis opcija za st.column_config.SelectboxColumn.
+
+    MORA sadrzavati SVAKU vrijednost koja se vec pojavljuje u podacima - inace st.data_editor
+    baca gresku za celiju cija vrijednost nije u popisu (npr. tezina "tesko" vs "tesko" s
+    kvacicom, ili potpoglavlje kojeg vise nema u sifrarniku). Prazno je uvijek prva opcija.
+    """
+    skup = {_s_(v) for v in (vrijednosti_u_podacima or ())}
+    skup |= {_s_(v) for v in (iz_sifrarnika or ())}
+    skup.discard("")
+    return [prazno] + sorted(skup)
+
+
+def potpoglavlja_u_opsegu(pp_po_cjelini: dict, cjeline) -> list:
+    """Potpoglavlja samo za cjeline koje se stvarno pojavljuju u ovoj seriji.
+
+    Bez ovoga bi izbornik potpoglavlja u tablici imao stotine stavki iz cijelog sifrarnika.
+    Radni obrazac: cjelina se prvo postavi masovnom radnjom, pa se potpoglavlja fino doteraju.
+    """
+    izlaz = []
+    for c in sorted({_s_(c) for c in (cjeline or ()) if _s_(c)}):
+        izlaz.extend(pp_po_cjelini.get(c, []))
+    return izlaz
+
+
+def primijeni_odabir(zadaci: list[dict]):
+    """Zadaci koje je covjek u pregledu ostavio oznacene kvacicom 'unesi'.
+
+    Postuje vezu skupina-stavke (v. pripremi_jedinice u skupine_zadataka.py):
+      - skupina bez kvacice povlaci i SVE svoje stavke (stavka bez zajednickog uvoda nema smisla),
+      - skupina kojoj su sve stavke odznacene ispada i sama (inace bi u bazu usao prazan uvod).
+    Zadatak BEZ polja 'unesi' smatra se oznacenim - stari cache zapisi od prije pregleda rade
+    kao i dosad, bez ijedne izmjene u ponasanju.
+    Vraca (zadaci_za_upis, poruke).
+    """
+    poruke = []
+    zad = list(zadaci or [])
+    odbacene_skupine = {
+        _s_(z.get("privremeni_broj")) for z in zad
+        if _s_(z.get("uloga")).lower() == "skupina" and not z.get("unesi", True)
+    }
+    prvi = []
+    for z in zad:
+        if not z.get("unesi", True):
+            continue
+        if (_s_(z.get("uloga")).lower() == "stavka"
+                and _s_(z.get("roditelj_privremeni_broj")) in odbacene_skupine):
+            continue
+        prvi.append(z)
+    if odbacene_skupine:
+        poruke.append(
+            f"Odznaceno skupina: {len(odbacene_skupine)} - s njima su izostavljene i njihove stavke.")
+    preostale = {
+        _s_(z.get("roditelj_privremeni_broj")) for z in prvi
+        if _s_(z.get("uloga")).lower() == "stavka"
+    }
+    izlaz = []
+    for z in prvi:
+        if (_s_(z.get("uloga")).lower() == "skupina"
+                and _s_(z.get("privremeni_broj")) not in preostale):
+            poruke.append(
+                f"Skupina #{_s_(z.get('privremeni_broj'))} nema nijednu oznacenu stavku - preskocena.")
+            continue
+        izlaz.append(z)
+    odbaceno = len(zad) - len(izlaz)
+    if odbaceno:
+        poruke.append(f"Ukupno izostavljeno {odbaceno} od {len(zad)} zadataka (maknuta kvacica).")
+    return izlaz, poruke
+
+
 def usporedi_rezultate(a: list[dict], b: list[dict]) -> list[dict]:
     """Po privremeni_broj: sličnost teksta + popis polja koja se razlikuju. Redovi: broj, u_a, u_b, slicnost, razlike."""
     ia = {z.get("privremeni_broj"): z for z in a}

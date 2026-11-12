@@ -55,9 +55,12 @@ except Exception:
 
 import predmet_config
 from baza_zadataka_pipeline import (
+    BEZ_POTPOGLAVLJA_FILTER,
+    filter_skup,
     get_drive_service,
     get_gspread_client,
     get_potpoglavlja_po_cjelini,
+    opcije_s_prazno,
     prikazi_opcije_markdown,
     razdvoji_slike,
 )
@@ -650,7 +653,22 @@ with col_pretraga:
             })
     else:
         opcije_potpoglavlje = sorted({z.get("potpoglavlje", "") for z in zadaci if z.get("potpoglavlje")})
+    # 12.11.2026. (Cakijev nalaz "kad selektiram cjelinu/potpoglavlje ne izbaci mi dovoljan
+    # broj zadataka"): zadaci s PRAZNIM potpoglavljem ispadali su iz rezultata cim se odabere
+    # ijedno potpoglavlje. Sad se mogu izricito ukljuciti - v. BEZ_POTPOGLAVLJA_FILTER u
+    # baza_zadataka_pipeline.py. Popunjavanje praznih je na stranici 16_razvrstavanje.py.
+    _u_opsegu = [z for z in zadaci if not f_cjelina or z.get("cjelina") in f_cjelina]
+    _bez_potpoglavlja = sum(1 for z in _u_opsegu if not str(z.get("potpoglavlje") or "").strip())
+    opcije_potpoglavlje = opcije_s_prazno(
+        opcije_potpoglavlje, [z.get("potpoglavlje") for z in _u_opsegu])
     f_potpoglavlje = st.multiselect("Potpoglavlje", opcije_potpoglavlje)
+    _f_potpoglavlje = filter_skup(f_potpoglavlje)
+    if _bez_potpoglavlja:
+        st.caption(
+            f"ℹ️ U odabranom opsegu {_bez_potpoglavlja} od {len(_u_opsegu)} zadataka nema "
+            f"potpoglavlje, pa se bez opcije „{BEZ_POTPOGLAVLJA_FILTER}” ne pojavljuju u "
+            "rezultatima. Popuniti ih možeš na stranici 🧩 Razvrstavanje."
+        )
 
     f_tezina = st.multiselect("Težina", sve_tezine)
     # Filter po biblioteci izvora (10.10.2026.) - npr. 'zbirka Dakić' (stupac biblioteka_izvora).
@@ -674,7 +692,7 @@ with col_pretraga:
         _jedinice_sve, _upozorenja_skupina = grupiraj(zadaci)
         filtrirano = [
             j for j in _jedinice_sve
-            if jedinica_odgovara(j, f_cjelina, f_potpoglavlje, f_tezina, f_tekst, f_biblioteka)
+            if jedinica_odgovara(j, f_cjelina, _f_potpoglavlje, f_tezina, f_tekst, f_biblioteka)
         ]
         if _upozorenja_skupina:
             with st.expander(f"⚠️ {len(_upozorenja_skupina)} upozorenja o skupinama zadataka"):
@@ -685,7 +703,7 @@ with col_pretraga:
         for z in zadaci:
             if f_cjelina and z.get("cjelina") not in f_cjelina:
                 continue
-            if f_potpoglavlje and z.get("potpoglavlje") not in f_potpoglavlje:
+            if _f_potpoglavlje and str(z.get("potpoglavlje") or "").strip() not in _f_potpoglavlje:
                 continue
             if f_tezina and z.get("tezina") not in f_tezina:
                 continue

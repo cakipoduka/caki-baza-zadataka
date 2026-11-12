@@ -104,6 +104,39 @@ ZADACI_HEADERS = [
 
 SLOVA_PONUDJENIH_ODGOVORA = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
+# --- Filter "bez potpoglavlja" (12.11.2026., Cakijev nalaz) -------------------------------
+# PROBLEM: svi filteri po potpoglavlju radili su `vrijednost not in odabrano`, pa je zadatak s
+# PRAZNIM potpoglavljem ispadao iz rezultata cim se odabere ijedno potpoglavlje. Velik dio baze
+# ima cjelinu, a potpoglavlje prazno (cijele uvezene serije - npr. 150 uzastopnih redaka cjeline
+# "Nizovi i redovi"), pa su ti zadaci bili nedostupni u Test Builderu, "Provjeri i uredi" i
+# "Biblioteka grupno" - izgledalo je kao da ih pretraga po cjelini/potpoglavlju ne nalazi.
+# RJESENJE OVDJE: posebna opcija u izborniku koja znaci "prazno polje", pa se takvi zadaci mogu
+# izricito ukljuciti. Ovo filter samo prestaje SKRIVATI zadatke - samo POPUNJAVANJE praznih
+# potpoglavlja je odvojen posao i radi se na stranici pages/16_razvrstavanje.py (AI predlaze iz
+# zatvorenog popisa sifrarnika, covjek potvrduje).
+BEZ_POTPOGLAVLJA_FILTER = "\u2014 (bez potpoglavlja)"
+
+
+def filter_skup(odabrano):
+    """Odabir iz multiselecta -> skup za usporedbu s vrijednoscu polja u bazi.
+
+    BEZ_POTPOGLAVLJA_FILTER se pretvara u "" (prazno polje); ostale vrijednosti idu kakve su,
+    bez razmaka na krajevima. Prazan odabir daje prazan skup = filter se NE primjenjuje
+    (isto ponasanje kao i prije ove izmjene).
+    """
+    return {("" if v == BEZ_POTPOGLAVLJA_FILTER else str(v or "").strip()) for v in (odabrano or ())}
+
+
+def opcije_s_prazno(opcije, vrijednosti_u_bazi):
+    """Popis opcija za multiselect potpoglavlja.
+
+    Ako medu `vrijednosti_u_bazi` (potpoglavlja zadataka koji su trenutno u opsegu) ima praznih,
+    na pocetak popisa dodaje BEZ_POTPOGLAVLJA_FILTER. Ako praznih nema, opcija se ne prikazuje -
+    da ne zbunjuje na cjelinama koje su u potpunosti razvrstane.
+    """
+    ima_praznih = any(not str(v or "").strip() for v in (vrijednosti_u_bazi or ()))
+    return ([BEZ_POTPOGLAVLJA_FILTER] if ima_praznih else []) + list(opcije)
+
 def prikazi_opcije_markdown(ponudjeni_odgovori) -> str:
     """Vraća Markdown string za PREGLED ponuđenih odgovora (višestruki izbor) u Streamlit
     sučelju (ne za LaTeX!) - Streamlitov st.markdown zna renderirati $...$ preko KaTeX-a.

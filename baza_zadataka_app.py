@@ -31,6 +31,7 @@ import streamlit as st
 import caki_stabilnost  # noqa: F401  (uključuje faulthandler: pri padu u C kodu log dobije Python stack)
 import predmet_config
 from baza_zadataka_pipeline import (
+    BEZ_POTPOGLAVLJA_FILTER,
     SLOVA_PONUDJENIH_ODGOVORA,
     _col_letter,
     build_sifrarnik_potpoglavlja_text,
@@ -42,8 +43,10 @@ from baza_zadataka_pipeline import (
     get_gspread_client,
     get_potpoglavlja_po_cjelini,
     get_sifrarnik_cjelina,
+    filter_skup,
     mathpix_ocr_vise_datoteka,
     nadopuni_ili_dodaj_zadatke,
+    opcije_s_prazno,
     preuzmi_i_spremi_slike,
     prikazi_opcije_markdown,
     razdvoji_slike,
@@ -611,7 +614,9 @@ _TEZINA_OZNAKA = {
     "teško": "🔴 teško",
 }
 
-BEZ_POTPOGLAVLJA_UI = "— (bez potpoglavlja)"
+# 12.11.2026.: jedan izvor istine za ovu oznaku - isti tekst koristi i filter po potpoglavlju
+# (v. BEZ_POTPOGLAVLJA_FILTER u baza_zadataka_pipeline.py), da se dvije kopije ne raziduju.
+BEZ_POTPOGLAVLJA_UI = BEZ_POTPOGLAVLJA_FILTER
 BEZ_BIBLIOTEKE_UI = "— (bez izvora)"
 NOVA_BIBLIOTEKA_UI = "➕ Nova..."
 
@@ -1608,8 +1613,17 @@ def stranica_provjera_i_uredi():
             })
     else:
         _opcije_potpog = sorted({get(r, "potpoglavlje") for r in redovi if get(r, "potpoglavlje")})
+    # 12.11.2026.: zadaci s PRAZNIM potpoglavljem vise ne ispadaju iz rezultata cim se odabere
+    # ijedno potpoglavlje (v. BEZ_POTPOGLAVLJA_FILTER u baza_zadataka_pipeline.py).
+    _u_opsegu_pot = [r for r in redovi if not f_cjelina or get(r, "cjelina") in f_cjelina]
+    _bez_potpog = sum(1 for r in _u_opsegu_pot if not get(r, "potpoglavlje").strip())
+    _opcije_potpog = opcije_s_prazno(_opcije_potpog, [get(r, "potpoglavlje") for r in _u_opsegu_pot])
     _vrati_multiselect("filter_potpoglavlje_uredi", _opcije_potpog)
     f_potpoglavlje = fc2.multiselect("Potpoglavlje", _opcije_potpog, key="filter_potpoglavlje_uredi")
+    _f_potpoglavlje = filter_skup(f_potpoglavlje)
+    if _bez_potpog:
+        fc2.caption(f"ℹ️ {_bez_potpog} zadataka u opsegu bez potpoglavlja — uključi ih opcijom "
+                    f"„{BEZ_POTPOGLAVLJA_FILTER}”.")
 
     try:
         _biblioteke_za_filter_uredi = _ucitaj_biblioteke_izvora()
@@ -1670,7 +1684,7 @@ def stranica_provjera_i_uredi():
         for _broj_retka, _row in enumerate(redovi, start=2):
             if f_cjelina and get(_row, "cjelina") not in f_cjelina:
                 continue
-            if f_potpoglavlje and get(_row, "potpoglavlje") not in f_potpoglavlje:
+            if _f_potpoglavlje and get(_row, "potpoglavlje").strip() not in _f_potpoglavlje:
                 continue
             if f_tip and get(_row, "tip_zadatka") not in f_tip:
                 continue
@@ -2131,9 +2145,12 @@ def stranica_biblioteka_grupno():
     f1, f2 = st.columns(2)
     sve_cjeline = sorted({d.get("cjelina", "") for d in svi if d.get("cjelina")})
     f_cj = f1.multiselect("Cjelina", sve_cjeline, key="bib_f_cjelina")
-    opc_pot = sorted({d.get("potpoglavlje", "") for d in svi
-                      if d.get("potpoglavlje") and (not f_cj or d.get("cjelina") in f_cj)})
+    _u_opsegu_bib = [d for d in svi if not f_cj or d.get("cjelina") in f_cj]
+    opc_pot = sorted({d.get("potpoglavlje", "") for d in _u_opsegu_bib if d.get("potpoglavlje")})
+    # 12.11.2026.: v. BEZ_POTPOGLAVLJA_FILTER - prazna potpoglavlja se mogu izricito odabrati.
+    opc_pot = opcije_s_prazno(opc_pot, [d.get("potpoglavlje") for d in _u_opsegu_bib])
     f_pot = f2.multiselect("Potpoglavlje", opc_pot, key="bib_f_potpoglavlje")
+    _f_pot = filter_skup(f_pot)
     f3, f4 = st.columns(2)
     sve_god = sorted({d.get("izvor_naziv", "") for d in svi if d.get("izvor_naziv")})
     f_izvor = f3.multiselect("Izvor (naziv uvoza / ispita)", sve_god, key="bib_f_izvor")
@@ -2152,7 +2169,7 @@ def stranica_biblioteka_grupno():
             continue
         if f_cj and d.get("cjelina") not in f_cj:
             continue
-        if f_pot and d.get("potpoglavlje") not in f_pot:
+        if _f_pot and str(d.get("potpoglavlje") or "").strip() not in _f_pot:
             continue
         if f_izvor and d.get("izvor_naziv") not in f_izvor:
             continue
