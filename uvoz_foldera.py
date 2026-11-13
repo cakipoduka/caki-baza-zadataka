@@ -974,8 +974,14 @@ def _normaliziraj_tip(tip: str) -> str:
     return mapa.get(t, "")
 
 
+# 13.11.2026. (Cakijeva odluka): KANONSKI oblik tezine je "teško" S KVACICOM. Ova je mapa dosad
+# normalizirala na "tesko" bez kvacice, a raspodjela_potpoglavlja.TEZINE_KLJUC na "teško" - dva
+# pisaca, dva oblika u ISTOM stupcu `tezina`. Posljedica: filter "Tezina" u Test Builderu gradi
+# opcije IZ BAZE, pa su se pojavljivale DVIJE stavke i polovica zadataka je ispadala iz odabira
+# (ista klasa greske kao prazna potpoglavlja). Ulaz ostaje tolerantan - prima oba oblika i sve
+# uobicajene varijante - ali IZLAZ je od sada uvijek "teško".
 _TEZINA_MAPA = {"lako": "lako", "lagano": "lako", "laka": "lako", "jednostavno": "lako", "l": "lako", "srednje": "srednje", "srednja": "srednje",
-                "s": "srednje", "tesko": "tesko", "teško": "tesko", "teska": "tesko", "tezak": "tesko", "težak": "tesko", "t": "tesko"}
+                "s": "srednje", "tesko": "teško", "teško": "teško", "teska": "teško", "teška": "teško", "tezak": "teško", "težak": "teško", "t": "teško"}
 
 
 def dovrsi_zadatak(z: dict, mapa_slika: dict | None = None, ima_slika_u_ulazu: bool = True, datoteke_naziv: str = "") -> dict:

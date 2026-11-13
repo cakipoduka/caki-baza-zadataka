@@ -23,6 +23,7 @@ import predmet_config
 import uvoz_foldera as uf
 from baza_zadataka_pipeline import (
     _je_obican_tekst,
+    dodaj_biblioteku_izvora,
     build_sifrarnik_potpoglavlja_text,
     build_sifrarnik_text,
     get_biblioteke_izvora,
@@ -160,15 +161,29 @@ with tab1:
         _nad_link = st.text_input(
             "Folder na Driveu u koji se datoteke arhiviraju",
             value=st.secrets.get("UVOZ_FOLDER_ID", ""), key="uvoz_ucitaj_folder",
-            help=f"Isti folder kao za uvoz iz foldera. Ide u podmapu `{uf.UCITANO_FOLDER_NAZIV}`, koja se "
-                 "pri listanju foldera preskače — pa se već obrađeni uploadi ne pojavljuju kao novi izvori.",
+            help="NIJE putanja tipa C:\\... niti naziv mape — treba POVEZNICA na folder ili njegov ID. "
+                 "Dobiješ je na dva načina: (1) otvoriš folder na Driveu i kopiraš adresu iz adresne "
+                 "trake, ili (2) desni klik na folder → Dijeli → Kopiraj vezu. Ovo polje je već "
+                 "popunjeno ako je u Streamlit Secrets postavljen UVOZ_FOLDER_ID — tada ga ne diraj.",
         )
         _nad_fid = uf.izvuci_folder_id(_nad_link)
+        # 14.11.2026. (Cakijevo pitanje): bez ove povratne informacije, zalijepi li se nesto sto
+        # nije prepoznato kao folder, gumb je samo onemogucen bez objasnjenja zasto.
+        if _nad_link.strip() and not _nad_fid:
+            st.error(
+                "Ovo ne izgleda kao poveznica na Drive folder. Očekujem nešto poput "
+                "`https://drive.google.com/drive/folders/1AbC…` ili samo ID (`1AbC…`). "
+                "Putanja s računala (`C:\\Users\\…`) ili naziv mape ne rade — Drive adresira folder ID-em."
+            )
+        elif _nad_fid:
+            st.caption(f"✅ Prepoznat folder: `{_nad_fid}` → arhiva ide u `{uf.UCITANO_FOLDER_NAZIV}/<naziv izvora>`")
         _dat_zadaci = st.file_uploader(
             "Zadaci (PDF i/ili slike) — obavezno", type=uf.OCR_TIPOVI,
             accept_multiple_files=True, key="uvoz_ucitaj_zadaci",
             help="Može više datoteka odjednom (npr. skenirane stranice) — OCR se radi zasebno i spaja "
-                 "u jedan tekst, redoslijedom naziva.",
+                 "u jedan tekst, redoslijedom naziva. Cijelu mapu se ne može odabrati (preglednik to "
+                 "ne dopušta), ali efekt je isti: otvori mapu u dijalogu i pritisni Ctrl+A, ili "
+                 "označi datoteke u Exploreru i dovuci ih mišem na ovo polje.",
         )
         _dat_rjesenja = st.file_uploader(
             "Rješenja (PDF i/ili slike) — opcionalno", type=uf.OCR_TIPOVI,
@@ -179,7 +194,17 @@ with tab1:
             "Naziv izvora (grupa)",
             value=uf.predlozi_naziv_izvora([_d.name for _d in _dat_zadaci]) if _dat_zadaci else "",
             key="uvoz_ucitaj_naziv",
-            help="Pod ovim nazivom izvor se vodi u evidenciji i u koracima 2 i 3.",
+            help="Oznaka OVE serije datoteka, ne naziv knjige. Od njega se grade ID-evi zadataka "
+                 "(npr. Nizovi_list3_001), po njemu se izvor vodi u evidenciji i u koracima 2 i 3, "
+                 "i po njemu provjera duplikata zna da je materijal iz istog izvora (pa je stroža). "
+                 "Naziv zbirke/udžbenika je ODVOJENO polje „Biblioteka izvora” u koraku 3.",
+        )
+        st.caption(
+            "ℹ️ **Naziv izvora** nije isto kao **Biblioteka izvora**. Naziv izvora označava ovu "
+            "seriju datoteka (npr. `Dakic_nizovi_list3`); Biblioteka je zbirka/udžbenik iz kojeg "
+            "zadaci dolaze (npr. `zbirka-Dakić-pismeni`) i bira se u **koraku 3**, prije upisa — "
+            "tamo se može i dodati nova. Biblioteka se nikad ne ispisuje u PreTeXt/PDF materijalima, "
+            "služi samo za filtriranje baze."
         )
         if st.button("⬆️ Učitaj na Drive i pripremi za obradu", type="primary",
                      disabled=not (_nad_fid and _dat_zadaci and _naziv_izvora.strip())):
@@ -472,7 +497,7 @@ with tab2:
                 uf.potpoglavlja_u_opsegu(_pp_po_cjelini, _sve_cjeline),
                 [z.get("potpoglavlje") for z in iz["zadaci"]])
             _opcije_tezina = uf.opcije_za_stupac(
-                ["lako", "srednje", "tesko"], [z.get("tezina") for z in iz["zadaci"]])
+                ["lako", "srednje", "teško"], [z.get("tezina") for z in iz["zadaci"]])
             _opcije_tip = uf.opcije_za_stupac(
                 ["visestruki_izbor", "kratki_odgovor", "prosireni_odgovor"],
                 [z.get("tip_zadatka") for z in iz["zadaci"]])
@@ -731,7 +756,22 @@ with tab3:
             izvor_tip = c2.selectbox("izvor_tip", uf.IZVOR_TIPOVI, index=uf.IZVOR_TIPOVI.index(iz["izvor"]["izvor_tip"]))
             godina = c3.text_input("godina", iz["izvor"]["godina"])
             razina = st.selectbox("razina", predmet_config.razine(predmet))
-            biblioteka = st.selectbox("Biblioteka izvora (neobavezno)", [""] + list(get_biblioteke_izvora(sheet)))
+            # 14.11.2026. (Cakijevo pitanje): dosad su se nudile samo VEC postojece biblioteke, pa se
+            # zadaci iz nove zbirke nisu mogli oznaciti bez da se zbirka prvo doda na drugoj stranici.
+            # Isti obrazac kao na stranici "Obrada ispita" (➕ Nova...).
+            _bib_postojece = list(get_biblioteke_izvora(sheet))
+            _BIB_NOVA = "➕ Nova..."
+            _bib_odabir = st.selectbox(
+                "Biblioteka izvora (neobavezno)", [""] + _bib_postojece + [_BIB_NOVA],
+                help="Zbirka/udžbenik iz kojeg zadaci dolaze — služi za filtriranje baze (Test Builder), "
+                     "nikad se ne ispisuje u materijalima. Ostavi prazno za maturu i vlastite materijale.",
+            )
+            if _bib_odabir == _BIB_NOVA:
+                biblioteka = st.text_input(
+                    "Naziv nove biblioteke (npr. „zbirka-Dakić-pismeni”)", key="upis_bib_nova",
+                ).strip()
+            else:
+                biblioteka = _bib_odabir
             primjer_na_satu = st.checkbox(
                 "📘 Cijela ova serija su primjeri (koristi_kao_primjer_na_satu)", value=False,
                 help="Uključi SAMO ako je cijeli ovaj izvor serija riješenih primjera (npr. udžbenički \"Primjer 1./2./3.\" "
@@ -750,6 +790,8 @@ with tab3:
                 try:
                     dio = drive_io()
                     slike_folder = predmet_config.slike_folder_id(predmet, st.secrets)
+                    if biblioteka and biblioteka not in _bib_postojece:
+                        dodaj_biblioteku_izvora(sheet, biblioteka)
                     zad, _por_odabir = uf.primijeni_odabir(
                         [z for z in iz["zadaci"] if not (samo_cisti and z["status_provjere"])])
                     for _p in _por_odabir:

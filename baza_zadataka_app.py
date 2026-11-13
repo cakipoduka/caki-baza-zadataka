@@ -605,7 +605,9 @@ _TIP_ZADATKA_OZNAKA = {
 }
 # Težina: baza povijesno sadrži i "teško" (s dijakritikom) i "tesko" - oba se prikazuju
 # isto, a postojeća vrijednost se NIKAD ne prepisuje sama od sebe (vidi _opcije_sa_zatecenim).
-_TEZINE_UI = ["lako", "srednje", "tesko"]
+# 13.11.2026.: kanonski oblik je "teško" (v. _TEZINA_MAPA u uvoz_foldera.py). Prikaz i
+# sortiranje ispod i dalje poznaju oba oblika, da stari retci rade do prepisivanja baze.
+_TEZINE_UI = ["lako", "srednje", "teško"]
 _TEZINA_OZNAKA = {
     "": "— (nije određeno)",
     "lako": "🟢 lako",
