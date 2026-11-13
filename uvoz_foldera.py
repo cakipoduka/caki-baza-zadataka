@@ -39,6 +39,17 @@ from zoneinfo import ZoneInfo
 TZ = ZoneInfo("Europe/Zagreb")
 PROMPT_VERZIJA = "uvoz-2026-11-04"
 CACHE_FOLDER_NAZIV = "_uvoz_cache"
+# 12.11.2026.: podmapa u koju se arhiviraju datoteke UCITANE S RACUNALA (Cakijev zahtjev -
+# "dodati i opciju kao u obradi ispita da se doda pojedinacni PDF/materijal + rjesenja").
+# Nakon uploada idu ISTIM putem kao datoteke iz foldera (OCR cache, pregled, upis) - nema
+# drugog koda. Preskace se pri listanju foldera (v. DriveIO.popis) da se vec obradeni
+# uploadi ne pojavljuju kao novi izvori svaki put kad se folder ponovno procita.
+UCITANO_FOLDER_NAZIV = "_uvoz_ucitano"
+# Nastavci koje Mathpix OCR podnosi - isti popis kao OCR_TIPOVI_DATOTEKA u baza_zadataka_app.py
+# (st.file_uploader ih trazi BEZ tocke).
+OCR_TIPOVI = ["pdf", "png", "jpg", "jpeg", "gif", "webp"]
+_MIME_PO_NASTAVKU = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg",
+                     "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
 IZVOR_TIPOVI = ["matura", "zbirka", "udzbenik", "vlastiti_materijal", "fakultet"]
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -309,11 +320,18 @@ def sastavi_prompt(predmet: str = "matematika", pruzatelj: str = "claude") -> st
 
 
 def sastavi_korisnicku_poruku(sifrarnik, sifrarnik_potpoglavlja, ispit_md, rjesenja_md=None,
-                              izvor_naziv="", vrsta_ulaza="", tokeni=None, dio=None):
-    """Isti raspored kao u postojećem extract_zadaci_with_claude, plus kratka napomena o ulazu."""
+                              izvor_naziv="", vrsta_ulaza="", tokeni=None, dio=None, podrucje=""):
+    """Isti raspored kao u postojećem extract_zadaci_with_claude, plus kratka napomena o ulazu.
+
+    podrucje (12.11.2026.): tekst bloka "PODRUČJE UVOZA" - v. opis_podrucja(). Sam šifrarnik je
+    već sužen prije poziva (build_sifrarnik_text(samo_cjeline=...)), ovo je dodatna izričita
+    uputa modelu, jer sužen popis sam po sebi ne kaže da je sužen namjerno.
+    """
     s = (f"ŠIFRARNIK (koristi isključivo ove kategorije/cjeline, doslovno):\n{sifrarnik}\n\n"
          f"ŠIFRARNIK POTPOGLAVLJA (za svaku cjelinu, koristi isključivo navedena potpoglavlja, doslovno):\n"
          f"{sifrarnik_potpoglavlja}\n\n")
+    if podrucje:
+        s += f"=== PODRUČJE UVOZA (obvezno) ===\n{podrucje}\n\n"
     napomena = [f"Izvor: {izvor_naziv}" if izvor_naziv else "", f"Vrsta ulaza: {vrsta_ulaza}" if vrsta_ulaza else ""]
     if tokeni is not None:
         napomena.append("Dostupne oznake slika u ulazu: " + (", ".join(tokeni) if tokeni else "nema nijedne (nema slika u ulazu)"))
@@ -457,6 +475,70 @@ def sanitiziraj_izvor_naziv(naziv: str) -> str:
     s = re.sub(r"\s+", "_", s)
     s = re.sub(r"[^\w\-.]", "", s)
     return re.sub(r"_+", "_", s).strip("_.")[:60] or "izvor"
+
+
+def mime_za_naziv(naziv: str) -> str:
+    """MIME tip iz nastavka naziva - za DriveIO.spremi_bytes pri uploadu s racunala.
+    Nepoznat nastavak daje octet-stream, a vrsta_datoteke() ionako gleda i nastavak i MIME."""
+    nastavak = naziv.rsplit(".", 1)[-1].lower() if "." in (naziv or "") else ""
+    return _MIME_PO_NASTAVKU.get(nastavak, "application/octet-stream")
+
+
+def naziv_rjesenja(naziv: str) -> str:
+    """'list3.pdf' -> 'list3_rj.pdf'. Da se i po nazivu na Driveu vidi da je datoteka rjesenje,
+    i da je automatsko grupiranje (_RJ_RE) prepozna ako se naknadno ponovno predlozi. Naziv koji
+    vec sadrzi oznaku rjesenja ostaje nepromijenjen."""
+    naziv = naziv or ""
+    if "." in naziv:
+        osnova, nastavak = naziv.rsplit(".", 1)
+        return naziv if _RJ_RE.search(osnova) else f"{osnova}_rj.{nastavak}"
+    return naziv if _RJ_RE.search(naziv) else f"{naziv}_rj"
+
+
+def predlozi_naziv_izvora(nazivi) -> str:
+    """Predlozeni naziv grupe iz naziva ucitanih datoteka (jedan naziv ili popis).
+
+    Sufiks stranice ("_001") skida se po ISTOM pravilu kao u predlozi_grupiranje(): samo kad
+    barem dvije datoteke dijele isti prefiks. Kod jedne datoteke "_001" moze biti dio pravog
+    naziva, pa se ne dira - npr. "zadatak_001.pdf" ostaje "zadatak_001", a skenirane stranice
+    "Nizovi_list3_001.pdf" + "Nizovi_list3_002.pdf" daju "Nizovi_list3".
+    """
+    if isinstance(nazivi, str):
+        nazivi = [nazivi]
+    stemovi = [_stem(n) for n in (nazivi or []) if n]
+    if not stemovi:
+        return "izvor"
+    ocisceni = [(_ocisti_stem_za_grupu(s) or s) for s in stemovi]
+    impl = [_IMPL_STRANICA_RE.sub("", o).strip(" _-.") for o in ocisceni]
+    dijele_prefiks = sum(1 for x in impl if x.lower() == impl[0].lower()) >= 2
+    if dijele_prefiks and impl[0]:
+        return sanitiziraj_izvor_naziv(impl[0])
+    return sanitiziraj_izvor_naziv(ocisceni[0])
+
+
+def tablica_za_ucitano(datoteke: list[dict], grupa: str, rjesenja_nazivi=()) -> list[dict]:
+    """Redovi tablice grupiranja za datoteke UCITANE S RACUNALA - sve u JEDNU grupu.
+
+    Uloge se NE pogadaju iz naziva nego se znaju: covjek je datoteke stavio u polje "Zadaci" ili
+    "Rjesenja". `rjesenja_nazivi` su nazivi pod kojima su rjesenja spremljena na Drive. Naziv koji
+    _RJ_RE prepoznaje svejedno postaje rjesenje (npr. ako je covjek rucno dodao "...rj.pdf" medu
+    zadatke). Oblik izlaza je isti kao predlozi_grupiranje(), pa ga tablica u koraku 1 i
+    sastavi_grupe() koriste bez ijedne izmjene.
+    """
+    rj = {str(n).strip() for n in (rjesenja_nazivi or ()) if str(n).strip()}
+    redovi = []
+    for f in sorted(datoteke or [], key=lambda x: prirodni_kljuc(x.get("name", ""))):
+        v = vrsta_datoteke(f)
+        naziv = f.get("name", "")
+        if not v:
+            uloga = "preskoči"
+        elif naziv in rj or _RJ_RE.search(_stem(naziv)):
+            uloga = "rješenja"
+        else:
+            uloga = "zadaci"
+        redovi.append({"id": f["id"], "naziv": naziv, "putanja": "", "vrsta": v or "—",
+                       "uloga": uloga, "grupa": grupa})
+    return redovi
 
 
 def predlozi_godinu(naziv: str) -> str:
@@ -1076,7 +1158,7 @@ def dovrsi_skup(zadaci: list[dict], mapa_slika: dict, ocr_md: str = "", datoteke
 # ---------------------------------------------------------------------------------------------------------------
 
 def strukturiraj(pozovi, predmet, pruzatelj, sifrarnik, sifrarnik_pp, ispit_md, rjesenja_md=None, izvor_naziv="", vrsta_ulaza="",
-                 tokeni=None, max_znakova=40000, max_izlaz=None, log=None, _dubina=2, _dio=None):
+                 tokeni=None, max_znakova=40000, max_izlaz=None, log=None, _dubina=2, _dio=None, podrucje=""):
     """Šalje ulaz modelu (u dijelovima ako je dugačak) i vraća dict:
     {"zadaci": [...sirovi...], "nepotpuno": bool, "greske": [...], "tokeni_ulaz": n, "tokeni_izlaz": n, "dijelova": n}.
     pozovi(system, user, max_tokens) -> {"tekst", "tokeni_ulaz", "tokeni_izlaz", "odrezano"} (vidi napravi_pozivatelja)."""
@@ -1088,7 +1170,8 @@ def strukturiraj(pozovi, predmet, pruzatelj, sifrarnik, sifrarnik_pp, ispit_md, 
     for k, dio_md in enumerate(dijelovi, 1):
         oznaka = _dio or (k, len(dijelovi))
         log(f"🤖 Dio {oznaka[0]}/{oznaka[1]}: {len(dio_md)} znakova ulaza...")
-        user = sastavi_korisnicku_poruku(sifrarnik, sifrarnik_pp, dio_md, rjesenja_md, izvor_naziv, vrsta_ulaza, tokeni, dio=oznaka)
+        user = sastavi_korisnicku_poruku(sifrarnik, sifrarnik_pp, dio_md, rjesenja_md, izvor_naziv, vrsta_ulaza, tokeni,
+                                         dio=oznaka, podrucje=podrucje)
         odg, zadaci, potpuno, pokusaj = None, None, True, 0
         while pokusaj < 3:
             pokusaj += 1
@@ -1105,7 +1188,7 @@ def strukturiraj(pozovi, predmet, pruzatelj, sifrarnik, sifrarnik_pp, ispit_md, 
                 log(f"✂️ Odgovor odrezan (max_tokens) - dijelim ovaj dio na manje ({len(dio_md)} znakova)")
                 pod = strukturiraj(pozovi, predmet, pruzatelj, sifrarnik, sifrarnik_pp, dio_md, rjesenja_md, izvor_naziv, vrsta_ulaza,
                                    tokeni, max_znakova=max(1500, len(dio_md) // 2 + 200), max_izlaz=max_izlaz, log=log,
-                                   _dubina=_dubina - 1, _dio=oznaka)
+                                   _dubina=_dubina - 1, _dio=oznaka, podrucje=podrucje)
                 for z in pod["zadaci"]:
                     pass
                 novi = ukloni_sudare_brojeva(pod["zadaci"], zauzeti)
@@ -1183,6 +1266,27 @@ def potpoglavlja_u_opsegu(pp_po_cjelini: dict, cjeline) -> list:
     return izlaz
 
 
+def opis_duplikata(info) -> str:
+    """Kratak tekst za stupac "duplikat" u preglednoj tablici koraka 2.
+
+    Prazno kad zadatak nije ni blizu duplikatu - na 150 redaka tablica mora ostati citljiva, pa
+    se ispisuju samo zanimljivi slucajevi:
+      "⚠️ 92% <id>"          - potvrden duplikat (preko praga)
+      "❓ 88% <id> (slika)"  - preko praga, ali kratak genericki tekst + slika (§25.9): algoritam
+                               ne vidi sliku, pa je ocjena nepouzdana - treba ljudsko oko
+    """
+    info = info or {}
+    if not info.get("redak"):
+        return ""
+    sl = float(info.get("slicnost") or 0)
+    zid = _s_(info.get("id")) or f"r.{info['redak']}"
+    if info.get("duplikat"):
+        return f"⚠️ {sl:.0%} {zid}"
+    if info.get("nesiguran") and sl >= float(info.get("prag") or 1):
+        return f"❓ {sl:.0%} {zid} (slika)"
+    return ""
+
+
 def primijeni_odabir(zadaci: list[dict]):
     """Zadaci koje je covjek u pregledu ostavio oznacene kvacicom 'unesi'.
 
@@ -1226,6 +1330,89 @@ def primijeni_odabir(zadaci: list[dict]):
     if odbaceno:
         poruke.append(f"Ukupno izostavljeno {odbaceno} od {len(zad)} zadataka (maknuta kvacica).")
     return izlaz, poruke
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# PODRUCJE UVOZA (12.11.2026.) - Cakijev zahtjev: "opcionalni unos cjeline/potpoglavlja po
+# kurikulumu - unos samo jedne cjeline (onda svi zadaci idu u tu cjelinu) ili vise njih -
+# suzavamo podrucje distribucije zadataka u bazu".
+#
+# Dvije razine, namjerno odvojene:
+#   1. SUZAVANJE - sifrarnik koji model vidi sadrzi samo odabrane cjeline/potpoglavlja
+#      (build_sifrarnik_text(samo_cjeline=...)), pa model ne MOZE odabrati nesto izvan toga.
+#      Ovo je glavna mjera: manje tokena, drasticno manje promasaja.
+#   2. FORSIRANJE - kad je odabrana TOCNO JEDNA cjelina (ili potpoglavlje) i covjek je siguran,
+#      vrijednost se upisuje svim zadacima i model se o tome uopce ne pita.
+# Nakon odgovora ide TVRDA PROVJERA (primijeni_podrucje): sve izvan dopustenog skupa se NE
+# prepisuje tiho, nego dobije status_provjere pa se vidi u preglednoj tablici koraka 2.
+# ---------------------------------------------------------------------------------------------------------------
+
+def opis_podrucja(cjeline=(), potpoglavlja=(), forsiraj_cjelinu=False, forsiraj_potpoglavlje=False) -> str:
+    """Tekst bloka "PODRUCJE UVOZA" za prompt. Prazan string kad nema nicega odabranog."""
+    cj = [_s_(c) for c in (cjeline or ()) if _s_(c)]
+    pp = [_s_(x) for x in (potpoglavlja or ()) if _s_(x)]
+    if not cj and not pp:
+        return ""
+    redovi = []
+    if forsiraj_cjelinu and len(cj) == 1:
+        redovi.append(f"Cjelina je VEC ODREDENA: \"{cj[0]}\". Upisi tocno tu cjelinu svakom zadatku "
+                      "i ne predlazi drugu, bez obzira na sadrzaj zadatka.")
+    elif cj:
+        redovi.append("Svi zadaci u ovom materijalu pripadaju jednoj od OVIH cjelina (druge ne postoje "
+                      "za ovaj uvoz): " + ", ".join(f'"{c}"' for c in cj) + ".")
+    if forsiraj_potpoglavlje and len(pp) == 1:
+        redovi.append(f"Potpoglavlje je VEC ODREDENO: \"{pp[0]}\". Upisi tocno to potpoglavlje svakom zadatku.")
+    elif pp:
+        redovi.append("Potpoglavlje odaberi SAMO medu ovima: " + ", ".join(f'"{x}"' for x in pp)
+                      + ". Ako nijedno ne odgovara, ostavi potpoglavlje prazno - NE izmisljaj i ne "
+                        "posezi za potpoglavljem izvan ovog popisa.")
+    return "\n".join(f"- {r}" for r in redovi)
+
+
+def primijeni_podrucje(zadaci: list[dict], cjelina: str = "", potpoglavlje: str = "",
+                       dopustene_cjeline=(), dopustena_potpoglavlja=(), kategorija_po_cjelini=None):
+    """Tvrda provjera/forsiranje podrucja NAD ODGOVOROM MODELA. Vraca (zadaci, poruke).
+
+    cjelina/potpoglavlje (forsiranje): upisuju se SVIM zadacima. Kod forsirane cjeline usput se
+    uskladi i `kategorija` iz sifrarnika (inace bi ostala kategorija koju je model pretpostavio
+    za drugu cjelinu). Stavke skupina se tretiraju isto - `pripremi_jedinice` ionako kopira ta
+    polja od skupine kad su prazna, pa je upis iste vrijednosti bez posljedica.
+
+    dopustene_cjeline/dopustena_potpoglavlja (samo suzavanje, bez forsiranja): vrijednost izvan
+    popisa se NE mijenja tiho, nego zadatak dobije status_provjere - covjek to vidi u preglednoj
+    tablici koraka 2 i odluci. Prazna vrijednost nije greska (model smije ostaviti prazno).
+    Rjecnici se mijenjaju na mjestu (isti obrazac kao dovrsi_skup).
+    """
+    poruke = []
+    cjelina, potpoglavlje = _s_(cjelina), _s_(potpoglavlje)
+    dop_c = {_s_(c) for c in (dopustene_cjeline or ()) if _s_(c)}
+    dop_p = {_s_(x) for x in (dopustena_potpoglavlja or ()) if _s_(x)}
+    kat = kategorija_po_cjelini or {}
+    izvan_c, izvan_p = [], []
+    for z in (zadaci or []):
+        if cjelina:
+            z["cjelina"] = cjelina
+            if kat.get(cjelina):
+                z["kategorija"] = kat[cjelina]
+        elif dop_c and _s_(z.get("cjelina")) and _s_(z.get("cjelina")) not in dop_c:
+            izvan_c.append(_s_(z.get("privremeni_broj")))
+            _dodaj_status(z, f"PODRUCJE: cjelina \"{_s_(z.get('cjelina'))}\" nije medu odabranima")
+        if potpoglavlje:
+            z["potpoglavlje"] = potpoglavlje
+        elif dop_p and _s_(z.get("potpoglavlje")) and _s_(z.get("potpoglavlje")) not in dop_p:
+            izvan_p.append(_s_(z.get("privremeni_broj")))
+            _dodaj_status(z, f"PODRUCJE: potpoglavlje \"{_s_(z.get('potpoglavlje'))}\" nije medu odabranima")
+    if cjelina:
+        poruke.append(f"Cjelina \"{cjelina}\" upisana svim zadacima ({len(zadaci or [])}).")
+    if potpoglavlje:
+        poruke.append(f"Potpoglavlje \"{potpoglavlje}\" upisano svim zadacima.")
+    if izvan_c:
+        poruke.append(f"Izvan odabranih cjelina: {len(izvan_c)} zadataka (#{', #'.join(izvan_c[:10])}"
+                      + (", ..." if len(izvan_c) > 10 else "") + ") - oznaceni za provjeru.")
+    if izvan_p:
+        poruke.append(f"Izvan odabranih potpoglavlja: {len(izvan_p)} zadataka (#{', #'.join(izvan_p[:10])}"
+                      + (", ..." if len(izvan_p) > 10 else "") + ") - oznaceni za provjeru.")
+    return zadaci, poruke
 
 
 def usporedi_rezultate(a: list[dict], b: list[dict]) -> list[dict]:
@@ -1340,7 +1527,10 @@ class DriveIO:
         raise zadnja
 
     def popis(self, folder_id, rekurzivno=True, najvise_dubina=3, najvise_datoteka=1500):
-        """Sve datoteke u folderu (i podmapama), s putanjom. Preskače _uvoz_cache i _mathpix_md."""
+        """Sve datoteke u folderu (i podmapama), s putanjom. Preskače _uvoz_cache, _mathpix_md i
+        _uvoz_ucitano (arhiva uploada - v. UCITANO_FOLDER_NAZIV). Preskakanje vrijedi za PODMAPE
+        koje se nađu u obilasku, NE za folder koji se preda kao folder_id - pa se u sam
+        _uvoz_ucitano/<izvor> i dalje može ući izravno."""
         izlaz, red = [], [(folder_id, [])]
         while red and len(izlaz) < najvise_datoteka:
             fid, put = red.pop(0)
@@ -1354,7 +1544,8 @@ class DriveIO:
                 res = self._ponovi(poziv)
                 for f in res.get("files", []):
                     if f["mimeType"] == "application/vnd.google-apps.folder":
-                        if rekurzivno and len(put) < najvise_dubina and f["name"] not in (CACHE_FOLDER_NAZIV, "_mathpix_md"):
+                        if (rekurzivno and len(put) < najvise_dubina
+                                and f["name"] not in (CACHE_FOLDER_NAZIV, "_mathpix_md", UCITANO_FOLDER_NAZIV)):
                             red.append((f["id"], put + [f["name"]]))
                     else:
                         f["putanja"] = list(put)

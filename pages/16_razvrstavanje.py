@@ -17,6 +17,7 @@ Kako radi:
 import requests
 import streamlit as st
 
+import predmet_config
 import raspodjela_potpoglavlja as R
 from baza_zadataka_pipeline import get_gspread_client
 from secrets_json import ucitaj as _ucitaj_json
@@ -47,25 +48,34 @@ if not provjeri_lozinku():
     st.stop()
 
 
+# 13.11.2026.: stranica je dosad citala st.secrets["SHEET_ID"] izravno, pa je radila SAMO nad
+# matematickim Sheetom i nije slusala izbor predmeta u bocnoj traci (otkrio test_predmeti.py::
+# test_stranice_ne_citaju_SHEET_ID_izravno_iz_secrets). Sada ide kroz predmet_config, kao
+# ostale stranice: jedan kod, po jedan Sheet i folder sa slikama za svaki predmet.
+# Vazno bas za ovu stranicu: ona UPISUJE potpoglavlja i tezine u tab Zadaci, pa bi otvorena uz
+# odabranu fiziku razvrstavala MATEMATIKU. Naslov sada ispisuje predmet, da se to vidi odmah.
+predmet = predmet_config.odaberi_predmet(st)
+
+
 @st.cache_resource(show_spinner=False)
-def _spreadsheet(_kljuc: str):
+def _spreadsheet(predmet_slug: str):
     sa = _ucitaj_json(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
-    return get_gspread_client(sa).open_by_key(str(st.secrets["SHEET_ID"]))
+    return get_gspread_client(sa).open_by_key(predmet_config.sheet_id(predmet_slug, st.secrets))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _zadaci(_kljuc: str):
-    return _spreadsheet(_kljuc).worksheet("Zadaci").get_all_records()
+def _zadaci(predmet_slug: str):
+    return _spreadsheet(predmet_slug).worksheet("Zadaci").get_all_records()
 
 
 try:
-    sheet = _spreadsheet(str(st.secrets.get("SHEET_ID", "")))
-    zadaci = _zadaci(str(st.secrets.get("SHEET_ID", "")))
+    sheet = _spreadsheet(predmet)
+    zadaci = _zadaci(predmet)
 except Exception as e:                                  # noqa: BLE001
     st.error(f"Baza se ne može otvoriti: {e}")
     st.stop()
 
-st.title("🧩 Razvrstavanje u potpoglavlja i težine")
+st.title(f"🧩 Razvrstavanje u potpoglavlja i težine — {predmet_config.postavke(predmet)['naziv']}")
 st.caption("AI predlaže, ti potvrđuješ. Ništa se ne upisuje dok ne klikneš **Primijeni označeno**.")
 
 mapping = R.sifrarnik(sheet)

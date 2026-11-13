@@ -29,9 +29,11 @@ from baza_zadataka_pipeline import (
     get_drive_service,
     get_gspread_client,
     get_potpoglavlja_po_cjelini,
+    get_sifrarnik_cjelina,
     get_or_create_worksheet,
     nadopuni_ili_dodaj_zadatke,
     prikazi_opcije_markdown,
+    provjeri_duplikate,
 )
 
 import secrets_json as _sj  # 21.10.2026.: tolerantno čitanje JSON-a iz Secrets
@@ -94,27 +96,121 @@ sheet = _sheet(predmet)
 ws_zadaci = sheet.worksheet("Zadaci")
 ws_evid = get_or_create_worksheet(sheet, uf.IZVORI_TAB, uf.IZVORI_HEADERS, rows=500)
 
-tab1, tab2, tab3 = st.tabs(["1. Folder i obrada", "2. Pregled i usporedba", "3. Upis u bazu"])
+@st.cache_data(ttl=300)
+def _potpoglavlja_po_cjelini():
+    """{cjelina: [potpoglavlje, ...]} iz taba Sifrarnik_potpoglavlja - za izbornike u
+    preglednoj tablici koraka 2. Kesirano jer se cita pri svakom reruna tablice."""
+    try:
+        return {c: [pp for pp, _ in v] for c, v in get_potpoglavlja_po_cjelini(sheet).items()}
+    except Exception:  # noqa: BLE001 - sifrarnik nije kriticna ovisnost pregleda
+        return {}
+
+
+@st.cache_data(ttl=300)
+def _kategorije_po_cjelini():
+    """{cjelina: kategorija} iz taba Sifrarnik_cjelina - da se pri FORSIRANOJ cjelini uskladi
+    i stupac kategorija (inace bi ostala kategorija koju je model pretpostavio za drugu
+    cjelinu). V. uf.primijeni_podrucje."""
+    try:
+        return get_sifrarnik_cjelina(sheet)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+tab1, tab2, tab3 = st.tabs(["1. Datoteke i obrada", "2. Pregled i usporedba", "3. Upis u bazu"])
 
 # ===================================================================================================================
 with tab1:
-    st.markdown(
-        f"**Kako:** zalijepi poveznicu na folder (Shared Drive je u redu). Servisni račun `{sa_mail}` mora biti dodan na "
-        "folder s pravom **uređivanja** (zapisuje podmapu `_uvoz_cache`). Mathpix se zove samo jednom po datoteci."
-    )
-    c1, c2 = st.columns([4, 1])
-    link = c1.text_input("Poveznica ili ID foldera", value=st.secrets.get("UVOZ_FOLDER_ID", ""), key="uvoz_link")
-    rekurzivno = c2.checkbox("Uključi podmape", value=True)
-    fid = uf.izvuci_folder_id(link)
+    # 12.11.2026. (Cakijev zahtjev): "dodati i opciju kao u obradi ispita da se doda pojedinacni
+    # PDF/materijal + rjesenja, a ne samo iz foldera". Oba nacina pune ISTE dvije stavke
+    # session_statea ("uvoz_datoteke" + "uvoz_folder"), pa sve nakon ovoga - grupiranje, OCR s
+    # cacheom, AI, pregled u koraku 2, upis u koraku 3 - ostaje JEDAN put kroz kod. Ucitane
+    # datoteke se arhiviraju na Drive (podmapa _uvoz_ucitano) jer cijeli ostatak pipelinea radi
+    # iz Drive zapisa datoteke (id + md5), ne iz bajtova u memoriji.
+    NACIN_FOLDER = "📁 Folder na Driveu"
+    NACIN_UCITAJ = "📎 Učitaj datoteke s računala"
+    nacin_ulaza = st.radio("Odakle datoteke", [NACIN_FOLDER, NACIN_UCITAJ],
+                           horizontal=True, key="uvoz_nacin_ulaza")
 
-    if st.button("📂 Učitaj popis datoteka", disabled=not fid):
-        try:
-            with st.spinner("Čitam folder..."):
-                st.session_state["uvoz_datoteke"] = drive_io().popis(fid, rekurzivno=rekurzivno)
-                st.session_state["uvoz_folder"] = fid
-                st.session_state.pop("uvoz_tablica", None)
-        except Exception as e:  # noqa: BLE001
-            st.error(f"Folder se ne može pročitati: {e}. Je li servisni račun dodan na folder?")
+    if nacin_ulaza == NACIN_FOLDER:
+        st.markdown(
+            f"**Kako:** zalijepi poveznicu na folder (Shared Drive je u redu). Servisni račun `{sa_mail}` mora biti dodan na "
+            "folder s pravom **uređivanja** (zapisuje podmapu `_uvoz_cache`). Mathpix se zove samo jednom po datoteci."
+        )
+        c1, c2 = st.columns([4, 1])
+        link = c1.text_input("Poveznica ili ID foldera", value=st.secrets.get("UVOZ_FOLDER_ID", ""), key="uvoz_link")
+        rekurzivno = c2.checkbox("Uključi podmape", value=True)
+        fid = uf.izvuci_folder_id(link)
+
+        if st.button("📂 Učitaj popis datoteka", disabled=not fid):
+            try:
+                with st.spinner("Čitam folder..."):
+                    st.session_state["uvoz_datoteke"] = drive_io().popis(fid, rekurzivno=rekurzivno)
+                    st.session_state["uvoz_folder"] = fid
+                    st.session_state.pop("uvoz_tablica", None)
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Folder se ne može pročitati: {e}. Je li servisni račun dodan na folder?")
+    else:
+        st.markdown(
+            "**Kako:** priloži PDF-ove i/ili slike zadataka (i rješenja, ako ih imaš) — isto kao na stranici "
+            f"„Obrada ispita”. Datoteke se arhiviraju na Drive u podmapu `{uf.UCITANO_FOLDER_NAZIV}/<naziv izvora>` "
+            "i dalje idu **istim putem** kao one iz foldera: Mathpix samo jednom po datoteci, pa pregledna tablica "
+            f"u koraku 2, pa upis u koraku 3. Servisni račun `{sa_mail}` mora imati pravo **uređivanja** na folderu."
+        )
+        _nad_link = st.text_input(
+            "Folder na Driveu u koji se datoteke arhiviraju",
+            value=st.secrets.get("UVOZ_FOLDER_ID", ""), key="uvoz_ucitaj_folder",
+            help=f"Isti folder kao za uvoz iz foldera. Ide u podmapu `{uf.UCITANO_FOLDER_NAZIV}`, koja se "
+                 "pri listanju foldera preskače — pa se već obrađeni uploadi ne pojavljuju kao novi izvori.",
+        )
+        _nad_fid = uf.izvuci_folder_id(_nad_link)
+        _dat_zadaci = st.file_uploader(
+            "Zadaci (PDF i/ili slike) — obavezno", type=uf.OCR_TIPOVI,
+            accept_multiple_files=True, key="uvoz_ucitaj_zadaci",
+            help="Može više datoteka odjednom (npr. skenirane stranice) — OCR se radi zasebno i spaja "
+                 "u jedan tekst, redoslijedom naziva.",
+        )
+        _dat_rjesenja = st.file_uploader(
+            "Rješenja (PDF i/ili slike) — opcionalno", type=uf.OCR_TIPOVI,
+            accept_multiple_files=True, key="uvoz_ucitaj_rjesenja",
+            help="Spremaju se s dodatkom `_rj` u nazivu, pa im je uloga vidljiva i na Driveu.",
+        )
+        _naziv_izvora = st.text_input(
+            "Naziv izvora (grupa)",
+            value=uf.predlozi_naziv_izvora([_d.name for _d in _dat_zadaci]) if _dat_zadaci else "",
+            key="uvoz_ucitaj_naziv",
+            help="Pod ovim nazivom izvor se vodi u evidenciji i u koracima 2 i 3.",
+        )
+        if st.button("⬆️ Učitaj na Drive i pripremi za obradu", type="primary",
+                     disabled=not (_nad_fid and _dat_zadaci and _naziv_izvora.strip())):
+            try:
+                dio = drive_io()
+                with st.spinner("Učitavam na Drive..."):
+                    _korijen = dio.nadji_ili_napravi_podfolder(_nad_fid, uf.UCITANO_FOLDER_NAZIV)
+                    _ciljni = dio.nadji_ili_napravi_podfolder(
+                        _korijen, uf.sanitiziraj_izvor_naziv(_naziv_izvora))
+                    _ind = dio.indeks(_ciljni)
+                    _rj_nazivi = []
+                    for _d in _dat_zadaci:
+                        dio.spremi_bytes(_ciljni, _d.name, _d.getvalue(),
+                                         uf.mime_za_naziv(_d.name), _ind.get(_d.name))
+                    for _d in (_dat_rjesenja or []):
+                        _ime_rj = uf.naziv_rjesenja(_d.name)
+                        dio.spremi_bytes(_ciljni, _ime_rj, _d.getvalue(),
+                                         uf.mime_za_naziv(_ime_rj), _ind.get(_ime_rj))
+                        _rj_nazivi.append(_ime_rj)
+                    _popis = dio.popis(_ciljni, rekurzivno=False)
+                st.session_state["uvoz_datoteke"] = _popis
+                st.session_state["uvoz_folder"] = _ciljni
+                st.session_state["uvoz_tablica"] = pd.DataFrame(
+                    uf.tablica_za_ucitano(_popis, _naziv_izvora.strip(), _rj_nazivi))
+                st.success(
+                    f"Učitano {len(_popis)} datoteka u grupu „{_naziv_izvora.strip()}”. "
+                    "Provjeri uloge u tablici ispod pa pokreni obradu."
+                )
+                st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Učitavanje nije uspjelo: {e}. Ima li servisni račun pravo uređivanja na tom folderu?")
 
     datoteke = st.session_state.get("uvoz_datoteke") or []
     if datoteke:
@@ -153,6 +249,53 @@ with tab1:
                 pd.DataFrame(izv), key="uvoz_izvori_editor", width="stretch", hide_index=True,
                 column_config={"izvor_tip": st.column_config.SelectboxColumn("izvor_tip", options=uf.IZVOR_TIPOVI, required=True)},
                 disabled=["stanje", "grupa", "zadaci", "rjesenja"])
+            st.divider()
+            # 12.11.2026. (Cakijev zahtjev): PODRUCJE UVOZA. Odabir suzuje sifrarnik koji model
+            # VIDI (build_sifrarnik_text(samo_cjeline=...)), pa promasaj izvan odabranog podrucja
+            # postaje nemoguc, a prompt je kraci. Kvacica dodatno forsira vrijednost kad je
+            # odabrana tocno jedna cjelina/potpoglavlje. Nakon odgovora ide tvrda provjera
+            # (uf.primijeni_podrucje) koja sve izvan podrucja oznaci za provjeru, bez tihog
+            # prepisivanja. Vrijedi za SVE izvore u ovoj obradi.
+            with st.expander("🎯 Područje uvoza (neobavezno, ali jako pomaže)"):
+                st.caption(
+                    "Odaberi iz kojeg je dijela kurikuluma ovaj materijal. AI tada u šifrarniku vidi "
+                    "SAMO te cjeline i potpoglavlja, pa ne može promašiti na nešto deseto. Ostavi "
+                    "prazno za ponašanje kao dosad (cijeli šifrarnik)."
+                )
+                _pp_map = _potpoglavlja_po_cjelini()
+                _pod_cjeline = st.multiselect(
+                    "Cjeline iz kojih je materijal", sorted(_pp_map), key="pod_cjeline",
+                    help="Jedna cjelina = najtočnije. Više njih ako materijal pokriva nekoliko poglavlja.",
+                )
+                _pod_forsiraj_cj = False
+                if len(_pod_cjeline) == 1:
+                    _pod_forsiraj_cj = st.checkbox(
+                        f"✅ Sve zadatke stavi u „{_pod_cjeline[0]}” (ne pitaj AI)", key="pod_forsiraj_cj",
+                        help="Uključi kad si siguran da je cijeli materijal iz te cjeline — AI tada bira "
+                             "samo potpoglavlje. Usput ubrzava i provjeru duplikata.",
+                    )
+                elif len(_pod_cjeline) > 1:
+                    st.caption(f"Kvačica „sve u jednu cjelinu” nudi se kad je odabrana točno jedna cjelina.")
+                _pod_pp_opcije = []
+                for _c in _pod_cjeline:
+                    for _x in _pp_map.get(_c, []):
+                        if _x not in _pod_pp_opcije:
+                            _pod_pp_opcije.append(_x)
+                _pod_potpoglavlja = st.multiselect(
+                    "Potpoglavlja (neobavezno)", _pod_pp_opcije, key="pod_potpoglavlja",
+                    disabled=not _pod_cjeline,
+                    help="Suzi i na razinu potpoglavlja — npr. kad je materijal jedna lekcija iz zbirke.",
+                )
+                _pod_forsiraj_pp = False
+                if len(_pod_potpoglavlja) == 1:
+                    _pod_forsiraj_pp = st.checkbox(
+                        f"✅ Sve zadatke stavi u „{_pod_potpoglavlja[0]}”", key="pod_forsiraj_pp")
+                _opis_pod = uf.opis_podrucja(_pod_cjeline, _pod_potpoglavlja, _pod_forsiraj_cj, _pod_forsiraj_pp)
+                if _opis_pod:
+                    st.success("Ovo ide AI-u uz materijal:\n\n" + _opis_pod)
+                else:
+                    st.info("Područje nije odabrano — AI dobiva cijeli šifrarnik, kao dosad.")
+
             c3, c4, c5 = st.columns(3)
             modeli = c3.multiselect("AI bot (za usporedbu odaberi dva)", dostupni_modeli,
                                     default=[m for m in uf.ZADANI_MODELI if m in dostupni_modeli] or dostupni_modeli[:1])
@@ -167,8 +310,10 @@ with tab1:
                     dio = drive_io()
                     cache_id = dio.nadji_ili_napravi_podfolder(st.session_state["uvoz_folder"], uf.CACHE_FOLDER_NAZIV)
                     indeks = dio.indeks(cache_id)
-                    sif = build_sifrarnik_text(sheet)
-                    sifpp = build_sifrarnik_potpoglavlja_text(sheet)
+                    sif = build_sifrarnik_text(sheet, samo_cjeline=_pod_cjeline)
+                    sifpp = build_sifrarnik_potpoglavlja_text(
+                        sheet, samo_cjeline=_pod_cjeline, samo_potpoglavlja=_pod_potpoglavlja)
+                    _kat_map = _kategorije_po_cjelini()
                     with st.status("Obrada...", expanded=True) as status:
                         def log(p):
                             st.write(p)
@@ -208,12 +353,28 @@ with tab1:
                                     pozovi = uf.napravi_pozivatelja(mn, st.secrets[uf.KLJUC_SECRETS[m["pruzatelj"]]], log=log)
                                     res = uf.strukturiraj(pozovi, predmet, m["pruzatelj"], sif, sifpp, ulaz_md, rj_md,
                                                           izvor_naziv=r["izvor_naziv"], vrsta_ulaza=vrsta, tokeni=list(mapa),
-                                                          max_znakova=m["dio_znakova"], max_izlaz=m["max_izlaz"], log=log)
+                                                          max_znakova=m["dio_znakova"], max_izlaz=m["max_izlaz"], log=log,
+                                                          podrucje=_opis_pod)
                                     zad, izvj = uf.dovrsi_skup(res["zadaci"], mapa, ulaz_md, ", ".join(f["name"] for f in d["zadaci"]))
+                                    zad, _por_pod = uf.primijeni_podrucje(
+                                        zad,
+                                        cjelina=(_pod_cjeline[0] if _pod_forsiraj_cj and len(_pod_cjeline) == 1 else ""),
+                                        potpoglavlje=(_pod_potpoglavlja[0] if _pod_forsiraj_pp
+                                                      and len(_pod_potpoglavlja) == 1 else ""),
+                                        dopustene_cjeline=_pod_cjeline,
+                                        dopustena_potpoglavlja=_pod_potpoglavlja,
+                                        kategorija_po_cjelini=_kat_map)
+                                    for _p in _por_pod:
+                                        log(f"🎯 {_p}")
                                     brupoz = sum(1 for z in zad if z.get("status_provjere"))
                                     sadrzaj = {"grupa": g, "model": mn, "otisak": otisak, "zadaci": zad, "mapa_slika": mapa, "izvjestaj": izvj,
                                                "nepotpuno": res["nepotpuno"], "greske": res["greske"], "prompt_verzija": uf.PROMPT_VERZIJA,
-                                               "izvor": {k: r[k] for k in ("izvor_naziv", "izvor_tip", "godina")}, "skenirano": skenirano}
+                                               "izvor": {k: r[k] for k in ("izvor_naziv", "izvor_tip", "godina")},
+                                               "skenirano": skenirano,
+                                               "podrucje": {"cjeline": list(_pod_cjeline),
+                                                            "potpoglavlja": list(_pod_potpoglavlja),
+                                                            "forsirana_cjelina": bool(_pod_forsiraj_cj),
+                                                            "forsirano_potpoglavlje": bool(_pod_forsiraj_pp)}}
                                     fid_izlaz = dio.spremi_json(cache_id, f"izlaz__{uf.sanitiziraj_izvor_naziv(g)}__{kratko}.json", sadrzaj,
                                                                 indeks.get(f"izlaz__{uf.sanitiziraj_izvor_naziv(g)}__{kratko}.json"))
                                     indeks[f"izlaz__{uf.sanitiziraj_izvor_naziv(g)}__{kratko}.json"] = fid_izlaz
@@ -233,16 +394,6 @@ with tab1:
                     st.success("Gotovo. Idi na karticu '2. Pregled i usporedba'.")
 
 # ===================================================================================================================
-@st.cache_data(ttl=300)
-def _potpoglavlja_po_cjelini():
-    """{cjelina: [potpoglavlje, ...]} iz taba Sifrarnik_potpoglavlja - za izbornike u
-    preglednoj tablici koraka 2. Kesirano jer se cita pri svakom reruna tablice."""
-    try:
-        return {c: [pp for pp, _ in v] for c, v in get_potpoglavlja_po_cjelini(sheet).items()}
-    except Exception:  # noqa: BLE001 - sifrarnik nije kriticna ovisnost pregleda
-        return {}
-
-
 def ucitaj_izlaz(file_id):
     return drive_io().procitaj_json(file_id)
 
@@ -285,6 +436,18 @@ with tab2:
             mk = st.selectbox("Prikaži rezultat modela", list(izlazi), key="pregled_model")
             iz = izlazi[mk]
             r_model = next(r for r in moji if r["model"] == mk)
+            # 12.11.2026.: podsjetnik koje je područje bilo odabrano pri obradi (korak 1) - bez
+            # toga se pri pregledu ne vidi je li cjelina AI-eva procjena ili forsirana vrijednost.
+            _pod_zapis = iz.get("podrucje") or {}
+            if _pod_zapis.get("cjeline") or _pod_zapis.get("potpoglavlja"):
+                _dijelovi = []
+                if _pod_zapis.get("cjeline"):
+                    _dijelovi.append(("forsirana cjelina: " if _pod_zapis.get("forsirana_cjelina")
+                                      else "cjeline: ") + ", ".join(_pod_zapis["cjeline"]))
+                if _pod_zapis.get("potpoglavlja"):
+                    _dijelovi.append(("forsirano potpoglavlje: " if _pod_zapis.get("forsirano_potpoglavlje")
+                                      else "potpoglavlja: ") + ", ".join(_pod_zapis["potpoglavlja"]))
+                st.caption("🎯 Područje uvoza pri obradi — " + " · ".join(_dijelovi))
             if iz.get("nepotpuno") or iz.get("greske"):
                 st.warning("Upozorenja obrade: " + " | ".join(iz.get("greske", [])))
             for u in iz.get("izvjestaj", {}).get("upozorenja_skupa", []):
@@ -339,6 +502,51 @@ with tab2:
                     except Exception as e:  # noqa: BLE001
                         st.error(f"Spremanje nije uspjelo: {e}")
 
+            # 12.11.2026. (Cakijev zahtjev): provjera duplikata PRIJE upisa. Koristi ISTU logiku
+            # kao sam upis (provjeri_duplikate -> izgradi_indeks_duplikata + nadji_duplikat), samo
+            # read-only - inace bi pregled mogao reci jedno a upis uraditi drugo. Rezultat se
+            # sprema u cache datoteku (polje "duplikat_info" po zadatku), pa se ne racuna iznova
+            # pri svakom rerunu tablice.
+            _dup_kada = iz.get("duplikati_provjereni") or ""
+            _n_dup = sum(1 for z in iz["zadaci"] if (z.get("duplikat_info") or {}).get("duplikat"))
+            dc1, dc2, dc3 = st.columns([2, 2, 3])
+            if dc1.button("🔎 Provjeri duplikate u bazi", key=f"dup_go_{baza_kljuc}"):
+                try:
+                    with st.spinner("Uspoređujem s postojećim zadacima u bazi..."):
+                        _rez = provjeri_duplikate(
+                            ws_zadaci, iz["zadaci"], izvor_naziv=iz["izvor"]["izvor_naziv"],
+                            ogranici_po_cjelini=True)
+                        for z in iz["zadaci"]:
+                            z["duplikat_info"] = _rez.get(str(z.get("privremeni_broj", "")), {})
+                        iz["duplikati_provjereni"] = uf.sada()
+                        drive_io().spremi_json(None, None, iz, postojeci_id=baza_kljuc)
+                    st.session_state.pop(f"grid_{baza_kljuc}", None)
+                    st.rerun()
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Provjera duplikata nije uspjela: {e}")
+            if dc2.button(f"☐ Odznači potvrđene duplikate ({_n_dup})", key=f"dup_off_{baza_kljuc}",
+                          disabled=not _n_dup):
+                for z in iz["zadaci"]:
+                    if (z.get("duplikat_info") or {}).get("duplikat"):
+                        z["unesi"] = False
+                try:
+                    drive_io().spremi_json(None, None, iz, postojeci_id=baza_kljuc)
+                    st.session_state.pop(f"grid_{baza_kljuc}", None)
+                    st.rerun()
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Spremanje nije uspjelo: {e}")
+            if _dup_kada:
+                dc3.caption(f"Provjereno {_dup_kada} — potvrđenih duplikata: **{_n_dup}**")
+            else:
+                dc3.caption("Duplikati još nisu provjereni za ovaj izvor.")
+            if _dup_kada:
+                st.caption(
+                    "⚠️ = isti zadatak već postoji. Ostaviš li kvačicu, duplikat se NE upisuje drugi "
+                    "put — upis nadopuni postojeći redak (rješenje, bodovi, slika, odgovor). Odznačiš "
+                    "li ga, postojeći redak ostaje netaknut. ❓ = tekst prekratak/generički a zadatak "
+                    "ima sliku, pa je usporedba nepouzdana (algoritam ne vidi sliku) — pogledaj sam."
+                )
+
             _redci = []
             for z in iz["zadaci"]:
                 if samo and not z["status_provjere"]:
@@ -352,6 +560,7 @@ with tab2:
                     "potpoglavlje": z.get("potpoglavlje", ""),
                     "tezina": z.get("tezina", ""),
                     "bodovi": z.get("max_bodovi", ""),
+                    "duplikat": uf.opis_duplikata(z.get("duplikat_info")),
                     "slika": len([x for x in str(z.get("slika_url") or "").split("|") if x.strip()]),
                     "odgovor": z["konacan_odgovor"],
                     "upozorenje": z["status_provjere"],
@@ -371,12 +580,15 @@ with tab2:
                     "potpoglavlje": st.column_config.SelectboxColumn("potpoglavlje", options=_opcije_potpoglavlja, width="medium"),
                     "tezina": st.column_config.SelectboxColumn("tezina", options=_opcije_tezina, width="small"),
                     "bodovi": st.column_config.TextColumn("bodovi", width="small"),
+                    "duplikat": st.column_config.TextColumn(
+                        "duplikat", width="medium",
+                        help="Popuni se gumbom „🔎 Provjeri duplikate u bazi” iznad tablice."),
                     "slika": st.column_config.NumberColumn("🖼️", width="small", help="Broj slika pridruzenih zadatku"),
                     "odgovor": st.column_config.TextColumn("odgovor", width="small"),
                     "upozorenje": st.column_config.TextColumn("upozorenje", width="medium"),
                     "tekst": st.column_config.TextColumn("tekst (pocetak)", width="large"),
                 },
-                disabled=["br", "uloga", "slika", "tekst"],
+                disabled=["br", "uloga", "slika", "duplikat", "tekst"],
             )
             _r_grid = _grid.to_dict("records")
             _lose_pp = [

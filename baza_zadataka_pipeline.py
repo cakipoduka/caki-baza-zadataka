@@ -364,10 +364,25 @@ def mathpix_ocr_vise_datoteka(datoteke, app_id, app_key, log=None):
 
 # --- Šifrarnik ---
 
-def build_sifrarnik_text(sheet) -> str:
+def build_sifrarnik_text(sheet, samo_cjeline=None) -> str:
+    """Tekst sifrarnika kategorija/cjelina za AI prompt.
+
+    samo_cjeline (12.11.2026., "podrucje uvoza"): ako je zadano, u tekst idu SAMO te cjeline.
+    Model tada FIZICKI ne moze odabrati cjelinu izvan odabranog podrucja - najjaca zastita od
+    promasene klasifikacije kod zbirki/udzbenika gdje covjek tocno zna iz kojeg je poglavlja
+    materijal. Usput skracuje prompt (manje tokena). Prazno/None = cijeli sifrarnik, kao prije.
+    """
     ws = sheet.worksheet("Sifrarnik_cjelina")
     rows = ws.get_all_values()[1:]
-    return "\n".join(f"- Kategorija: {r[0]} | Cjelina: {r[1]}" for r in rows if len(r) >= 2 and r[0])
+    dopustene = {str(c).strip() for c in (samo_cjeline or ()) if str(c).strip()}
+    izlaz = []
+    for r in rows:
+        if len(r) < 2 or not r[0]:
+            continue
+        if dopustene and r[1].strip() not in dopustene:
+            continue
+        izlaz.append(f"- Kategorija: {r[0]} | Cjelina: {r[1]}")
+    return "\n".join(izlaz)
 
 def get_sifrarnik_cjelina(sheet) -> dict:
     """Vraća {cjelina: kategorija}, čitano iz taba 'Sifrarnik_cjelina' (stupci: kategorija,
@@ -403,12 +418,25 @@ def get_potpoglavlja_po_cjelini(sheet) -> dict:
         po_cjelini[cjelina].sort(key=lambda t: t[1])
     return po_cjelini
 
-def build_sifrarnik_potpoglavlja_text(sheet) -> str:
+def build_sifrarnik_potpoglavlja_text(sheet, samo_cjeline=None, samo_potpoglavlja=None) -> str:
+    """Tekst sifrarnika potpoglavlja za AI prompt, po cjelinama.
+
+    samo_cjeline / samo_potpoglavlja (12.11.2026., "podrucje uvoza"): suzuju popis koji model
+    vidi - v. build_sifrarnik_text gore. Cjelina kojoj nakon suzenja ne ostane ni jedno
+    potpoglavlje IZOSTAJE iz teksta (bolje nego da model dobije praznu listu pa improvizira).
+    Prazno/None = cijeli sifrarnik, kao prije.
+    """
     po_cjelini = get_potpoglavlja_po_cjelini(sheet)
+    dop_c = {str(c).strip() for c in (samo_cjeline or ()) if str(c).strip()}
+    dop_p = {str(x).strip() for x in (samo_potpoglavlja or ()) if str(x).strip()}
     lines = []
     for cjelina, stavke in po_cjelini.items():
-        popis = ", ".join(p for p, _ in stavke)
-        lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {popis}")
+        if dop_c and cjelina not in dop_c:
+            continue
+        imena = [p for p, _ in stavke if not dop_p or p in dop_p]
+        if not imena:
+            continue
+        lines.append(f"- Cjelina: {cjelina} | Potpoglavlja: {', '.join(imena)}")
     return "\n".join(lines)
 
 # --- Biblioteka izvora (prijedlog, 8.10.2026.) ---
@@ -2698,6 +2726,133 @@ def backup_sheet(drive_service, sheet_id: str, backup_folder_id: str, log=None):
 PRAG_SLICNOSTI_KRATKA_STAVKA = 0.98
 
 
+# ---------------------------------------------------------------------------------------------
+# PROVJERA DUPLIKATA (12.11.2026.) - izdvojena iz nadopuni_ili_dodaj_zadatke da se ISTA logika
+# moze pokrenuti i READ-ONLY, PRIJE upisa (Cakijev zahtjev: "da postoji provjera da li je taj
+# zadatak u bazi vec prisutan ... pa u drugom koraku se moze donijeti odluka o konacnom unosu").
+# Namjerno JEDNA implementacija: upis i pregled moraju davati istu ocjenu, inace pregled laze.
+# ---------------------------------------------------------------------------------------------
+
+def izgradi_indeks_duplikata(headers, data_rows):
+    """Indeks postojecih zadataka za trazenje duplikata (Sheet se cita jednom za cijeli skup).
+
+    Vraca {"svi": [...], "po_cjelini": {cjelina: [...]}, "bez_cjeline": [...]}, gdje je svaki
+    zapis `(broj_retka, izvor_naziv, normaliziran_tekst, duljina, id)`.
+
+    Retci SKUPINA nisu kandidati - sadrze samo zajednicki uvod, ne zadatak. Postojece STAVKE
+    uporeduju se kao "uvod + stavka", isto kako se grade tekstovi novih stavki za usporedbu;
+    bez toga bi stavka uvijek izgledala razlicito od svog para u bazi.
+    """
+    _idx_naziv = ZADACI_HEADERS.index("izvor_naziv")
+    _idx_latex = ZADACI_HEADERS.index("tekst_zadatka_latex")
+    _idx_cjelina = ZADACI_HEADERS.index("cjelina")
+    _idx_id = ZADACI_HEADERS.index("id")
+    _i_uloga = headers.index("uloga") if "uloga" in headers else None
+    _i_rod = headers.index("roditelj_id") if "roditelj_id" in headers else None
+
+    def _celija(row, i):
+        return (row[i] if i is not None and len(row) > i else "") or ""
+
+    uvod_skupine = {}
+    if _i_uloga is not None:
+        for row in data_rows:
+            if _celija(row, _i_uloga).strip().lower() == "skupina":
+                uvod_skupine[_celija(row, _idx_id).strip()] = _celija(row, _idx_latex)
+
+    svi, po_cjelini = [], {}
+    for i, row in enumerate(data_rows):
+        uloga_r = _celija(row, _i_uloga).strip().lower()
+        if uloga_r == "skupina":
+            continue
+        existing_naziv = row[_idx_naziv] if len(row) > _idx_naziv else ""
+        existing_latex = row[_idx_latex] if len(row) > _idx_latex else ""
+        if uloga_r == "stavka":
+            existing_latex = f"{uvod_skupine.get(_celija(row, _i_rod).strip(), '')} {existing_latex}".strip()
+        existing_cjelina = (row[_idx_cjelina] if len(row) > _idx_cjelina else "").strip()
+        norm_existing = _normalize_za_usporedbu(existing_latex)
+        zapis = (i + 2, existing_naziv, norm_existing, len(norm_existing), _celija(row, _idx_id).strip())
+        svi.append(zapis)
+        po_cjelini.setdefault(existing_cjelina, []).append(zapis)
+    return {"svi": svi, "po_cjelini": po_cjelini, "bez_cjeline": po_cjelini.get("", [])}
+
+
+def nadji_duplikat(z, tekst_za_usporedbu, indeks, izvor_naziv="", je_stavka=False,
+                   ogranici_po_cjelini=False, prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75):
+    """Najslicniji postojeci zadatak za JEDAN novi zadatak. Cista usporedba, nista ne pise.
+
+    Vraca {"redak", "id", "slicnost", "isti_naziv", "prag", "nesiguran", "duplikat"}.
+    Prag je nizi unutar ISTOG izvora (isti izvor_naziv = ponovni upload istog ispita), a kod
+    kratkih stavki se die na PRAG_SLICNOSTI_KRATKA_STAVKA. "nesiguran" je slucaj §25.9: kratak
+    genericki tekst + slika - tada se duplikat NE potvrduje jer razlikovni sadrzaj je u slici
+    koju ovaj algoritam ne vidi.
+    """
+    norm_novi = _normalize_za_usporedbu(tekst_za_usporedbu)
+    duljina_novi = len(norm_novi)
+    najbolji_redak, najbolja_slicnost, najbolji_naziv, najbolji_id = None, 0.0, None, ""
+
+    if ogranici_po_cjelini:
+        nova_cjelina = (z.get("cjelina") or "").strip()
+        kandidati = indeks["po_cjelini"].get(nova_cjelina, [])
+        if nova_cjelina and indeks["bez_cjeline"]:
+            kandidati = kandidati + indeks["bez_cjeline"]
+    else:
+        kandidati = indeks["svi"]
+
+    for row_number, existing_naziv, norm_existing, duljina_existing, zid in kandidati:
+        if duljina_novi and abs(duljina_existing - duljina_novi) / duljina_novi > 0.4:
+            continue
+        omjer = difflib.SequenceMatcher(None, norm_novi, norm_existing).ratio()
+        if omjer > najbolja_slicnost:
+            najbolja_slicnost = omjer
+            najbolji_redak, najbolji_naziv, najbolji_id = row_number, existing_naziv, zid
+
+    isti_naziv = bool(najbolji_redak and najbolji_naziv == izvor_naziv)
+    prag = prag_slicnosti_isti_naziv if isti_naziv else prag_slicnosti
+    if je_stavka and duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU:
+        prag = max(prag, PRAG_SLICNOSTI_KRATKA_STAVKA)
+    nesiguran = duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU and _ima_sliku(z)
+    return {
+        "redak": najbolji_redak, "id": najbolji_id, "slicnost": najbolja_slicnost,
+        "isti_naziv": isti_naziv, "prag": prag, "nesiguran": nesiguran,
+        "duplikat": bool(najbolji_redak and najbolja_slicnost >= prag and not nesiguran),
+    }
+
+
+def provjeri_duplikate(ws_zadaci, zadaci, izvor_naziv="", ogranici_po_cjelini=True,
+                       prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None):
+    """READ-ONLY provjera duplikata PRIJE upisa - u Sheet se NE pise nista (samo citanje).
+
+    Koristi ISTE funkcije kao upis (izgradi_indeks_duplikata + nadji_duplikat + pripremi_jedinice),
+    pa je ocjena ovdje jednaka onoj koju bi upis donio. Retci SKUPINA nemaju svoj zapis (ne
+    uporeduju se); njihove STAVKE imaju, kao "uvod + stavka".
+
+    Vraca {privremeni_broj (string): rezultat nadji_duplikat()}.
+    """
+    all_values = ws_zadaci.get_all_values()
+    headers = all_values[0] if all_values else []
+    indeks = izgradi_indeks_duplikata(headers, all_values[1:])
+    if log:
+        log(f"🔎 Indeks baze: {len(indeks['svi'])} postojecih zadataka "
+            f"({len(indeks['po_cjelini'])} cjelina).")
+    izlaz = {}
+    for j in pripremi_jedinice(zadaci, log=log):
+        if j["tip"] == "samostalan":
+            z = j["z"]
+            izlaz[str(z.get("privremeni_broj", ""))] = nadji_duplikat(
+                z, z.get("tekst_zadatka_latex", ""), indeks, izvor_naziv, False,
+                ogranici_po_cjelini, prag_slicnosti, prag_slicnosti_isti_naziv)
+            continue
+        uvod = j["skupina"].get("tekst_zadatka_latex", "") or ""
+        for s in j["stavke"]:
+            izlaz[str(s.get("privremeni_broj", ""))] = nadji_duplikat(
+                s, f"{uvod} {s.get('tekst_zadatka_latex', '')}".strip(), indeks, izvor_naziv, True,
+                ogranici_po_cjelini, prag_slicnosti, prag_slicnosti_isti_naziv)
+    if log:
+        n_dup = sum(1 for v in izlaz.values() if v["duplikat"])
+        log(f"🔎 Duplikata: {n_dup} od {len(izlaz)} provjerenih zadataka.")
+    return izlaz
+
+
 def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina, razina, broj_pdf_ulaza,
                                 skenirano="ne", prag_slicnosti=0.85, prag_slicnosti_isti_naziv=0.75, log=None,
                                 ogranici_po_cjelini=False, biblioteka_izvora="", koristi_kao_primjer_na_satu=""):
@@ -2759,39 +2914,9 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
                 f"iza 'oznaka_stavke', stupac broj {ZADACI_HEADERS.index('slika_rjesenje_putanja') + 1}). Ništa nije upisano."
             )
 
-    _idx_naziv = ZADACI_HEADERS.index("izvor_naziv")
-    _idx_latex = ZADACI_HEADERS.index("tekst_zadatka_latex")
-    _idx_cjelina = ZADACI_HEADERS.index("cjelina")
-    _idx_id = ZADACI_HEADERS.index("id")
-    _i_uloga = headers.index("uloga") if "uloga" in headers else None
-    _i_rod = headers.index("roditelj_id") if "roditelj_id" in headers else None
-
-    def _celija(row, i):
-        return (row[i] if i is not None and len(row) > i else "") or ""
-
-    # Uvodi postojećih skupina (za usporedbu postojećih stavki u obliku "uvod + stavka").
-    uvod_skupine = {}
-    if _i_uloga is not None:
-        for row in data_rows:
-            if _celija(row, _i_uloga).strip().lower() == "skupina":
-                uvod_skupine[_celija(row, _idx_id).strip()] = _celija(row, _idx_latex)
-
-    existing_lookup = []
-    grupe_po_cjelini = {}
-    for i, row in enumerate(data_rows):
-        uloga_r = _celija(row, _i_uloga).strip().lower()
-        if uloga_r == "skupina":
-            continue  # redak skupine sadrži samo uvod - nikad kandidat za duplikat
-        existing_naziv = row[_idx_naziv] if len(row) > _idx_naziv else ""
-        existing_latex = row[_idx_latex] if len(row) > _idx_latex else ""
-        if uloga_r == "stavka":
-            existing_latex = f"{uvod_skupine.get(_celija(row, _i_rod).strip(), '')} {existing_latex}".strip()
-        existing_cjelina = (row[_idx_cjelina] if len(row) > _idx_cjelina else "").strip()
-        norm_existing = _normalize_za_usporedbu(existing_latex)
-        stavka = (i + 2, existing_naziv, norm_existing, len(norm_existing))
-        existing_lookup.append(stavka)
-        grupe_po_cjelini.setdefault(existing_cjelina, []).append(stavka)
-    bez_cjeline = grupe_po_cjelini.get("", [])
+    # 12.11.2026.: indeks i usporedba su izdvojeni u izgradi_indeks_duplikata()/nadji_duplikat()
+    # da se ISTA logika moze pokrenuti read-only prije upisa (v. provjeri_duplikate gore).
+    indeks_dup = izgradi_indeks_duplikata(headers, data_rows)
 
     id_prefix = izvor_naziv.replace(" ", "_")
     # Sljedeći broj ID-a iz STVARNO postojećih brojeva (max + 1), NE brojanjem redaka -
@@ -2819,38 +2944,11 @@ def nadopuni_ili_dodaj_zadatke(ws_zadaci, zadaci, izvor_tip, izvor_naziv, godina
         return zid
 
     def _podudaranje(z, tekst_za_usporedbu, je_stavka):
-        norm_novi = _normalize_za_usporedbu(tekst_za_usporedbu)
-        duljina_novi = len(norm_novi)
-        najbolji_redak, najbolja_slicnost, najbolji_naziv = None, 0.0, None
-
-        if ogranici_po_cjelini:
-            nova_cjelina = (z.get("cjelina") or "").strip()
-            kandidati = grupe_po_cjelini.get(nova_cjelina, [])
-            if nova_cjelina and bez_cjeline:
-                kandidati = kandidati + bez_cjeline
-        else:
-            kandidati = existing_lookup
-
-        for row_number, existing_naziv, norm_existing, duljina_existing in kandidati:
-            if duljina_novi and abs(duljina_existing - duljina_novi) / duljina_novi > 0.4:
-                continue
-            omjer = difflib.SequenceMatcher(None, norm_novi, norm_existing).ratio()
-            if omjer > najbolja_slicnost:
-                najbolja_slicnost, najbolji_redak, najbolji_naziv = omjer, row_number, existing_naziv
-
-        isti_naziv = najbolji_redak and najbolji_naziv == izvor_naziv
-        prag = prag_slicnosti_isti_naziv if isti_naziv else prag_slicnosti
-        if je_stavka and duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU:
-            prag = max(prag, PRAG_SLICNOSTI_KRATKA_STAVKA)
-
-        # §25.9: kratak/generički tekst + slika -> usporedba teksta nepouzdana: NIKAD tiho
-        # ne prepiši postojeći redak, dodaj kao nov i označi za ručnu provjeru.
-        nesiguran = duljina_novi < MIN_DULJINA_ZA_POUZDANU_USPOREDBU and _ima_sliku(z)
-        return {
-            "redak": najbolji_redak, "slicnost": najbolja_slicnost, "isti_naziv": isti_naziv, "prag": prag,
-            "nesiguran": nesiguran,
-            "duplikat": bool(najbolji_redak and najbolja_slicnost >= prag and not nesiguran),
-        }
+        """Tanki ovoj oko nadji_duplikat() s parametrima ovog upisa (v. funkcije gore)."""
+        return nadji_duplikat(z, tekst_za_usporedbu, indeks_dup, izvor_naziv=izvor_naziv,
+                              je_stavka=je_stavka, ogranici_po_cjelini=ogranici_po_cjelini,
+                              prag_slicnosti=prag_slicnosti,
+                              prag_slicnosti_isti_naziv=prag_slicnosti_isti_naziv)
 
     def _primijeni_duplikat(z, m):
         najbolji_redak = m["redak"]

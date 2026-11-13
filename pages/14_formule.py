@@ -11,6 +11,7 @@ ih portal ne mora čitati iz baze (dovoljan mu je CRM Sheet).
 import streamlit as st
 
 import formule as F
+import predmet_config
 from baza_zadataka_pipeline import get_gspread_client
 from secrets_json import ucitaj as _ucitaj_json
 
@@ -37,19 +38,26 @@ if not provjeri_lozinku():
     st.stop()
 
 
+# 13.11.2026.: stranica je dosad citala st.secrets["SHEET_ID"] izravno, pa je radila SAMO nad
+# matematickim Sheetom i nije slusala izbor predmeta u bocnoj traci (otkrio test_predmeti.py::
+# test_stranice_ne_citaju_SHEET_ID_izravno_iz_secrets). Sada ide kroz predmet_config, kao
+# ostale stranice: jedan kod, po jedan Sheet i folder sa slikama za svaki predmet.
+predmet = predmet_config.odaberi_predmet(st)
+
+
 @st.cache_resource(show_spinner=False)
-def _spreadsheet(_kljuc: str):
+def _spreadsheet(predmet_slug: str):
     sa = _ucitaj_json(st, "GOOGLE_SERVICE_ACCOUNT_JSON")
-    return get_gspread_client(sa).open_by_key(str(st.secrets["SHEET_ID"]))
+    return get_gspread_client(sa).open_by_key(predmet_config.sheet_id(predmet_slug, st.secrets))
 
 
 try:
-    sheet = _spreadsheet(str(st.secrets.get("SHEET_ID", "")))
+    sheet = _spreadsheet(predmet)
 except Exception as e:                                  # noqa: BLE001
     st.error(f"Baza se ne može otvoriti: {e}")
     st.stop()
 
-st.title("📐 Formule")
+st.title(f"📐 Formule — {predmet_config.postavke(predmet)['naziv']}")
 st.caption("Ako formulu dodaš **nakon** objave testa, ponovno objavi test (u test ide zamrznuta kopija).")
 st.caption("Unesi formulu u LaTeXu (npr. `\\frac{a}{b}`, `x_{1,2}=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}`). "
            "Ispod vidiš kako će je učenik vidjeti.")
