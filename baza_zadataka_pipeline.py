@@ -399,6 +399,40 @@ def get_sifrarnik_cjelina(sheet) -> dict:
         kategorija_po_cjelini[r[1].strip()] = r[0].strip()
     return kategorija_po_cjelini
 
+def get_redoslijed_cjelina(sheet) -> list:
+    """Vraća popis naziva cjelina ONIM REDOM kojim se pojavljuju u tabu 'Sifrarnik_cjelina'
+    (14.11.2026., §37 - v. CAKI_MASTER_BAZA). Taj redoslijed je namjeravan kao kurikularni
+    poredak (v. get_sifrarnik_cjelina docstring: "redoslijedom kako se pojavljuju u Sheetu") -
+    do sada se koristio samo za padajuce izbornike u aplikaciji, a OVA funkcija ga prvi put
+    koristi i za slaganje poglavlja (cjelina=chapter) u PreTeXt izlazu (Matura A/B zbirke,
+    Korak 3.1), umjesto dotad koristenog alfabetskog sortiranja. Preskace duplikate (ako se
+    cjelina pojavi u vise redaka - npr. s razlicitim razred_tipican - broji se samo prvi put)."""
+    ws = sheet.worksheet("Sifrarnik_cjelina")
+    rows = ws.get_all_values()[1:]
+    redoslijed = []
+    vidjeno = set()
+    for r in rows:
+        if len(r) < 2 or not r[1]:
+            continue
+        cjelina = r[1].strip()
+        if cjelina and cjelina not in vidjeno:
+            redoslijed.append(cjelina)
+            vidjeno.add(cjelina)
+    return redoslijed
+
+
+def cjelina_sort_key_factory(redoslijed_cjelina):
+    """Vraća sort-key funkciju za slaganje cjelina po šifrarniku umjesto alfabetski: cjeline
+    IZ šifrarnika idu redom kako su definirane; cjeline koje postoje u zadacima ali NISU (još)
+    upisane u šifrarnik idu NA KRAJ, abecedno među sobom (nikad ne nestanu iz izlaza, samo
+    padnu na dno dok se šifrarnik ne nadopuni)."""
+    poznato = {c: i for i, c in enumerate(redoslijed_cjelina)}
+    n = len(redoslijed_cjelina)
+    def _key(cjelina):
+        return (poznato.get(cjelina, n), cjelina)
+    return _key
+
+
 def get_potpoglavlja_po_cjelini(sheet) -> dict:
     """Vraća {cjelina: [(potpoglavlje, redoslijed), ...]} sortirano po redoslijedu,
     čitano iz taba 'Sifrarnik_potpoglavlja' (stupci: cjelina, potpoglavlje, redoslijed)."""
