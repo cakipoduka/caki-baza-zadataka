@@ -23,7 +23,16 @@ import re
 BATCH = 6
 MAX_TOKENA = 4000
 TEZINE = ["lako", "srednje", "teško"]
-TEZINE_KLJUC = {"lako": "lako", "srednje": "srednje", "tesko": "teško", "teško": "teško"}
+# Kljucevi su BEZ dijakritika jer se lookup radi preko _bez_dijakritika() - "teško" i "težak"
+# ovdje dolaze kao "tesko" i "tezak". 14.11.2026.: popis prosiren jednoznacnim hrvatskim
+# oblicima (isti skup kao _TEZINA_MAPA u uvoz_foldera.py), da ih i jednokratno uskladivanje
+# baze (uskladi_tezine) prepozna umjesto da ih prijavi kao nepoznate. Sto NIJE na ovom
+# popisu namjerno se ne pogada.
+TEZINE_KLJUC = {
+    "lako": "lako", "lagano": "lako", "laka": "lako", "jednostavno": "lako", "l": "lako",
+    "srednje": "srednje", "srednja": "srednje", "s": "srednje",
+    "tesko": "teško", "teško": "teško", "teska": "teško", "tezak": "teško", "t": "teško",
+}
 SIGURNOSTI = ("visoka", "srednja", "niska")
 
 ZADATAK = """Ti si iskusan profesor matematike/fizike u hrvatskoj srednjoj školi. Razvrstavaš
@@ -357,6 +366,84 @@ def osiguraj_stupac(sheet, stupac: str, naziv_taba: str = "Zadaci") -> bool:
     return True
 
 
+def prebroji_tezine(redci, i_tezina: int) -> dict:
+    """{doslovan zapis tezine: broj redaka}. Bez normalizacije - bas zato da se VIDI razilazenje
+    (npr. "tesko" i "tesko" s kvacicom kao dvije odvojene stavke)."""
+    brojac = {}
+    for redak in redci or []:
+        v = _t(redak[i_tezina]) if len(redak) > i_tezina else ""
+        brojac[v] = brojac.get(v, 0) + 1
+    return brojac
+
+
+def uskladi_tezine(sheet, naziv_taba: str = "Zadaci", samo_prebroji: bool = False) -> dict:
+    """Uskladi stupac `tezina` na KANONSKI oblik (v. TEZINE_KLJUC) - jedan batch_update.
+
+    Zasto: Cakijeva odluka 13.11.2026. - kanonski oblik je "teško" S KVACICOM. U bazi su
+    povijesno oba oblika jer su dva pisaca pisala razlicito (`uvoz_foldera` je pisao bez
+    kvacice, `raspodjela_potpoglavlja` s njom). Filter "Tezina" u Test Builderu gradi opcije IZ
+    BAZE, pa su se pojavljivale DVIJE stavke i polovica zadataka je ispadala iz odabira.
+
+    Mijenja SAMO zapise koje normalizacija prepozna a razlikuju se od kanonskog oblika. Prazno se
+    preskace, a nepoznate vrijednosti se NE diraju nego samo prijave - ne pogadamo sto je covjek
+    mislio. Susjedni retci se spajaju u jedan raspon (kod 18.000 redaka to je razlika izmedu
+    nekoliko poziva i tisuca celija u zahtjevu).
+
+    samo_prebroji=True: nista se ne pise, vraca se isti izvjestaj s planom.
+    Vraca {"prije": {zapis: broj}, "za_promjenu": n, "promijenjeno": n, "nepoznato": {zapis: broj}}.
+    """
+    import gspread
+
+    ws = sheet.worksheet(naziv_taba)
+    sve = ws.get_all_values()
+    if not sve:
+        return {"prije": {}, "za_promjenu": 0, "promijenjeno": 0, "nepoznato": {}}
+    zagl = [_t(h) for h in sve[0]]
+    if "tezina" not in zagl:
+        raise ValueError("Tab nema stupac `tezina` - provjeri je li to tab Zadaci.")
+    i_tez = zagl.index("tezina")
+
+    prije = prebroji_tezine(sve[1:], i_tez)
+    nepoznato, promjene = {}, []
+    for redni, redak in enumerate(sve[1:], start=2):
+        stari = _t(redak[i_tez]) if len(redak) > i_tez else ""
+        if not stari:
+            continue
+        novi = TEZINE_KLJUC.get(_bez_dijakritika(stari), "")
+        if not novi:
+            nepoznato[stari] = nepoznato.get(stari, 0) + 1
+            continue
+        if novi != stari:
+            promjene.append((redni, novi))
+
+    izvj = {"prije": prije, "za_promjenu": len(promjene), "promijenjeno": 0, "nepoznato": nepoznato}
+    if samo_prebroji or not promjene:
+        return izvj
+
+    izmjene, pocetak, prethodni, vrijednosti = [], None, None, []
+
+    def _zatvori():
+        izmjene.append({
+            "range": (f"{gspread.utils.rowcol_to_a1(pocetak, i_tez + 1)}:"
+                      f"{gspread.utils.rowcol_to_a1(prethodni, i_tez + 1)}"),
+            "values": vrijednosti,
+        })
+
+    for redni, novi in promjene:
+        if pocetak is not None and redni == prethodni + 1:
+            vrijednosti.append([novi])
+        else:
+            if pocetak is not None:
+                _zatvori()
+            pocetak, vrijednosti = redni, [[novi]]
+        prethodni = redni
+    _zatvori()
+
+    ws.batch_update(izmjene, raw=True)
+    izvj["promijenjeno"] = len(promjene)
+    return izvj
+
+
 def primijeni(sheet, predlozi, stupci=("potpoglavlje", "tezina"), pamti_staro: bool = True,
               naziv_taba: str = "Zadaci") -> int:
     """Upiše potpoglavlje i težinu u tab `Zadaci` — JEDAN `batch_update` za sve.
@@ -454,6 +541,7 @@ def odaberi(zadaci, izvori=(), samo_bez_potpoglavlja: bool = False, samo_bez_tez
 
 __all__ = [
     "BATCH", "TEZINE", "SIGURNOSTI", "sifrarnik", "sifrarnik_za_prompt", "sastavi_system",
+    "prebroji_tezine", "uskladi_tezine",
     "sastavi_user", "izvadi_json", "parsiraj_odgovor", "razvrsti", "tablica_prijedloga",
     "osiguraj_stupac", "primijeni", "odaberi",
 ]

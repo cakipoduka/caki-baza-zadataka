@@ -78,6 +78,50 @@ except Exception as e:                                  # noqa: BLE001
 st.title(f"🧩 Razvrstavanje u potpoglavlja i težine — {predmet_config.postavke(predmet)['naziv']}")
 st.caption("AI predlaže, ti potvrđuješ. Ništa se ne upisuje dok ne klikneš **Primijeni označeno**.")
 
+# 14.11.2026.: jednokratno usklađivanje oblika težine. Stoji OVDJE (odmah ispod naslova) jer
+# stranica niže ima nekoliko st.stop() grana, pa sekcija na dnu ne bi uvijek bila vidljiva.
+with st.expander("🔧 Uskladi oblik težine u bazi (lako / srednje / teško)"):
+    st.caption(
+        "U bazi su povijesno oba oblika — `tesko` i `teško` — jer su dva dijela sustava pisala "
+        "različito. Filter „Težina” u Test Builderu gradi popis IZ BAZE, pa se pojavljuju dvije "
+        "stavke i polovica zadataka ispada iz odabira. Kanonski oblik je **`teško`** (s kvačicom). "
+        "Prvo prebroji, pa tek onda prepiši — nepoznate vrijednosti se ne diraju."
+    )
+    if st.button("🔎 Prebroji težine", key="tez_broj"):
+        try:
+            st.session_state["tez_izvj"] = R.uskladi_tezine(sheet, samo_prebroji=True)
+        except Exception as e:                          # noqa: BLE001
+            st.error(f"Brojanje nije uspjelo: {e}")
+    _tez = st.session_state.get("tez_izvj")
+    if _tez:
+        st.write("**Trenutno stanje stupca `tezina`:**")
+        st.dataframe(
+            [{"zapis": (k or "(prazno)"), "zadataka": v}
+             for k, v in sorted(_tez["prije"].items(), key=lambda x: -x[1])],
+            hide_index=True, width="stretch",
+        )
+        if _tez["nepoznato"]:
+            st.warning("Ne diram ove vrijednosti (ne prepoznajem ih): "
+                       + ", ".join(f"`{k}` ({v})" for k, v in _tez["nepoznato"].items()))
+        if not _tez["za_promjenu"]:
+            st.success("✅ Sve je već u kanonskom obliku — nema što prepisati.")
+        else:
+            st.info(f"Za prepisivanje: **{_tez['za_promjenu']}** zadataka → `teško`.")
+            _ok = st.checkbox(
+                "Razumijem da ovo mijenja postojeće retke u tabu `Zadaci`", key="tez_potvrda")
+            if st.button(f"✅ Prepiši {_tez['za_promjenu']} zadataka", type="primary",
+                         disabled=not _ok, key="tez_go"):
+                try:
+                    _rez = R.uskladi_tezine(sheet)
+                except Exception as e:                  # noqa: BLE001
+                    st.error(f"Upis nije uspio: {e}")
+                else:
+                    st.success(f"✅ Prepisano {_rez['promijenjeno']} zadataka.")
+                    st.session_state.pop("tez_izvj", None)
+                    _zadaci.clear()
+                    st.cache_data.clear()
+                    st.rerun()
+
 mapping = R.sifrarnik(sheet)
 if not mapping:
     st.error("Šifrarnik potpoglavlja je prazan ili tab `Sifrarnik_potpoglavlja` ne postoji — "

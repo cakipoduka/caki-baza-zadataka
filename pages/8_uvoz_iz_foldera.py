@@ -9,7 +9,8 @@ NIŠTA ne ide u tab 'Zadaci' dok ne klikneš "Upiši u bazu" u koraku 3.
 Sva logika je u uvoz_foldera.py (testirana bez mreže); ovdje je samo sučelje.
 
 SECRETS: GOOGLE_SERVICE_ACCOUNT_JSON, MATHPIX_APP_ID, MATHPIX_APP_KEY, APP_PASSWORD, SHEET_ID*, SLIKE_FOLDER_ID*
-         + barem jedan od ANTHROPIC_API_KEY / DEEPSEEK_API_KEY. Opcionalno: UVOZ_FOLDER_ID (zadani folder).
+         + barem jedan od ANTHROPIC_API_KEY / DEEPSEEK_API_KEY. Opcionalno: UVOZ_FOLDER_ID (zadani folder;
+         po predmetu UVOZ_FOLDER_ID_FIZIKA i sl. - v. predmet_config.uvoz_folder_id).
 Servisni račun mora imati pravo UREĐIVANJA (Content manager / Editor) na folderu - upisuje _uvoz_cache.
 """
 import uputa_u_aplikaciji as _uputa  # 21.10.2026.: upute UNUTAR aplikacije (sklopivi blok)
@@ -139,7 +140,8 @@ with tab1:
             "folder s pravom **uređivanja** (zapisuje podmapu `_uvoz_cache`). Mathpix se zove samo jednom po datoteci."
         )
         c1, c2 = st.columns([4, 1])
-        link = c1.text_input("Poveznica ili ID foldera", value=st.secrets.get("UVOZ_FOLDER_ID", ""), key="uvoz_link")
+        link = c1.text_input("Poveznica ili ID foldera",
+                             value=predmet_config.uvoz_folder_id(predmet, st.secrets), key="uvoz_link")
         rekurzivno = c2.checkbox("Uključi podmape", value=True)
         fid = uf.izvuci_folder_id(link)
 
@@ -160,11 +162,12 @@ with tab1:
         )
         _nad_link = st.text_input(
             "Folder na Driveu u koji se datoteke arhiviraju",
-            value=st.secrets.get("UVOZ_FOLDER_ID", ""), key="uvoz_ucitaj_folder",
+            value=predmet_config.uvoz_folder_id(predmet, st.secrets), key="uvoz_ucitaj_folder",
             help="NIJE putanja tipa C:\\... niti naziv mape — treba POVEZNICA na folder ili njegov ID. "
                  "Dobiješ je na dva načina: (1) otvoriš folder na Driveu i kopiraš adresu iz adresne "
                  "trake, ili (2) desni klik na folder → Dijeli → Kopiraj vezu. Ovo polje je već "
-                 "popunjeno ako je u Streamlit Secrets postavljen UVOZ_FOLDER_ID — tada ga ne diraj.",
+                 "popunjeno ako je u Streamlit Secrets postavljen UVOZ_FOLDER_ID (ili, za ovaj "
+                 "predmet, UVOZ_FOLDER_ID_FIZIKA i sl.) — tada ga ne diraj.",
         )
         _nad_fid = uf.izvuci_folder_id(_nad_link)
         # 14.11.2026. (Cakijevo pitanje): bez ove povratne informacije, zalijepi li se nesto sto

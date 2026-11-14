@@ -61,6 +61,7 @@ PREDMETI = {
         "slike_kljuc": "SLIKE_FOLDER_ID",
         "razine": ["A", "B", "-"],            # državna matura iz matematike ima razine A i B
         "kategorije_vrednovanja": _KATEGORIJE_MATEMATIKA,
+        "uvoz_kljuc": "UVOZ_FOLDER_ID",
         "slug": "matematika",
     },
     "matematika_os": {
@@ -71,6 +72,7 @@ PREDMETI = {
         "slike_kljuc": "SLIKE_FOLDER_ID_MATEMATIKA_OS",
         "razine": ["-"],                      # osnovna škola nema razine A/B
         "kategorije_vrednovanja": [],
+        "uvoz_kljuc": "UVOZ_FOLDER_ID_MATEMATIKA_OS",
         "slug": "matematika_os",
     },
     "fizika": {
@@ -81,6 +83,7 @@ PREDMETI = {
         "slike_kljuc": "SLIKE_FOLDER_ID_FIZIKA",
         "razine": ["-"],                      # državna matura iz fizike ima jednu razinu
         "kategorije_vrednovanja": [],
+        "uvoz_kljuc": "UVOZ_FOLDER_ID_FIZIKA",
         "slug": "fizika",
     },
     # 22.10.2026.: četvrta baza — matematika za fakultet. Slike idu u medijski shared drive
@@ -94,6 +97,7 @@ PREDMETI = {
         "slike_kljuc": "SLIKE_FOLDER_ID_FAKULTET",
         "razine": ["-"],
         "kategorije_vrednovanja": [],
+        "uvoz_kljuc": "UVOZ_FOLDER_ID_MATEMATIKA_FAKULTET",
         "slug": "matematika_fakultet",
     },
 }
@@ -152,6 +156,20 @@ def slike_folder_id(predmet, secrets):
         raise KeyError(f"U Streamlit Secrets nedostaje {cfg['slike_kljuc']} (folder sa slikama za "
                        f"predmet '{cfg['naziv']}').")
     return v
+
+
+def uvoz_folder_id(predmet, secrets) -> str:
+    """Drive folder u koji "Uvoz iz foldera" cita i arhivira datoteke, PO PREDMETU.
+
+    14.11.2026.: dosad je postojao samo jedan, globalni UVOZ_FOLDER_ID, iako Sheet i folder sa
+    slikama vec jesu po predmetu - pa bi se skenovi fizike arhivirali u matematicki folder.
+    Sada svaki predmet moze imati svoj (UVOZ_FOLDER_ID_FIZIKA i sl.), a ako nije postavljen,
+    pada natrag na zajednicki UVOZ_FOLDER_ID. Za razliku od Sheeta i slika, ovo polje NIJE
+    obavezno (ne ulazi u predmet_dostupan) - bez njega se poveznica upise rucno u sucelju.
+    Prazan string znaci "nije postavljeno", ne greska.
+    """
+    cfg = postavke(predmet)
+    return _secret(secrets, cfg.get("uvoz_kljuc", "")) or _secret(secrets, "UVOZ_FOLDER_ID")
 
 
 def kategorije_vrednovanja(predmet):
